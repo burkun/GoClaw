@@ -12,6 +12,8 @@ type SkillMetadata struct {
 	Description  string   `yaml:"description"`
 	Version      string   `yaml:"version"`
 	AllowedTools []string `yaml:"allowed-tools"`
+	Enabled      bool     `yaml:"enabled"` // runtime state: whether skill is enabled
+	Category     string   `yaml:"category,omitempty"` // optional classification
 }
 
 // Plugin defines the minimal lifecycle hooks for a skill plugin.

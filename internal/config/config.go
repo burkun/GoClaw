@@ -79,6 +79,12 @@ type AppConfig struct {
 	// Channels configures IM channel integrations.
 	Channels *ChannelsConfig `yaml:"channels,omitempty"`
 
+	// Agents holds custom agent configurations.
+	Agents map[string]AgentConfig `yaml:"agents,omitempty"`
+
+	// ExtensionsRef holds optional path override for extensions config.
+	ExtensionsRef ExtensionsConfigRef `yaml:"extensions,omitempty"`
+
 	// Extensions holds MCP server and skill enablement state loaded from
 	// extensions_config.json (or extensions.json).
 	Extensions ExtensionsConfig `yaml:"-"` // populated separately
@@ -438,8 +444,27 @@ type ChannelsConfig struct {
 }
 
 // ---------------------------------------------------------------------------
+// AgentConfig (custom agent definitions)
+// ---------------------------------------------------------------------------
+
+// AgentConfig holds configuration for a custom agent.
+type AgentConfig struct {
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	Model       string `yaml:"model,omitempty" json:"model,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
 // ExtensionsConfig (MCP servers + skill state)
 // ---------------------------------------------------------------------------
+
+// DefaultExtensionsConfigPath is the default location for extensions_config.json.
+const DefaultExtensionsConfigPath = "extensions_config.json"
+
+// ExtensionsConfigRef holds optional path override for extensions config.
+type ExtensionsConfigRef struct {
+	ConfigPath string `yaml:"config_path,omitempty" json:"config_path,omitempty"`
+}
 
 // MCPServerConfig configures a single MCP server endpoint.
 type MCPServerConfig struct {

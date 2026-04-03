@@ -79,6 +79,11 @@ func (s *Server) registerRoutes() {
 	threadsH := handlers.NewThreadsHandler(s.cfg, s.agent)
 	uploadsH := handlers.NewUploadsHandler(s.cfg)
 	memoryH := handlers.NewMemoryHandler(s.cfg)
+	mcpH := handlers.NewMCPHandler(s.cfg)
+	skillsH := handlers.NewSkillsHandler(s.cfg, nil) // registry injected separately if needed
+	artifactsH := handlers.NewArtifactsHandler(s.cfg, "")
+	suggestionsH := handlers.NewSuggestionsHandler(s.cfg)
+	agentsH := handlers.NewAgentsHandler(s.cfg)
 
 	api := s.router.Group("/api")
 	{
@@ -87,6 +92,20 @@ func (s *Server) registerRoutes() {
 
 		// GET /api/memory — return the persisted memory snapshot.
 		api.GET("/memory", memoryH.GetMemory)
+
+		// MCP configuration routes.
+		api.GET("/mcp/config", mcpH.GetConfig)
+		api.PUT("/mcp/config", mcpH.UpdateConfig)
+
+		// Skills routes.
+		api.GET("/skills", skillsH.ListSkills)
+		api.GET("/skills/:name", skillsH.GetSkill)
+		api.PUT("/skills/:name", skillsH.UpdateSkill)
+
+		// Agents routes.
+		api.GET("/agents", agentsH.ListAgents)
+		api.GET("/agents/:name", agentsH.GetAgent)
+		api.PUT("/agents/:name", agentsH.UpdateAgent)
 
 		threads := api.Group("/threads/:thread_id")
 		{
@@ -97,6 +116,12 @@ func (s *Server) registerRoutes() {
 
 			// POST /api/threads/:thread_id/uploads — receive multipart files.
 			threads.POST("/uploads", uploadsH.UploadFiles)
+
+			// GET /api/threads/:thread_id/artifacts/*path — download artifacts.
+			threads.GET("/artifacts/*path", artifactsH.GetArtifact)
+
+			// POST /api/threads/:thread_id/suggestions — generate follow-up suggestions.
+			threads.POST("/suggestions", suggestionsH.GenerateSuggestions)
 		}
 	}
 

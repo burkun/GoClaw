@@ -58,6 +58,13 @@ func (r *Registry) List() []*Skill {
 	return out
 }
 
+// GetByName returns the skill with the given name, or nil if not found.
+func (r *Registry) GetByName(name string) *Skill {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.skills[name]
+}
+
 // AllowedToolSet returns the union of non-empty allowed-tools declared by skills.
 // If no skill declares allowed-tools, it returns nil (means no restriction).
 func (r *Registry) AllowedToolSet() map[string]struct{} {
