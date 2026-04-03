@@ -89,6 +89,8 @@ func (s *Server) registerRoutes() {
 		{
 			// POST /api/threads/:thread_id/runs — run the lead agent and stream SSE.
 			threads.POST("/runs", threadsH.RunThread)
+			// POST /api/threads/:thread_id/runs/:run_id/cancel — cancel a running stream.
+			threads.POST("/runs/:run_id/cancel", threadsH.CancelRun)
 
 			// POST /api/threads/:thread_id/uploads — receive multipart files.
 			threads.POST("/uploads", uploadsH.UploadFiles)

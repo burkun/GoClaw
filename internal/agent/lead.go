@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/bookerbai/goclaw/internal/agent/subagents"
 	"github.com/bookerbai/goclaw/internal/config"
 	einoruntime "github.com/bookerbai/goclaw/internal/eino"
 	basemw "github.com/bookerbai/goclaw/internal/middleware"
@@ -20,6 +22,7 @@ import (
 	titlemw "github.com/bookerbai/goclaw/internal/middleware/title"
 	todomw "github.com/bookerbai/goclaw/internal/middleware/todo"
 	"github.com/bookerbai/goclaw/internal/models"
+	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
 	toolruntime "github.com/bookerbai/goclaw/internal/tools"
 )
 
@@ -63,11 +66,13 @@ type RunConfig struct {
 	IsPlanMode             bool
 	SubagentEnabled        bool
 	MaxConcurrentSubagents int
+	CheckpointID           string
 	AgentName              string
 }
 
 type LeadAgent interface {
 	Run(ctx context.Context, state *ThreadState, cfg RunConfig) (<-chan Event, error)
+	Resume(ctx context.Context, state *ThreadState, cfg RunConfig, checkpointID string) (<-chan Event, error)
 }
 
 type leadAgent struct {
@@ -75,12 +80,28 @@ type leadAgent struct {
 	tools       []lcTool.BaseTool
 	middlewares []adk.AgentMiddleware
 	runner      *einoruntime.Runner
+	skills      *skillsruntime.Registry
 }
 
 func New(ctx context.Context) (*leadAgent, error) {
 	appCfg, err := config.GetAppConfig()
 	if err != nil {
 		return nil, fmt.Errorf("agent.New: load config failed: %w", err)
+	}
+
+	skillLoader := skillsruntime.NewLoader()
+	loadedSkills, err := skillLoader.Load(appCfg.Skills.Path, appCfg.Extensions)
+	if err != nil {
+		return nil, fmt.Errorf("agent.New: load skills failed: %w", err)
+	}
+	skillRegistry := skillsruntime.NewRegistry()
+	for _, skill := range loadedSkills {
+		if err := skillRegistry.Register(skill); err != nil {
+			return nil, fmt.Errorf("agent.New: register skills failed: %w", err)
+		}
+	}
+	if err := skillRegistry.OnLoad(ctx, appCfg); err != nil {
+		return nil, fmt.Errorf("agent.New: skills on_load failed: %w", err)
 	}
 
 	req := models.CreateRequest{}
@@ -94,6 +115,32 @@ func New(ctx context.Context) (*leadAgent, error) {
 	}
 
 	tools := toolruntime.AdaptDefaultRegistryToEinoTools()
+	for _, mcpTool := range toolruntime.BuildMCPDynamicTools(appCfg) {
+		tools = append(tools, toolruntime.AdaptToEinoTool(mcpTool))
+	}
+
+	// Phase7B: add subagent task tool with bounded executor.
+	subagentTimeout := 900 * time.Second
+	if appCfg.Subagents.TimeoutSeconds > 0 {
+		subagentTimeout = time.Duration(appCfg.Subagents.TimeoutSeconds) * time.Second
+	}
+	subagentExec := subagents.NewExecutor(subagents.ExecutorConfig{
+		MaxConcurrent:  3,
+		DefaultTimeout: subagentTimeout,
+	})
+	taskTool := subagents.NewTaskTool(subagents.TaskToolConfig{
+		Executor: subagentExec,
+	})
+	tools = append(tools, toolruntime.AdaptToEinoTool(taskTool))
+
+	allowedTools := skillRegistry.AllowedToolSet()
+	if len(allowedTools) > 0 {
+		tools, err = filterToolsByAllowed(ctx, tools, allowedTools)
+		if err != nil {
+			return nil, fmt.Errorf("agent.New: apply skills allowed-tools failed: %w", err)
+		}
+	}
+
 	mws := buildMiddlewares(RunConfig{})
 
 	a, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
@@ -111,16 +158,21 @@ func New(ctx context.Context) (*leadAgent, error) {
 		return nil, fmt.Errorf("agent.New: build chat model agent failed: %w", err)
 	}
 
+	checkpointStore, err := newCheckPointStore(appCfg)
+	if err != nil {
+		return nil, err
+	}
+
 	r, err := einoruntime.NewRunner(ctx, einoruntime.RunnerConfig{
 		Agent:           a,
 		EnableStreaming: true,
-		CheckPointStore: nil,
+		CheckPointStore: checkpointStore,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent.New: create runner failed: %w", err)
 	}
 
-	return &leadAgent{einoAgent: a, tools: tools, middlewares: mws, runner: r}, nil
+	return &leadAgent{einoAgent: a, tools: tools, middlewares: mws, runner: r, skills: skillRegistry}, nil
 }
 
 func (a *leadAgent) Run(ctx context.Context, state *ThreadState, cfg RunConfig) (<-chan Event, error) {
@@ -142,17 +194,76 @@ func (a *leadAgent) Run(ctx context.Context, state *ThreadState, cfg RunConfig) 
 	}
 
 	messages := prepareRunMessages(state.Messages, cfg)
-	stream := a.runner.Run(ctx, messages, adk.WithSessionValues(map[string]any{
-		"thread_id":        cfg.ThreadID,
-		"plan_mode":        cfg.IsPlanMode,
-		"subagent_enabled": cfg.SubagentEnabled,
-	}))
+	opts := []adk.AgentRunOption{adk.WithSessionValues(map[string]any{
+		"thread_id":                cfg.ThreadID,
+		"plan_mode":                cfg.IsPlanMode,
+		"subagent_enabled":         cfg.SubagentEnabled,
+		"max_concurrent_subagents": cfg.MaxConcurrentSubagents,
+	})}
+	if strings.TrimSpace(cfg.CheckpointID) != "" {
+		opts = append(opts, adk.WithCheckPointID(cfg.CheckpointID))
+	}
+	stream := a.runner.Run(ctx, messages, opts...)
 
 	go func() {
 		defer close(ch)
 		drainIter(ctx, stream, cfg.ThreadID, ch)
 	}()
 	return ch, nil
+}
+
+func (a *leadAgent) Resume(ctx context.Context, _ *ThreadState, cfg RunConfig, checkpointID string) (<-chan Event, error) {
+	if cfg.ThreadID == "" {
+		return nil, fmt.Errorf("thread_id is required")
+	}
+	if strings.TrimSpace(checkpointID) == "" {
+		return nil, fmt.Errorf("checkpoint_id is required")
+	}
+
+	ch := make(chan Event, 32)
+	if a == nil || a.runner == nil {
+		go func() {
+			defer close(ch)
+			ch <- Event{Type: EventError, ThreadID: cfg.ThreadID, Payload: ErrorPayload{Code: ErrorCodeNotInitialized, Message: "lead agent is not initialized"}, Timestamp: timeUnixMilli()}
+		}()
+		return ch, nil
+	}
+
+	stream, err := a.runner.Resume(ctx, checkpointID, adk.WithSessionValues(map[string]any{
+		"thread_id":                cfg.ThreadID,
+		"plan_mode":                cfg.IsPlanMode,
+		"subagent_enabled":         cfg.SubagentEnabled,
+		"max_concurrent_subagents": cfg.MaxConcurrentSubagents,
+	}))
+	if err != nil {
+		return nil, fmt.Errorf("resume from checkpoint failed: %w", err)
+	}
+
+	go func() {
+		defer close(ch)
+		drainIter(ctx, stream, cfg.ThreadID, ch)
+	}()
+	return ch, nil
+}
+
+func filterToolsByAllowed(ctx context.Context, tools []lcTool.BaseTool, allowed map[string]struct{}) ([]lcTool.BaseTool, error) {
+	if len(allowed) == 0 {
+		return tools, nil
+	}
+	out := make([]lcTool.BaseTool, 0, len(tools))
+	for _, t := range tools {
+		info, err := t.Info(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("read tool info failed: %w", err)
+		}
+		if _, ok := allowed[info.Name]; ok {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no tools matched skills allowed-tools")
+	}
+	return out, nil
 }
 
 func prepareRunMessages(messages []*schema.Message, cfg RunConfig) []*schema.Message {
@@ -468,6 +579,11 @@ func convertAgentEvent(event *adk.AgentEvent, threadID string) []Event {
 	}
 	if msg.Role == schema.Tool {
 		out = append(out, Event{Type: EventToolEvent, ThreadID: threadID, Payload: ToolEventPayload{CallID: msg.ToolCallID, ToolName: msg.ToolName, Output: msg.Content, IsError: isToolError(msg)}, Timestamp: now})
+		if msg.ToolName == subagents.TaskToolName {
+			if taskEv := toTaskEvent(threadID, msg.Content, now); taskEv != nil {
+				out = append(out, *taskEv)
+			}
+		}
 	}
 	return out
 }
@@ -479,6 +595,43 @@ func isToolError(msg *schema.Message) bool {
 	}
 	lower := strings.ToLower(strings.TrimSpace(msg.Content))
 	return strings.HasPrefix(lower, "error") || strings.HasPrefix(lower, "failed")
+}
+
+func toTaskEvent(threadID, raw string, ts int64) *Event {
+	var payload struct {
+		TaskID  string `json:"task_id"`
+		Subject string `json:"subject"`
+		Status  string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return nil
+	}
+	if payload.TaskID == "" || payload.Status == "" {
+		return nil
+	}
+
+	evType := EventTaskRunning
+	switch payload.Status {
+	case string(subagents.StatusPending), string(subagents.StatusQueued):
+		evType = EventTaskStarted
+	case string(subagents.StatusInProgress):
+		evType = EventTaskRunning
+	case string(subagents.StatusCompleted):
+		evType = EventTaskCompleted
+	case string(subagents.StatusFailed), string(subagents.StatusTimedOut):
+		evType = EventTaskFailed
+	}
+
+	return &Event{
+		Type:     evType,
+		ThreadID: threadID,
+		Payload: TaskPayload{
+			TaskID:  payload.TaskID,
+			Subject: payload.Subject,
+			Status:  payload.Status,
+		},
+		Timestamp: ts,
+	}
 }
 
 // timeUnixMilli returns current time in Unix milliseconds.

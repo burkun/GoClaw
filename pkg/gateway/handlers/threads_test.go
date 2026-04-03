@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -129,3 +130,50 @@ func newGinContext(w *httptest.ResponseRecorder, r *http.Request, params map[str
 	}
 	return c, true
 }
+
+func TestCancelRun(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+
+	cancelled := false
+	h.registerRun("run-1", runHandle{
+		ThreadID:     "thread-1",
+		CheckpointID: "cp-1",
+		Cancel: func() {
+			cancelled = true
+		},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/threads/thread-1/runs/run-1/cancel", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-1", "run_id": "run-1"})
+
+	h.CancelRun(c)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if !cancelled {
+		t.Fatalf("expected cancel function to be called")
+	}
+	if _, ok := h.getRun("run-1"); !ok {
+		// cancel does not auto remove, only signals cancellation.
+		// keep this assertion to document current behavior.
+		t.Fatalf("expected run to remain registered until run cleanup")
+	}
+}
+
+func TestCancelRun_NotFound(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/threads/thread-1/runs/run-x/cancel", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-1", "run_id": "run-x"})
+
+	h.CancelRun(c)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+// compile-time guard: keep context imported for future fake-agent tests.
+var _ = context.Background

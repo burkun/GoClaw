@@ -2,12 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	toolruntime "github.com/bookerbai/goclaw/internal/tools"
 	"github.com/cloudwego/eino/schema"
 )
-
 
 // --- helpers ---
 
@@ -54,6 +55,17 @@ func assertTerminal(t *testing.T, events []Event) {
 	}
 }
 
+type fakeGoClawTool struct {
+	name string
+}
+
+func (f *fakeGoClawTool) Name() string        { return f.name }
+func (f *fakeGoClawTool) Description() string { return "fake" }
+func (f *fakeGoClawTool) InputSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
+func (f *fakeGoClawTool) Execute(_ context.Context, _ string) (string, error) { return "ok", nil }
+
 // --- tests ---
 
 // TestLeadAgent_basicRun is a stub end-to-end test.
@@ -98,11 +110,11 @@ func TestLeadAgent_basicRun(t *testing.T) {
 // tool calls. For now, verify that the middleware chain includes TodoMiddleware.
 func TestLeadAgent_planMode(t *testing.T) {
 	mws := buildMiddlewares(RunConfig{IsPlanMode: true})
-	
+
 	if mws == nil {
 		t.Skip("todoMiddleware not wired yet; skipping full plan-mode test")
 	}
-	
+
 	// Middleware chain is built; if we reach here, TodoMiddleware should be active.
 	// Full verification requires end-to-end test with mock model.
 	t.Log("plan mode middleware chain is configured correctly")
@@ -150,6 +162,29 @@ func TestBuildMiddlewares_empty(t *testing.T) {
 	_ = mws
 }
 
+func TestFilterToolsByAllowed(t *testing.T) {
+	tools := []toolruntime.Tool{&fakeGoClawTool{name: "read"}, &fakeGoClawTool{name: "bash"}, &fakeGoClawTool{name: "write"}}
+	einoTools := toolruntime.AdaptToEinoTools(tools)
+
+	filtered, err := filterToolsByAllowed(context.Background(), einoTools, map[string]struct{}{"read": {}, "write": {}})
+	if err != nil {
+		t.Fatalf("filter failed: %v", err)
+	}
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 tools, got %d", len(filtered))
+	}
+}
+
+func TestFilterToolsByAllowed_NoMatch(t *testing.T) {
+	tools := []toolruntime.Tool{&fakeGoClawTool{name: "read"}}
+	einoTools := toolruntime.AdaptToEinoTools(tools)
+
+	_, err := filterToolsByAllowed(context.Background(), einoTools, map[string]struct{}{"bash": {}})
+	if err == nil {
+		t.Fatalf("expected error when no tools matched")
+	}
+}
+
 // TestEventTypes_constants ensures that EventType constant strings are stable and
 // match the SSE contract defined in PLAN.md.
 func TestEventTypes_constants(t *testing.T) {
@@ -174,11 +209,11 @@ func TestEventTypes_constants(t *testing.T) {
 // the SSE contract in EVENTS.md.
 func TestErrorCodeConstants(t *testing.T) {
 	expected := map[string]string{
-		ErrorCodeRunFailed:       "agent/run_error",
-		ErrorCodeInterrupted:     "agent/interrupted",
-		ErrorCodeEmptyStream:     "agent/empty_stream",
+		ErrorCodeRunFailed:        "agent/run_error",
+		ErrorCodeInterrupted:      "agent/interrupted",
+		ErrorCodeEmptyStream:      "agent/empty_stream",
 		ErrorCodeContextCancelled: "agent/context_cancelled",
-		ErrorCodeNotInitialized:  "agent/not_initialized",
+		ErrorCodeNotInitialized:   "agent/not_initialized",
 	}
 	for name, code := range expected {
 		if name == "" || code == "" {
@@ -190,9 +225,9 @@ func TestErrorCodeConstants(t *testing.T) {
 // TestIsToolError verifies that tool error detection works correctly.
 func TestIsToolError(t *testing.T) {
 	tests := []struct {
-		name     string
-		msg      *schema.Message
-		wantErr  bool
+		name    string
+		msg     *schema.Message
+		wantErr bool
 	}{
 		{
 			name:    "nil message",
@@ -251,7 +286,7 @@ func TestConvertAgentEvent_ToolWithError(t *testing.T) {
 	// For this test, we verify that isToolError correctly detects errors.
 	// We'll test convertAgentEvent indirectly by verifying isToolError first,
 	// then ensure it's integrated in the conversion function.
-	
+
 	// Verify isToolError detects the error correctly.
 	if !isToolError(toolMsg) {
 		t.Error("isToolError should detect 'error:' prefix")
@@ -262,5 +297,56 @@ func TestConvertAgentEvent_ToolWithError(t *testing.T) {
 	okMsg.ToolName = "bash"
 	if isToolError(okMsg) {
 		t.Error("isToolError should not mark successful message as error")
+	}
+}
+
+func TestToTaskEvent_StatusMapping(t *testing.T) {
+	ts := int64(123)
+
+	cases := []struct {
+		name    string
+		status  string
+		wantTyp EventType
+	}{
+		{name: "queued maps to started", status: "queued", wantTyp: EventTaskStarted},
+		{name: "in_progress maps to running", status: "in_progress", wantTyp: EventTaskRunning},
+		{name: "completed maps to completed", status: "completed", wantTyp: EventTaskCompleted},
+		{name: "failed maps to failed", status: "failed", wantTyp: EventTaskFailed},
+		{name: "timed_out maps to failed", status: "timed_out", wantTyp: EventTaskFailed},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"task_id":"t1","subject":"demo","status":"` + tc.status + `"}`
+			ev := toTaskEvent("thread-1", raw, ts)
+			if ev == nil {
+				t.Fatalf("expected non-nil task event")
+			}
+			if ev.Type != tc.wantTyp {
+				t.Fatalf("unexpected event type: got=%s want=%s", ev.Type, tc.wantTyp)
+			}
+			if ev.Timestamp != ts {
+				t.Fatalf("timestamp mismatch: got=%d want=%d", ev.Timestamp, ts)
+			}
+			payload, ok := ev.Payload.(TaskPayload)
+			if !ok {
+				t.Fatalf("payload type mismatch: %T", ev.Payload)
+			}
+			if payload.TaskID != "t1" || payload.Status != tc.status {
+				t.Fatalf("payload mismatch: %+v", payload)
+			}
+		})
+	}
+}
+
+func TestToTaskEvent_InvalidPayload(t *testing.T) {
+	if ev := toTaskEvent("thread-1", "not-json", 1); ev != nil {
+		t.Fatalf("expected nil for invalid json")
+	}
+	if ev := toTaskEvent("thread-1", `{"status":"queued"}`, 1); ev != nil {
+		t.Fatalf("expected nil when task_id missing")
+	}
+	if ev := toTaskEvent("thread-1", `{"task_id":"t1"}`, 1); ev != nil {
+		t.Fatalf("expected nil when status missing")
 	}
 }
