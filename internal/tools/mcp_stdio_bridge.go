@@ -9,8 +9,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bookerbai/goclaw/internal/config"
@@ -52,6 +54,52 @@ type mcpFramedClient struct {
 	nextID int
 }
 
+type pooledStdioClient struct {
+	mu          sync.Mutex
+	serverName  string
+	serverCfg   config.MCPServerConfig
+	cmd         *exec.Cmd
+	stdin       io.WriteCloser
+	stdout      io.ReadCloser
+	stderr      bytes.Buffer
+	client      *mcpFramedClient
+	initialized bool
+}
+
+type stdioClientPool struct {
+	mu      sync.Mutex
+	clients map[string]*pooledStdioClient
+}
+
+var globalStdioClientPool = &stdioClientPool{clients: map[string]*pooledStdioClient{}}
+
+func (p *stdioClientPool) get(serverName string, serverCfg config.MCPServerConfig) *pooledStdioClient {
+	key := stdioPoolKey(serverName, serverCfg)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.clients[key]; ok {
+		return c
+	}
+	c := &pooledStdioClient{serverName: serverName, serverCfg: serverCfg}
+	p.clients[key] = c
+	return c
+}
+
+func stdioPoolKey(serverName string, serverCfg config.MCPServerConfig) string {
+	parts := []string{serverName, strings.TrimSpace(serverCfg.Command), strings.Join(serverCfg.Args, "\x00")}
+	if len(serverCfg.Env) > 0 {
+		keys := make([]string, 0, len(serverCfg.Env))
+		for k := range serverCfg.Env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			parts = append(parts, k+"="+serverCfg.Env[k])
+		}
+	}
+	return strings.Join(parts, "\x1f")
+}
+
 func invokeMCPStdio(ctx context.Context, serverName string, serverCfg config.MCPServerConfig, in mcpToolInput) (string, error) {
 	command := strings.TrimSpace(serverCfg.Command)
 	if command == "" {
@@ -65,59 +113,109 @@ func invokeMCPStdio(ctx context.Context, serverName string, serverCfg config.MCP
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(runCtx, command, serverCfg.Args...)
-	cmd.Env = mergeMCPEnv(serverCfg.Env)
+	if hasMCPConfigChanged(serverName, serverCfg) {
+		// Config changed; create/use a new pool key based on command+args+env.
+	}
 
-	stdin, err := cmd.StdinPipe()
+	client := globalStdioClientPool.get(serverName, serverCfg)
+	return client.invoke(runCtx, in)
+}
+
+func (p *pooledStdioClient) invoke(ctx context.Context, in mcpToolInput) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if err := p.ensureStarted(); err != nil {
+		return "", err
+	}
+
+	if !p.initialized {
+		if _, err := p.client.request(ctx, "initialize", map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo": map[string]any{
+				"name":    "goclaw",
+				"version": "0.1.0",
+			},
+		}); err != nil {
+			p.stopLocked()
+			return "", fmt.Errorf("initialize failed: %w; stderr=%s", err, strings.TrimSpace(p.stderr.String()))
+		}
+		if err := p.client.notify("notifications/initialized", map[string]any{}); err != nil {
+			p.stopLocked()
+			return "", fmt.Errorf("initialized notify failed: %w", err)
+		}
+		p.initialized = true
+	}
+
+	listRaw, err := p.client.request(ctx, "tools/list", map[string]any{})
 	if err != nil {
-		return "", fmt.Errorf("open stdin pipe: %w", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("open stdout pipe: %w", err)
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start stdio server %q: %w", serverName, err)
-	}
-	defer terminateMCPProcess(cmd, stdin)
-
-	client := &mcpFramedClient{reader: bufio.NewReader(stdout), writer: stdin}
-
-	if _, err := client.request(runCtx, "initialize", map[string]any{
-		"protocolVersion": "2024-11-05",
-		"capabilities":    map[string]any{},
-		"clientInfo": map[string]any{
-			"name":    "goclaw",
-			"version": "0.1.0",
-		},
-	}); err != nil {
-		return "", fmt.Errorf("initialize failed: %w; stderr=%s", err, strings.TrimSpace(stderr.String()))
-	}
-
-	if err := client.notify("notifications/initialized", map[string]any{}); err != nil {
-		return "", fmt.Errorf("initialized notify failed: %w", err)
-	}
-
-	listRaw, err := client.request(runCtx, "tools/list", map[string]any{})
-	if err != nil {
+		p.stopLocked()
 		return "", fmt.Errorf("tools/list failed: %w", err)
 	}
 	if err := ensureMCPToolExposed(listRaw, in.ToolName); err != nil {
 		return "", err
 	}
 
-	callRaw, err := client.request(runCtx, "tools/call", map[string]any{
+	callRaw, err := p.client.request(ctx, "tools/call", map[string]any{
 		"name":      in.ToolName,
 		"arguments": defaultMCPArguments(in.Arguments),
 	})
 	if err != nil {
+		p.stopLocked()
 		return "", fmt.Errorf("tools/call failed: %w", err)
 	}
 
 	return formatMCPCallResult(callRaw)
+}
+
+func (p *pooledStdioClient) ensureStarted() error {
+	if p.cmd != nil && p.cmd.Process != nil {
+		if p.cmd.ProcessState == nil {
+			return nil
+		}
+	}
+
+	p.stderr.Reset()
+	cmd := exec.Command(strings.TrimSpace(p.serverCfg.Command), p.serverCfg.Args...)
+	cmd.Env = mergeMCPEnv(p.serverCfg.Env)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("open stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("open stdout pipe: %w", err)
+	}
+	cmd.Stderr = &p.stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start stdio server %q: %w", p.serverName, err)
+	}
+
+	p.cmd = cmd
+	p.stdin = stdin
+	p.stdout = stdout
+	p.client = &mcpFramedClient{reader: bufio.NewReader(stdout), writer: stdin}
+	p.initialized = false
+	return nil
+}
+
+func (p *pooledStdioClient) stopLocked() {
+	if p.stdin != nil {
+		_ = p.stdin.Close()
+	}
+	if p.stdout != nil {
+		_ = p.stdout.Close()
+	}
+	if p.cmd != nil {
+		terminateMCPProcess(p.cmd, nil)
+	}
+	p.cmd = nil
+	p.stdin = nil
+	p.stdout = nil
+	p.client = nil
+	p.initialized = false
 }
 
 func (c *mcpFramedClient) request(ctx context.Context, method string, params any) (json.RawMessage, error) {

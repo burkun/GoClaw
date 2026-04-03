@@ -466,6 +466,27 @@ type ExtensionsConfigRef struct {
 	ConfigPath string `yaml:"config_path,omitempty" json:"config_path,omitempty"`
 }
 
+// MCPOAuthConfig configures OAuth for MCP HTTP/SSE servers.
+type MCPOAuthConfig struct {
+	// TokenURL is the OAuth token endpoint.
+	TokenURL string `yaml:"token_url,omitempty" json:"token_url,omitempty"`
+
+	// ClientID is the OAuth client id.
+	ClientID string `yaml:"client_id,omitempty" json:"client_id,omitempty"`
+
+	// ClientSecret is the OAuth client secret.
+	ClientSecret string `yaml:"client_secret,omitempty" json:"client_secret,omitempty"`
+
+	// Scope is the optional OAuth scope string.
+	Scope string `yaml:"scope,omitempty" json:"scope,omitempty"`
+
+	// GrantType defaults to client_credentials.
+	GrantType string `yaml:"grant_type,omitempty" json:"grant_type,omitempty"`
+
+	// RefreshToken allows refresh_token grant when provided.
+	RefreshToken string `yaml:"refresh_token,omitempty" json:"refresh_token,omitempty"`
+}
+
 // MCPServerConfig configures a single MCP server endpoint.
 type MCPServerConfig struct {
 	// Enabled controls whether this server is started.
@@ -492,6 +513,9 @@ type MCPServerConfig struct {
 
 	// Description is a human-readable summary of the server's capabilities.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+
+	// OAuth config for HTTP/SSE transport authorization.
+	OAuth *MCPOAuthConfig `yaml:"oauth,omitempty" json:"oauth,omitempty"`
 }
 
 // SkillStateConfig stores the enablement state for a skill.

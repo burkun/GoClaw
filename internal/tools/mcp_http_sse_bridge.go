@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bookerbai/goclaw/internal/config"
@@ -42,6 +43,35 @@ type sseEvent struct {
 	data  string
 }
 
+type pooledSSEClient struct {
+	mu          sync.Mutex
+	serverName  string
+	serverCfg   config.MCPServerConfig
+	httpClient  *http.Client
+	streamResp  *http.Response
+	client      *mcpSSEClient
+	initialized bool
+}
+
+type sseClientPool struct {
+	mu      sync.Mutex
+	clients map[string]*pooledSSEClient
+}
+
+var globalSSEClientPool = &sseClientPool{clients: map[string]*pooledSSEClient{}}
+
+func (p *sseClientPool) get(serverName string, cfg config.MCPServerConfig) *pooledSSEClient {
+	key := serverName + "|" + strings.TrimSpace(cfg.URL) + "|" + mcpConfigSignature(cfg)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.clients[key]; ok {
+		return c
+	}
+	c := &pooledSSEClient{serverName: serverName, serverCfg: cfg}
+	p.clients[key] = c
+	return c
+}
+
 func invokeMCPHTTP(ctx context.Context, serverName string, serverCfg config.MCPServerConfig, in mcpToolInput) (string, error) {
 	endpoint := strings.TrimSpace(serverCfg.URL)
 	if endpoint == "" {
@@ -57,10 +87,17 @@ func invokeMCPHTTP(ctx context.Context, serverName string, serverCfg config.MCPS
 	}
 	defer cancel()
 
+	headers := copyHeaders(serverCfg.Headers)
+	var err error
+	headers, err = applyOAuthHeader(runCtx, serverName, serverCfg, headers)
+	if err != nil {
+		return "", err
+	}
+
 	cli := &mcpHTTPClient{
 		httpClient: &http.Client{Timeout: defaultMCPHTTPTimeout},
 		url:        endpoint,
-		headers:    copyHeaders(serverCfg.Headers),
+		headers:    headers,
 	}
 	return invokeMCPByRPCClient(runCtx, cli, in)
 }
@@ -80,26 +117,101 @@ func invokeMCPSSE(ctx context.Context, serverName string, serverCfg config.MCPSe
 	}
 	defer cancel()
 
-	httpClient := &http.Client{Timeout: defaultMCPHTTPTimeout}
-	resp, err := openSSEStream(runCtx, httpClient, streamURL, serverCfg.Headers)
-	if err != nil {
+	client := globalSSEClientPool.get(serverName, serverCfg)
+	return client.invoke(runCtx, in)
+}
+
+func (p *pooledSSEClient) invoke(ctx context.Context, in mcpToolInput) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if err := p.ensureStarted(ctx); err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+
+	if !p.initialized {
+		if _, err := p.client.request(ctx, "initialize", map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo": map[string]any{
+				"name":    "goclaw",
+				"version": "0.1.0",
+			},
+		}); err != nil {
+			p.resetLocked()
+			return "", fmt.Errorf("initialize failed: %w", err)
+		}
+		if err := p.client.notify("notifications/initialized", map[string]any{}); err != nil {
+			p.resetLocked()
+			return "", fmt.Errorf("initialized notify failed: %w", err)
+		}
+		p.initialized = true
+	}
+
+	listRaw, err := p.client.request(ctx, "tools/list", map[string]any{})
+	if err != nil {
+		p.resetLocked()
+		return "", fmt.Errorf("tools/list failed: %w", err)
+	}
+	if err := ensureMCPToolExposed(listRaw, in.ToolName); err != nil {
+		return "", err
+	}
+
+	callRaw, err := p.client.request(ctx, "tools/call", map[string]any{
+		"name":      in.ToolName,
+		"arguments": defaultMCPArguments(in.Arguments),
+	})
+	if err != nil {
+		p.resetLocked()
+		return "", fmt.Errorf("tools/call failed: %w", err)
+	}
+	return formatMCPCallResult(callRaw)
+}
+
+func (p *pooledSSEClient) ensureStarted(ctx context.Context) error {
+	if p.client != nil && p.streamResp != nil && p.streamResp.Body != nil {
+		return nil
+	}
+
+	headers := copyHeaders(p.serverCfg.Headers)
+	var err error
+	headers, err = applyOAuthHeader(ctx, p.serverName, p.serverCfg, headers)
+	if err != nil {
+		return err
+	}
+
+	httpClient := &http.Client{Timeout: defaultMCPHTTPTimeout}
+	resp, err := openSSEStream(ctx, httpClient, strings.TrimSpace(p.serverCfg.URL), headers)
+	if err != nil {
+		return err
+	}
 
 	reader := bufio.NewReader(resp.Body)
-	postURL, err := discoverSSEPostURL(runCtx, reader, streamURL)
+	postURL, err := discoverSSEPostURL(ctx, reader, strings.TrimSpace(p.serverCfg.URL))
 	if err != nil {
-		postURL = streamURL
+		postURL = strings.TrimSpace(p.serverCfg.URL)
 	}
 
-	cli := &mcpSSEClient{
+	p.httpClient = httpClient
+	p.streamResp = resp
+	p.client = &mcpSSEClient{
 		httpClient: httpClient,
 		postURL:    postURL,
-		headers:    copyHeaders(serverCfg.Headers),
+		headers:    headers,
 		stream:     reader,
 	}
-	return invokeMCPByRPCClient(runCtx, cli, in)
+	p.initialized = false
+	return nil
+}
+
+func (p *pooledSSEClient) resetLocked() {
+	if p.streamResp != nil && p.streamResp.Body != nil {
+		_ = p.streamResp.Body.Close()
+	}
+	p.streamResp = nil
+	p.client = nil
+	p.httpClient = nil
+	p.initialized = false
 }
 
 func invokeMCPByRPCClient(ctx context.Context, client mcpRPCClient, in mcpToolInput) (string, error) {

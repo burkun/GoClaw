@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	lcTool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -368,6 +369,7 @@ func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
 	summarizeEnabled := true
 	memoryPath := "memory.json"
 	memoryDebounce := 30 * time.Second
+	memoryConfidence := 0.7
 
 	if appCfg != nil {
 		memoryEnabled = appCfg.Memory.Enabled
@@ -379,20 +381,83 @@ func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
 		if appCfg.Memory.DebounceSeconds > 0 {
 			memoryDebounce = time.Duration(appCfg.Memory.DebounceSeconds) * time.Second
 		}
+		if appCfg.Memory.FactConfidenceThreshold > 0 {
+			memoryConfidence = appCfg.Memory.FactConfidenceThreshold
+		}
+	}
+
+	createChatModel := func(modelName string) (model.BaseChatModel, error) {
+		if appCfg == nil {
+			return nil, fmt.Errorf("app config not loaded")
+		}
+		req := models.CreateRequest{}
+		if strings.TrimSpace(modelName) != "" {
+			req.ModelName = strings.TrimSpace(modelName)
+		} else if dm := appCfg.DefaultModel(); dm != nil {
+			req.ModelName = dm.Name
+		}
+		return models.CreateChatModel(context.Background(), appCfg, req)
 	}
 
 	if memoryEnabled {
 		store := memorymw.NewJSONFileStore(memoryPath)
 		queue := memorymw.GetGlobalQueue(filepath.Dir(memoryPath))
 		queue.DebounceDelay = memoryDebounce
+		if appCfg != nil {
+			if cm, err := createChatModel(appCfg.Memory.ModelName); err == nil && cm != nil {
+				queue.SetExtractor(memorymw.NewEinoFactExtractor(cm, memoryConfidence))
+			}
+		}
 		legacy = append(legacy, memorymw.NewMemoryMiddleware(store, queue, ""))
 	}
+
 	if summarizeEnabled {
-		legacy = append(legacy, summarizemw.NewSummarizationMiddleware(summarizemw.DefaultConfig(), nil))
+		summCfg := summarizemw.DefaultConfig()
+		if appCfg != nil {
+			if strings.TrimSpace(appCfg.Summarization.SummaryPrompt) != "" {
+				summCfg.PromptTemplate = appCfg.Summarization.SummaryPrompt
+			}
+			if appCfg.Summarization.Keep.Type == "messages" && int(appCfg.Summarization.Keep.Value) > 0 {
+				summCfg.KeepRecentMessages = int(appCfg.Summarization.Keep.Value)
+			}
+			for _, tr := range appCfg.Summarization.Trigger {
+				switch strings.ToLower(strings.TrimSpace(tr.Type)) {
+				case "fraction":
+					if tr.Value > 0 && tr.Value <= 1 {
+						summCfg.ThresholdRatio = tr.Value
+					}
+				case "tokens":
+					if tr.Value > 0 {
+						summCfg.TokenLimit = int(tr.Value)
+					}
+				}
+			}
+		}
+		var summarizer summarizemw.Summarizer
+		if appCfg != nil {
+			if cm, err := createChatModel(appCfg.Summarization.ModelName); err == nil && cm != nil {
+				summarizer = summarizemw.NewEinoSummarizer(cm)
+			}
+		}
+		legacy = append(legacy, summarizemw.NewSummarizationMiddleware(summCfg, summarizer))
 	}
+
 	legacy = append(legacy, todomw.NewTodoMiddleware())
+
 	if titleEnabled {
-		legacy = append(legacy, titlemw.NewTitleMiddleware(titlemw.DefaultConfig(), nil))
+		titleCfg := titlemw.DefaultConfig()
+		if appCfg != nil {
+			if appCfg.Title.MaxWords > 0 {
+				titleCfg.MaxWords = appCfg.Title.MaxWords
+			}
+		}
+		var titleGen titlemw.TitleGenerator
+		if appCfg != nil {
+			if cm, err := createChatModel(appCfg.Title.ModelName); err == nil && cm != nil {
+				titleGen = titlemw.NewEinoTitleGenerator(cm)
+			}
+		}
+		legacy = append(legacy, titlemw.NewTitleMiddleware(titleCfg, titleGen))
 	}
 
 	if len(legacy) == 0 {

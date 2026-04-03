@@ -396,10 +396,11 @@ type updateEntry struct {
 // Only the latest entry per thread_id is retained (replace-on-add).
 // Processing fires after DebounceDelay has elapsed without new entries.
 type UpdateQueue struct {
-	mu      sync.Mutex
-	entries map[string]*updateEntry // key: threadID
-	timer   *time.Timer
-	store   MemoryStore
+	mu        sync.Mutex
+	entries   map[string]*updateEntry // key: threadID
+	timer     *time.Timer
+	store     MemoryStore
+	extractor FactExtractor
 
 	// DebounceDelay is the wait after the last Add before processing begins.
 	// Default: 30 seconds, matching DeerFlow's debounce_seconds config.
@@ -424,6 +425,16 @@ func GetGlobalQueue(dataDir string) *UpdateQueue {
 		}
 	})
 	return globalQueue
+}
+
+// SetExtractor sets or replaces the fact extractor used by the queue.
+func (q *UpdateQueue) SetExtractor(extractor FactExtractor) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.extractor = extractor
 }
 
 // Add enqueues or replaces the pending memory update for threadID.
@@ -484,7 +495,25 @@ func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
 		return err
 	}
 
-	facts := deriveFactsFromMessages(entry.messages, entry.correctionDetected)
+	var facts []string
+
+	// Try LLM extraction if extractor is configured.
+	if q.extractor != nil {
+		extracted, extractErr := q.extractor.Extract(entry.messages, entry.correctionDetected)
+		if extractErr == nil && len(extracted) > 0 {
+			for _, f := range extracted {
+				if f.Confidence >= 0.7 {
+					facts = append(facts, f.Content)
+				}
+			}
+		}
+	}
+
+	// Fallback to rule-based extraction if LLM produced nothing.
+	if len(facts) == 0 {
+		facts = deriveFactsFromMessages(entry.messages, entry.correctionDetected)
+	}
+
 	if len(facts) == 0 {
 		return nil
 	}
