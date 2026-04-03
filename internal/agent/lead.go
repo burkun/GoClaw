@@ -83,6 +83,8 @@ type leadAgent struct {
 	skills      *skillsruntime.Registry
 }
 
+var getAppConfig = config.GetAppConfig
+
 func New(ctx context.Context) (*leadAgent, error) {
 	appCfg, err := config.GetAppConfig()
 	if err != nil {
@@ -192,6 +194,9 @@ func (a *leadAgent) Run(ctx context.Context, state *ThreadState, cfg RunConfig) 
 	if state == nil {
 		state = &ThreadState{}
 	}
+	if err := a.syncSkillsOnConfigReload(); err != nil {
+		return nil, fmt.Errorf("sync skills config failed: %w", err)
+	}
 
 	messages := prepareRunMessages(state.Messages, cfg)
 	opts := []adk.AgentRunOption{adk.WithSessionValues(map[string]any{
@@ -229,6 +234,10 @@ func (a *leadAgent) Resume(ctx context.Context, _ *ThreadState, cfg RunConfig, c
 		return ch, nil
 	}
 
+	if err := a.syncSkillsOnConfigReload(); err != nil {
+		return nil, fmt.Errorf("sync skills config failed: %w", err)
+	}
+
 	stream, err := a.runner.Resume(ctx, checkpointID, adk.WithSessionValues(map[string]any{
 		"thread_id":                cfg.ThreadID,
 		"plan_mode":                cfg.IsPlanMode,
@@ -264,6 +273,17 @@ func filterToolsByAllowed(ctx context.Context, tools []lcTool.BaseTool, allowed 
 		return nil, fmt.Errorf("no tools matched skills allowed-tools")
 	}
 	return out, nil
+}
+
+func (a *leadAgent) syncSkillsOnConfigReload() error {
+	if a == nil || a.skills == nil {
+		return nil
+	}
+	cfg, err := getAppConfig()
+	if err != nil {
+		return err
+	}
+	return a.skills.OnConfigReload(cfg)
 }
 
 func prepareRunMessages(messages []*schema.Message, cfg RunConfig) []*schema.Message {

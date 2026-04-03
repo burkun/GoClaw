@@ -3,9 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/bookerbai/goclaw/internal/config"
+	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
 	toolruntime "github.com/bookerbai/goclaw/internal/tools"
 	"github.com/cloudwego/eino/schema"
 )
@@ -65,6 +68,19 @@ func (f *fakeGoClawTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object"}`)
 }
 func (f *fakeGoClawTool) Execute(_ context.Context, _ string) (string, error) { return "ok", nil }
+
+type fakeSkillPlugin struct {
+	name      string
+	reloadCnt int
+}
+
+func (p *fakeSkillPlugin) Name() string                                        { return p.name }
+func (p *fakeSkillPlugin) OnLoad(_ context.Context, _ *config.AppConfig) error { return nil }
+func (p *fakeSkillPlugin) OnUnload(_ context.Context) error                    { return nil }
+func (p *fakeSkillPlugin) OnConfigReload(_ *config.AppConfig) error {
+	p.reloadCnt++
+	return nil
+}
 
 // --- tests ---
 
@@ -182,6 +198,41 @@ func TestFilterToolsByAllowed_NoMatch(t *testing.T) {
 	_, err := filterToolsByAllowed(context.Background(), einoTools, map[string]struct{}{"bash": {}})
 	if err == nil {
 		t.Fatalf("expected error when no tools matched")
+	}
+}
+
+func TestSyncSkillsOnConfigReload(t *testing.T) {
+	reg := skillsruntime.NewRegistry()
+	plugin := &fakeSkillPlugin{name: "skill-a"}
+	if err := reg.Register(&skillsruntime.Skill{Metadata: skillsruntime.SkillMetadata{Name: "skill-a"}, Plugin: plugin}); err != nil {
+		t.Fatalf("register skill failed: %v", err)
+	}
+
+	old := getAppConfig
+	defer func() { getAppConfig = old }()
+	getAppConfig = func() (*config.AppConfig, error) {
+		return &config.AppConfig{}, nil
+	}
+
+	a := &leadAgent{skills: reg}
+	if err := a.syncSkillsOnConfigReload(); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+	if plugin.reloadCnt != 1 {
+		t.Fatalf("expected reload count 1, got %d", plugin.reloadCnt)
+	}
+}
+
+func TestSyncSkillsOnConfigReload_ConfigError(t *testing.T) {
+	old := getAppConfig
+	defer func() { getAppConfig = old }()
+	getAppConfig = func() (*config.AppConfig, error) {
+		return nil, errors.New("load failed")
+	}
+
+	a := &leadAgent{skills: skillsruntime.NewRegistry()}
+	if err := a.syncSkillsOnConfigReload(); err == nil {
+		t.Fatalf("expected error when getAppConfig fails")
 	}
 }
 
