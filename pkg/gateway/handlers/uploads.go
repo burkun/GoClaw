@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -46,6 +48,15 @@ type UploadResponse struct {
 // unsafeFilenameRe rejects filenames with path separators or null bytes.
 var unsafeFilenameRe = regexp.MustCompile(`[/\\` + "\x00" + `]`)
 
+var threadIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+
+func validateThreadID(threadID string) error {
+	if !threadIDRe.MatchString(threadID) {
+		return fmt.Errorf("invalid thread_id")
+	}
+	return nil
+}
+
 // sanitiseFilename strips directory components and checks for unsafe characters.
 // Returns an error when the resulting name is empty or contains dangerous sequences.
 func sanitiseFilename(name string) (string, error) {
@@ -77,7 +88,10 @@ func (h *UploadsHandler) UploadFiles(c *gin.Context) {
 		return
 	}
 
-	// TODO: Validate threadID against a UUID / slug format to prevent directory traversal.
+	if err := validateThreadID(threadID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	form, err := c.MultipartForm()
 	if err != nil {
@@ -91,34 +105,46 @@ func (h *UploadsHandler) UploadFiles(c *gin.Context) {
 		return
 	}
 
-	// TODO: Resolve the host-side uploads directory from config or a paths helper:
-	//   uploadsDir := filepath.Join(h.cfg.DataDir, "threads", threadID, "user-data", "uploads")
-	//   os.MkdirAll(uploadsDir, 0o755)
+	uploadsDir := filepath.Join(".goclaw", "threads", threadID, "user-data", "uploads")
+	if err := os.MkdirAll(uploadsDir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create uploads directory"})
+		return
+	}
 
 	var uploaded []UploadedFileInfo
 
 	for _, fh := range files {
 		safeName, err := sanitiseFilename(fh.Filename)
 		if err != nil {
-			// Skip files with unsafe names rather than aborting the whole request.
-			// TODO: log warning with file name and thread ID.
 			continue
 		}
 
-		// TODO: Open fh via fh.Open(), read content, write to uploadsDir/safeName.
-		//   If the active sandbox is non-local (Docker), also push the bytes into
-		//   the sandbox via sandboxProvider.Get(threadID).UpdateFile(virtualPath, content).
+		src, err := fh.Open()
+		if err != nil {
+			continue
+		}
 
-		// TODO: Set world-writable permissions on the saved file so the Docker
-		//   sandbox runtime (different UID) can overwrite it if needed:
-		//   os.Chmod(hostPath, 0o666)
+		hostPath := filepath.Join(uploadsDir, safeName)
+		dst, err := os.OpenFile(hostPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			src.Close()
+			continue
+		}
 
+		written, copyErr := io.Copy(dst, src)
+		closeErr := dst.Close()
+		src.Close()
+		if copyErr != nil || closeErr != nil {
+			_ = os.Remove(hostPath)
+			continue
+		}
+
+		_ = os.Chmod(hostPath, 0o666)
 		virtualPath := "/mnt/user-data/uploads/" + safeName
-		hostPath := fmt.Sprintf(".goclaw/threads/%s/user-data/uploads/%s", threadID, safeName)
 
 		uploaded = append(uploaded, UploadedFileInfo{
 			Filename:    safeName,
-			Size:        fh.Size,
+			Size:        written,
 			VirtualPath: virtualPath,
 			HostPath:    hostPath,
 		})

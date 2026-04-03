@@ -52,15 +52,23 @@ type ModelsListResponse struct {
 // It reads the model configuration list and returns each model's public metadata.
 // Sensitive fields (API keys, base URLs, internal routing config) are excluded.
 func (h *ModelsHandler) ListModels(c *gin.Context) {
-	// TODO: iterate h.cfg.Models, map each config.ModelConfig → ModelResponse.
-	//   For each model:
-	//     - set ID = model.Name
-	//     - set Model = model.Model
-	//     - set DisplayName = model.DisplayName (may be empty)
-	//     - set Description = model.Description (may be empty)
-	//     - set Capabilities from model feature flags
-	//   Return 200 JSON with ModelsListResponse.
+	models := make([]ModelResponse, 0)
+	if h.cfg != nil {
+		models = make([]ModelResponse, 0, len(h.cfg.Models))
+		for _, model := range h.cfg.Models {
+			models = append(models, ModelResponse{
+				ID:          model.Name,
+				Model:       model.Model,
+				DisplayName: model.DisplayName,
+				Description: model.Description,
+				Capabilities: ModelCapabilities{
+					SupportsThinking:        model.SupportsThinking,
+					SupportsReasoningEffort: model.SupportsReasoningEffort,
+					SupportsVision:          model.SupportsVision,
+				},
+			})
+		}
+	}
 
-	// Placeholder: return empty list until config.ModelConfig type is defined.
-	c.JSON(http.StatusOK, ModelsListResponse{Models: []ModelResponse{}})
+	c.JSON(http.StatusOK, ModelsListResponse{Models: models})
 }

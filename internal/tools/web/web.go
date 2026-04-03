@@ -13,10 +13,14 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
@@ -108,30 +112,78 @@ func (t *WebSearchTool) InputSchema() json.RawMessage {
 }
 
 // Execute calls the Tavily Search API and returns JSON-formatted results.
-//
-// TODO: implementation steps
-//  1. json.Unmarshal input into webSearchInput.
-//  2. Validate that t.cfg.TavilyAPIKey is set; return an error if not.
-//  3. Build a POST request to https://api.tavily.com/search with body:
-//     {"api_key": key, "query": in.Query, "max_results": cfg.MaxSearchResults}.
-//  4. Use newHTTPClient(t.cfg.Timeout).Do(req).
-//  5. Read and json.Unmarshal the response body.
-//  6. Normalize results into []SearchResult{Title, URL, Snippet}.
-//  7. json.MarshalIndent and return the JSON string.
-//  8. On HTTP or JSON error, return "Error: <message>".
 func (t *WebSearchTool) Execute(ctx context.Context, input string) (string, error) {
 	var in webSearchInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
 		return "", fmt.Errorf("web_search: invalid input JSON: %w", err)
 	}
 
+	query := strings.TrimSpace(in.Query)
+	if query == "" {
+		return "", fmt.Errorf("web_search: query is required")
+	}
 	if t.cfg.TavilyAPIKey == "" {
 		return "Error: TAVILY_API_KEY is not configured.", nil
 	}
 
-	// TODO: implement – see doc comment above.
-	_ = ctx
-	return "", fmt.Errorf("web_search: not implemented")
+	payload := map[string]any{
+		"api_key":     t.cfg.TavilyAPIKey,
+		"query":       query,
+		"max_results": clampInt(t.cfg.MaxSearchResults, 1, 20),
+	}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.tavily.com/search", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Sprintf("Error: cannot build request: %v", err), nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := newHTTPClient(t.cfg.Timeout).Do(req)
+	if err != nil {
+		return fmt.Sprintf("Error: tavily request failed: %v", err), nil
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Sprintf("Error: failed to read tavily response: %v", err), nil
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Sprintf("Error: tavily returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))), nil
+	}
+
+	var raw struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+			Snippet string `json:"snippet"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return fmt.Sprintf("Error: invalid tavily response: %v", err), nil
+	}
+
+	out := make([]SearchResult, 0, len(raw.Results))
+	for _, r := range raw.Results {
+		snippet := strings.TrimSpace(r.Snippet)
+		if snippet == "" {
+			snippet = strings.TrimSpace(r.Content)
+		}
+		out = append(out, SearchResult{
+			Title:   strings.TrimSpace(r.Title),
+			URL:     strings.TrimSpace(r.URL),
+			Snippet: snippet,
+		})
+	}
+
+	encoded, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("Error: cannot encode search results: %v", err), nil
+	}
+	return string(encoded), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -182,27 +234,62 @@ func (t *WebFetchTool) InputSchema() json.RawMessage {
 }
 
 // Execute fetches the page via the Jina Reader API and returns extracted text.
-//
-// TODO: implementation steps
-//  1. json.Unmarshal input into webFetchInput.
-//  2. Validate that in.URL starts with "http://" or "https://".
-//  3. Build a GET request to "https://r.jina.ai/" + url.
-//  4. Set Accept: text/markdown header to get Markdown output from Jina.
-//  5. If t.cfg.JinaAPIKey != "", set Authorization: Bearer <key> header.
-//  6. Use newHTTPClient(t.cfg.Timeout).Do(req).
-//  7. Read response body; truncate to t.cfg.MaxFetchChars characters.
-//  8. Return the Markdown string.
-//  9. On HTTP or I/O error, return "Error: <message>".
 func (t *WebFetchTool) Execute(ctx context.Context, input string) (string, error) {
 	var in webFetchInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
 		return "", fmt.Errorf("web_fetch: invalid input JSON: %w", err)
 	}
 
-	// TODO: implement – see doc comment above.
-	_ = ctx
-	return "", fmt.Errorf("web_fetch: not implemented")
+	rawURL := strings.TrimSpace(in.URL)
+	if rawURL == "" {
+		return "", fmt.Errorf("web_fetch: url is required")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "Error: invalid URL. Must include http:// or https:// scheme.", nil
+	}
+
+	fetchURL := "https://r.jina.ai/" + rawURL
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
+	if err != nil {
+		return fmt.Sprintf("Error: cannot build request: %v", err), nil
+	}
+	req.Header.Set("Accept", "text/markdown")
+	if strings.TrimSpace(t.cfg.JinaAPIKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(t.cfg.JinaAPIKey))
+	}
+
+	resp, err := newHTTPClient(t.cfg.Timeout).Do(req)
+	if err != nil {
+		return fmt.Sprintf("Error: fetch request failed: %v", err), nil
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Sprintf("Error: failed to read response: %v", err), nil
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Sprintf("Error: fetch returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))), nil
+	}
+
+	content := string(respBody)
+	maxChars := t.cfg.MaxFetchChars
+	if maxChars <= 0 {
+		maxChars = defaultWebToolConfig().MaxFetchChars
+	}
+	if len(content) > maxChars {
+		content = content[:maxChars] + "\n... (truncated)"
+	}
+	return content, nil
 }
 
-// Silence unused import warning during skeleton phase.
-var _ = http.MethodGet
+func clampInt(v, minV, maxV int) int {
+	if v < minV {
+		return minV
+	}
+	if v > maxV {
+		return maxV
+	}
+	return v
+}

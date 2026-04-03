@@ -9,10 +9,16 @@
 package search
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
 )
 
 // DefaultGlobMaxResults caps the number of paths returned by a single glob call.
@@ -94,43 +100,94 @@ func (t *GrepTool) InputSchema() json.RawMessage {
 }
 
 // Execute searches files under path for lines matching pattern.
-//
-// TODO: implementation steps
-//  1. json.Unmarshal input into grepInput.
-//  2. Resolve effective max_results: clamp(in.MaxResults, default=100, upper=500).
-//  3. Call t.Resolver.Resolve(in.Path) to get hostPath.
-//  4. Build a list of candidate file paths under hostPath using filepath.WalkDir.
-//     If in.Glob is set, filter with filepath.Match.
-//  5. For each candidate, read the file and scan lines:
-//     a. If in.Literal, use strings.Contains (or strings.EqualFold for case-insensitive).
-//     b. Otherwise compile the regex once with regexp.Compile (or MustCompile).
-//        Wrap in (?i) if !in.CaseSensitive.
-//  6. Collect GrepMatch{Path: virtualPath, LineNumber: n, Line: line}.
-//     Stop collecting when len(matches) >= effectiveMax (set truncated=true).
-//  7. Call formatGrepResults(virtualPath, matches, truncated) and return.
 func (t *GrepTool) Execute(_ context.Context, input string) (string, error) {
 	var in grepInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
 		return "", fmt.Errorf("grep: invalid input JSON: %w", err)
 	}
+	if strings.TrimSpace(in.Path) == "" || strings.TrimSpace(in.Pattern) == "" {
+		return "", fmt.Errorf("grep: path and pattern are required")
+	}
+	if t.Resolver == nil {
+		return "", fmt.Errorf("grep: resolver is required")
+	}
 
-	// TODO: implement – see doc comment above.
-	_ = in
-	return "", fmt.Errorf("grep: not implemented")
+	effectiveMax := clampMax(in.MaxResults, t.MaxResults, DefaultGrepMaxResults, 500)
+	hostRoot, err := t.Resolver.Resolve(in.Path)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), nil
+	}
+
+	matcher, err := newLineMatcher(in)
+	if err != nil {
+		return fmt.Sprintf("Error: invalid grep pattern: %v", err), nil
+	}
+
+	matches := make([]GrepMatch, 0, minInt(16, effectiveMax))
+	truncated := false
+	walkErr := filepath.WalkDir(hostRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+
+		rel, err := filepath.Rel(hostRoot, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if strings.TrimSpace(in.Glob) != "" && !matchPattern(rel, in.Glob) {
+			return nil
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		lineNo := 0
+		virtualPath := t.Resolver.MaskHostPaths(path)
+		for scanner.Scan() {
+			lineNo++
+			line := scanner.Text()
+			if !matcher(line) {
+				continue
+			}
+			matches = append(matches, GrepMatch{Path: virtualPath, LineNumber: lineNo, Line: line})
+			if len(matches) >= effectiveMax {
+				truncated = true
+				return errStopWalk
+			}
+		}
+		return nil
+	})
+	if walkErr != nil && walkErr != errStopWalk {
+		return fmt.Sprintf("Error: grep walk failed: %v", walkErr), nil
+	}
+
+	return formatGrepResults(in.Path, matches, truncated), nil
 }
 
 // formatGrepResults formats a slice of GrepMatch results for the model.
-//
-// TODO: return "No matches found under <root>" when matches is empty.
-// Otherwise return "Found N matches under <root>" followed by one
-// "<path>:<line_number>: <line>" entry per match, with a truncation notice
-// appended when truncated is true.
 func formatGrepResults(root string, matches []GrepMatch, truncated bool) string {
 	if len(matches) == 0 {
 		return fmt.Sprintf("No matches found under %s", root)
 	}
-	// TODO: implement full formatted output.
-	return fmt.Sprintf("Found %d matches under %s (formatting TODO)", len(matches), root)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Found %d matches under %s", len(matches), root))
+	for _, m := range matches {
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("%s:%d: %s", m.Path, m.LineNumber, m.Line))
+	}
+	if truncated {
+		b.WriteString("\n... results truncated")
+	}
+	return b.String()
 }
 
 // ---------------------------------------------------------------------------
@@ -181,43 +238,168 @@ func (t *GlobTool) InputSchema() json.RawMessage {
 }
 
 // Execute walks the directory tree and collects paths matching the glob pattern.
-//
-// TODO: implementation steps
-//  1. json.Unmarshal input into globInput.
-//  2. Resolve effective max_results: clamp(in.MaxResults, default=200, upper=1000).
-//  3. Call t.Resolver.Resolve(in.Path) to get hostPath.
-//  4. Use filepath.WalkDir(hostPath, ...) to traverse the tree.
-//     a. For each entry: skip directories unless in.IncludeDirs.
-//     b. Compute relPath = strings.TrimPrefix(entry.Path, hostPath+"/").
-//     c. Match with filepath.Match(in.Pattern, relPath) — or use
-//        github.com/bmatcuk/doublestar/v4 for `**` support.
-//     d. If matched, replace hostPath prefix with the original virtual path
-//        (t.Resolver.MaskHostPaths) and append to matches.
-//     e. Stop when len(matches) >= effectiveMax (set truncated=true).
-//  5. Call formatGlobResults(virtualPath, matches, truncated) and return.
 func (t *GlobTool) Execute(_ context.Context, input string) (string, error) {
 	var in globInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
 		return "", fmt.Errorf("glob: invalid input JSON: %w", err)
 	}
+	if strings.TrimSpace(in.Path) == "" || strings.TrimSpace(in.Pattern) == "" {
+		return "", fmt.Errorf("glob: path and pattern are required")
+	}
+	if t.Resolver == nil {
+		return "", fmt.Errorf("glob: resolver is required")
+	}
 
-	// TODO: implement – see doc comment above.
-	_ = in
-	return "", fmt.Errorf("glob: not implemented")
+	effectiveMax := clampMax(in.MaxResults, t.MaxResults, DefaultGlobMaxResults, 1000)
+	hostRoot, err := t.Resolver.Resolve(in.Path)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), nil
+	}
+
+	matches := make([]string, 0, minInt(32, effectiveMax))
+	truncated := false
+	walkErr := filepath.WalkDir(hostRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() && !in.IncludeDirs {
+			if path == hostRoot {
+				return nil
+			}
+			return nil
+		}
+
+		rel, err := filepath.Rel(hostRoot, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if rel == "." {
+			return nil
+		}
+		if !matchPattern(rel, in.Pattern) {
+			return nil
+		}
+
+		matches = append(matches, t.Resolver.MaskHostPaths(path))
+		if len(matches) >= effectiveMax {
+			truncated = true
+			return errStopWalk
+		}
+		return nil
+	})
+	if walkErr != nil && walkErr != errStopWalk {
+		return fmt.Sprintf("Error: glob walk failed: %v", walkErr), nil
+	}
+
+	sort.Strings(matches)
+	return formatGlobResults(in.Path, matches, truncated), nil
 }
 
 // formatGlobResults formats a slice of matching paths for the model.
-//
-// TODO: return "No files matched under <root>" when matches is empty.
-// Otherwise return "Found N paths under <root>" with one path per line,
-// and a truncation notice when truncated is true.
 func formatGlobResults(root string, matches []string, truncated bool) string {
 	if len(matches) == 0 {
 		return fmt.Sprintf("No files matched under %s", root)
 	}
-	// TODO: implement full formatted output.
-	return fmt.Sprintf("Found %d paths under %s (formatting TODO)", len(matches), root)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Found %d paths under %s", len(matches), root))
+	for _, p := range matches {
+		b.WriteString("\n")
+		b.WriteString(p)
+	}
+	if truncated {
+		b.WriteString("\n... results truncated")
+	}
+	return b.String()
 }
 
-// Silence unused import warnings during skeleton phase.
-var _ = filepath.Join
+var errStopWalk = fmt.Errorf("stop walk")
+
+func clampMax(input, configured, def, upper int) int {
+	v := input
+	if v <= 0 {
+		v = configured
+	}
+	if v <= 0 {
+		v = def
+	}
+	if v > upper {
+		v = upper
+	}
+	return v
+}
+
+func newLineMatcher(in grepInput) (func(string) bool, error) {
+	if in.Literal {
+		needle := in.Pattern
+		if in.CaseSensitive {
+			return func(line string) bool { return strings.Contains(line, needle) }, nil
+		}
+		needle = strings.ToLower(needle)
+		return func(line string) bool { return strings.Contains(strings.ToLower(line), needle) }, nil
+	}
+
+	pattern := in.Pattern
+	if !in.CaseSensitive {
+		pattern = "(?i)" + pattern
+	}
+	r, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, err
+	}
+	return func(line string) bool { return r.MatchString(line) }, nil
+}
+
+func matchPattern(relPath, pattern string) bool {
+	rel := filepath.ToSlash(relPath)
+	p := filepath.ToSlash(strings.TrimSpace(pattern))
+	if p == "" {
+		return true
+	}
+	if strings.Contains(p, "**") {
+		re := globToRegexp(p)
+		return re.MatchString(rel)
+	}
+	ok, err := filepath.Match(p, rel)
+	if err != nil {
+		return false
+	}
+	return ok
+}
+
+func globToRegexp(pattern string) *regexp.Regexp {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		ch := pattern[i]
+		switch ch {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				b.WriteString(".*")
+				i++
+			} else {
+				b.WriteString("[^/]*")
+			}
+		case '?':
+			b.WriteString("[^/]")
+		case '.', '(', ')', '+', '|', '^', '$', '{', '}', '[', ']', '\\':
+			b.WriteString("\\")
+			b.WriteByte(ch)
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	b.WriteString("$")
+	r, err := regexp.Compile(b.String())
+	if err != nil {
+		return regexp.MustCompile("^$")
+	}
+	return r
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

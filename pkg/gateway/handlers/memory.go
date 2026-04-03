@@ -78,15 +78,17 @@ type MemoryResponse struct {
 // Handler
 // ---------------------------------------------------------------------------
 
+const defaultMemoryPath = ".goclaw/memory.json"
+
 // GetMemory handles GET /api/memory.
 //
 // It reads the persisted memory.json file from disk and returns its contents.
 // If the file does not exist an empty-but-valid MemoryResponse is returned.
 func (h *MemoryHandler) GetMemory(c *gin.Context) {
-	// TODO: Resolve memory file path from h.cfg.Memory.StoragePath (default:
-	//   ".goclaw/memory.json").  If that field is not yet defined, fall back to
-	//   the hard-coded constant.
-	memoryPath := ".goclaw/memory.json"
+	memoryPath := defaultMemoryPath
+	if h.cfg != nil && h.cfg.Memory.StoragePath != "" {
+		memoryPath = h.cfg.Memory.StoragePath
+	}
 
 	// TODO: Replace the block below with a thread-safe in-memory cache that is
 	//   populated at startup and refreshed on file-change events (fsnotify) to
