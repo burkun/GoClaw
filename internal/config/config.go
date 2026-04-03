@@ -42,6 +42,9 @@ type AppConfig struct {
 	// LogLevel controls verbosity for goclaw modules (debug/info/warning/error).
 	LogLevel string `yaml:"log_level"`
 
+	// Server configures gateway serving behavior.
+	Server ServerConfig `yaml:"server,omitempty"`
+
 	// Models is the list of available LLM model configurations.
 	Models []ModelConfig `yaml:"models"`
 
@@ -107,6 +110,20 @@ func (c *AppConfig) DefaultModel() *ModelConfig {
 		return nil
 	}
 	return &c.Models[0]
+}
+
+// ---------------------------------------------------------------------------
+// ServerConfig
+// ---------------------------------------------------------------------------
+
+// ServerConfig configures gateway HTTP server behavior.
+type ServerConfig struct {
+	// Address is the listen address for gateway server (e.g. ":8001").
+	Address string `yaml:"address,omitempty"`
+
+	// CORSOrigins is the explicit allowlist for CORS origins.
+	// When empty, gateway falls back to permissive local-development mode.
+	CORSOrigins []string `yaml:"cors_origins,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -366,6 +383,9 @@ type SubagentOverrideConfig struct {
 type SubagentsConfig struct {
 	// TimeoutSeconds is the default timeout for all sub-agents (default: 900).
 	TimeoutSeconds int `yaml:"timeout_seconds,omitempty"`
+
+	// MaxConcurrent is the global concurrency limit for subagent execution.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
 
 	// Agents holds per-agent timeout overrides keyed by agent name.
 	Agents map[string]SubagentOverrideConfig `yaml:"agents,omitempty"`

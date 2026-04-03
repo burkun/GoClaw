@@ -34,6 +34,11 @@ func TestLoad_basic(t *testing.T) {
 config_version: 1
 log_level: debug
 
+server:
+  address: :8001
+  cors_origins:
+    - http://localhost:3000
+
 models:
   - name: gpt-4o
     display_name: GPT-4o
@@ -84,6 +89,11 @@ checkpointer:
 	// Top-level fields
 	assert.Equal(t, 1, cfg.ConfigVersion)
 	assert.Equal(t, "debug", cfg.LogLevel)
+
+	// Server
+	assert.Equal(t, ":8001", cfg.Server.Address)
+	require.Len(t, cfg.Server.CORSOrigins, 1)
+	assert.Equal(t, "http://localhost:3000", cfg.Server.CORSOrigins[0])
 
 	// Models
 	require.Len(t, cfg.Models, 1)

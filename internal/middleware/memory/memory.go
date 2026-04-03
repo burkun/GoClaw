@@ -3,7 +3,7 @@
 // This mirrors DeerFlow's MemoryMiddleware / FileMemoryStorage pattern:
 //   - Before(): loads persisted facts and injects them (≤15) into the system prompt.
 //   - After():  filters the conversation, detects user corrections, and enqueues
-//               the result for asynchronous LLM-based fact extraction (30 s debounce).
+//     the result for asynchronous LLM-based fact extraction (30 s debounce).
 //
 // Storage format (JSON):
 //
@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -64,6 +65,15 @@ func newEmptyMemory() *Memory {
 		LastUpdated: time.Now().UTC().Format(time.RFC3339),
 		Facts:       []string{},
 	}
+}
+
+func cloneMemory(m *Memory) *Memory {
+	if m == nil {
+		return nil
+	}
+	out := *m
+	out.Facts = append([]string(nil), m.Facts...)
+	return &out
 }
 
 // ---------------------------------------------------------------------------
@@ -119,31 +129,42 @@ func NewJSONFileStore(path string) *JSONFileStore {
 // Load returns the Memory document, using a cached copy when the file has not
 // changed since the last read (mtime comparison).
 func (s *JSONFileStore) Load() (*Memory, error) {
-	// TODO:
-	// 1. stat s.path to get current mtime.
-	// 2. s.mu.RLock(); if s.cache != nil && mtime == s.cacheMod, return s.cache, nil.
-	// 3. s.mu.RUnlock(); s.mu.Lock() (upgrade).
-	// 4. Re-stat (double-checked locking pattern).
-	// 5. Read and json.Unmarshal the file contents.
-	// 6. If file not found, return newEmptyMemory(), nil.
-	// 7. Update s.cache and s.cacheMod; s.mu.Unlock().
-	// 8. Return the loaded Memory.
+	info, statErr := os.Stat(s.path)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("memory: stat %s: %w", s.path, statErr)
+	}
+
+	s.mu.RLock()
+	if s.cache != nil {
+		if statErr == nil && info.ModTime().Equal(s.cacheMod) {
+			m := cloneMemory(s.cache)
+			s.mu.RUnlock()
+			return m, nil
+		}
+		if os.IsNotExist(statErr) && s.cacheMod.IsZero() {
+			m := cloneMemory(s.cache)
+			s.mu.RUnlock()
+			return m, nil
+		}
+	}
+	s.mu.RUnlock()
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	info, err := os.Stat(s.path)
-	if os.IsNotExist(err) {
+	info, statErr = os.Stat(s.path)
+	if os.IsNotExist(statErr) {
 		m := newEmptyMemory()
-		s.cache = m
+		s.cache = cloneMemory(m)
+		s.cacheMod = time.Time{}
 		return m, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("memory: stat %s: %w", s.path, err)
+	if statErr != nil {
+		return nil, fmt.Errorf("memory: stat %s: %w", s.path, statErr)
 	}
 
 	if s.cache != nil && info.ModTime().Equal(s.cacheMod) {
-		return s.cache, nil
+		return cloneMemory(s.cache), nil
 	}
 
 	data, err := os.ReadFile(s.path)
@@ -156,7 +177,7 @@ func (s *JSONFileStore) Load() (*Memory, error) {
 		return nil, fmt.Errorf("memory: unmarshal %s: %w", s.path, err)
 	}
 
-	s.cache = m
+	s.cache = cloneMemory(m)
 	s.cacheMod = info.ModTime()
 	return m, nil
 }
@@ -189,7 +210,7 @@ func (s *JSONFileStore) Save(m *Memory) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cache = m
+	s.cache = cloneMemory(m)
 	if info, err := os.Stat(s.path); err == nil {
 		s.cacheMod = info.ModTime()
 	}
@@ -273,6 +294,8 @@ var correctionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`你理解错了`),
 	regexp.MustCompile(`重试`),
 }
+
+var memorySentenceSplitRe = regexp.MustCompile(`[\n。！？!?；;]+`)
 
 // detectCorrection returns true if any recent human message contains an
 // explicit correction signal. It inspects at most the last 6 messages.
@@ -362,11 +385,11 @@ func copyMsg(msg map[string]any, content string) map[string]any {
 
 // updateEntry is a pending memory update for a single thread.
 type updateEntry struct {
-	threadID          string
-	messages          []map[string]any
-	agentName         string
+	threadID           string
+	messages           []map[string]any
+	agentName          string
 	correctionDetected bool
-	queuedAt          time.Time
+	queuedAt           time.Time
 }
 
 // UpdateQueue debounces memory updates across concurrent agent turns.
@@ -423,11 +446,11 @@ func (q *UpdateQueue) Add(threadID string, messages []map[string]any, agentName 
 	}
 
 	q.entries[threadID] = &updateEntry{
-		threadID:          threadID,
-		messages:          messages,
-		agentName:         agentName,
+		threadID:           threadID,
+		messages:           messages,
+		agentName:          agentName,
 		correctionDetected: merged,
-		queuedAt:          time.Now(),
+		queuedAt:           time.Now(),
 	}
 
 	if q.timer != nil {
@@ -436,14 +459,9 @@ func (q *UpdateQueue) Add(threadID string, messages []map[string]any, agentName 
 	q.timer = time.AfterFunc(q.DebounceDelay, q.process)
 }
 
-// process drains all pending entries and calls extractAndSave for each.
+// process drains all pending entries and extracts/saves facts for each.
 // It runs in the background goroutine started by time.AfterFunc.
 func (q *UpdateQueue) process() {
-	// TODO:
-	// 1. q.mu.Lock(); snapshot and clear q.entries; q.timer = nil; q.mu.Unlock().
-	// 2. For each entry: call q.extractAndSave(entry).
-	// 3. Log success/failure for each entry.
-
 	q.mu.Lock()
 	snap := q.entries
 	q.entries = make(map[string]*updateEntry)
@@ -451,11 +469,86 @@ func (q *UpdateQueue) process() {
 	q.mu.Unlock()
 
 	for _, entry := range snap {
-		// TODO: call an LLM-based extractor to derive new facts from entry.messages.
-		//       For now, this is a stub — replace with real extraction logic.
-		_ = entry
-		// extractAndSave(q.store, entry)
+		if err := q.extractAndSave(entry); err != nil {
+			log.Printf("[MemoryMiddleware] extract failed thread=%s err=%v", entry.threadID, err)
+		}
 	}
+}
+
+func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
+	if q == nil || q.store == nil || entry == nil {
+		return nil
+	}
+	mem, err := q.store.Load()
+	if err != nil {
+		return err
+	}
+
+	facts := deriveFactsFromMessages(entry.messages, entry.correctionDetected)
+	if len(facts) == 0 {
+		return nil
+	}
+
+	addedAny := false
+	for _, f := range facts {
+		if q.store.AddFact(mem, f) {
+			addedAny = true
+		}
+	}
+	if !addedAny {
+		return nil
+	}
+
+	q.store.Deduplicate(mem)
+	if err := q.store.Save(mem); err != nil {
+		return err
+	}
+	log.Printf("[MemoryMiddleware] saved %d fact(s) for thread=%s", len(facts), entry.threadID)
+	return nil
+}
+
+func deriveFactsFromMessages(messages []map[string]any, correctionDetected bool) []string {
+	facts := make([]string, 0, 8)
+	seen := make(map[string]struct{})
+	add := func(f string) {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			return
+		}
+		key := strings.ToLower(f)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		facts = append(facts, f)
+	}
+
+	if correctionDetected {
+		add("User corrected a previous assistant response.")
+	}
+
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		role, _ := msg["role"].(string)
+		if role != "human" {
+			continue
+		}
+		content, _ := msg["content"].(string)
+		for _, seg := range memorySentenceSplitRe.Split(content, -1) {
+			seg = strings.TrimSpace(seg)
+			if seg == "" || len(seg) < 6 || len(seg) > 240 {
+				continue
+			}
+			if strings.Contains(seg, "?") || strings.Contains(seg, "？") {
+				continue
+			}
+			add(seg)
+			if len(facts) >= 8 {
+				return facts
+			}
+		}
+	}
+	return facts
 }
 
 // ---------------------------------------------------------------------------
@@ -506,7 +599,7 @@ func (m *MemoryMiddleware) Before(ctx context.Context, state *middleware.State) 
 	mem, err := m.store.Load()
 	if err != nil {
 		// Non-fatal: the agent can proceed without memory.
-		// TODO: log.Printf("[MemoryMiddleware] load failed: %v", err)
+		log.Printf("[MemoryMiddleware] load failed: %v", err)
 		return nil
 	}
 
@@ -544,8 +637,8 @@ func (m *MemoryMiddleware) Before(ctx context.Context, state *middleware.State) 
 //  3. correction := detectCorrection(filtered)
 //  4. m.queue.Add(state.ThreadID, filtered, m.agentName, correction)
 func (m *MemoryMiddleware) After(ctx context.Context, state *middleware.State, response *middleware.Response) error {
-	// TODO: implement using filterMessagesForMemory and detectCorrection.
-	// This should be non-fatal — log errors and return nil.
+	_ = ctx
+	_ = response
 
 	filtered := filterMessagesForMemory(state.Messages)
 
@@ -561,6 +654,10 @@ func (m *MemoryMiddleware) After(ctx context.Context, state *middleware.State, r
 		}
 	}
 	if !hasHuman || !hasAssistant {
+		return nil
+	}
+	if m.queue == nil {
+		log.Printf("[MemoryMiddleware] queue is nil, skip enqueue thread=%s", state.ThreadID)
 		return nil
 	}
 

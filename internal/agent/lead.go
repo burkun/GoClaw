@@ -126,8 +126,12 @@ func New(ctx context.Context) (*leadAgent, error) {
 	if appCfg.Subagents.TimeoutSeconds > 0 {
 		subagentTimeout = time.Duration(appCfg.Subagents.TimeoutSeconds) * time.Second
 	}
+	maxConcurrentSubagents := 3
+	if appCfg.Subagents.MaxConcurrent > 0 {
+		maxConcurrentSubagents = appCfg.Subagents.MaxConcurrent
+	}
 	subagentExec := subagents.NewExecutor(subagents.ExecutorConfig{
-		MaxConcurrent:  3,
+		MaxConcurrent:  maxConcurrentSubagents,
 		DefaultTimeout: subagentTimeout,
 	})
 	taskTool := subagents.NewTaskTool(subagents.TaskToolConfig{

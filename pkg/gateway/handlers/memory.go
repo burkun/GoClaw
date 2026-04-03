@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -13,6 +15,12 @@ import (
 // MemoryHandler serves GET /api/memory.
 type MemoryHandler struct {
 	cfg *config.AppConfig
+
+	mu          sync.RWMutex
+	cachedPath  string
+	cachedMod   time.Time
+	cachedValue MemoryResponse
+	cacheReady  bool
 }
 
 // NewMemoryHandler creates a MemoryHandler.
@@ -90,15 +98,43 @@ func (h *MemoryHandler) GetMemory(c *gin.Context) {
 		memoryPath = h.cfg.Memory.StoragePath
 	}
 
-	// TODO: Replace the block below with a thread-safe in-memory cache that is
-	//   populated at startup and refreshed on file-change events (fsnotify) to
-	//   avoid repeated disk reads on hot paths.
+	info, err := os.Stat(memoryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			resp := emptyMemoryResponse()
+			h.mu.Lock()
+			h.cachedPath = memoryPath
+			h.cachedMod = time.Time{}
+			h.cachedValue = resp
+			h.cacheReady = true
+			h.mu.Unlock()
+			c.JSON(http.StatusOK, resp)
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read memory file"})
+		return
+	}
+
+	h.mu.RLock()
+	if h.cacheReady && h.cachedPath == memoryPath && info.ModTime().Equal(h.cachedMod) {
+		resp := h.cachedValue
+		h.mu.RUnlock()
+		c.JSON(http.StatusOK, resp)
+		return
+	}
+	h.mu.RUnlock()
 
 	data, err := os.ReadFile(memoryPath) //nolint:gosec // path is config-controlled
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Return an empty but structurally valid response; no error to the client.
-			c.JSON(http.StatusOK, emptyMemoryResponse())
+			resp := emptyMemoryResponse()
+			h.mu.Lock()
+			h.cachedPath = memoryPath
+			h.cachedMod = time.Time{}
+			h.cachedValue = resp
+			h.cacheReady = true
+			h.mu.Unlock()
+			c.JSON(http.StatusOK, resp)
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read memory file"})
@@ -110,6 +146,13 @@ func (h *MemoryHandler) GetMemory(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse memory file"})
 		return
 	}
+
+	h.mu.Lock()
+	h.cachedPath = memoryPath
+	h.cachedMod = info.ModTime()
+	h.cachedValue = resp
+	h.cacheReady = true
+	h.mu.Unlock()
 
 	c.JSON(http.StatusOK, resp)
 }

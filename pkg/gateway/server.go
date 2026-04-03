@@ -56,7 +56,7 @@ func (s *Server) registerMiddleware() {
 	// Structured logger: logs method, path, status, latency for every request.
 	s.router.Use(gin.Logger())
 
-	// CORS: allow all origins in development; tighten in production via config.
+	// CORS: allow all origins in development; use allowlist when configured.
 	corsConfig := cors.Config{
 		AllowAllOrigins:  true,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -65,7 +65,10 @@ func (s *Server) registerMiddleware() {
 		AllowCredentials: false,
 		MaxAge:           12 * time.Hour,
 	}
-	// TODO: load AllowOrigins from cfg.Server.CORSOrigins when available.
+	if s.cfg != nil && len(s.cfg.Server.CORSOrigins) > 0 {
+		corsConfig.AllowAllOrigins = false
+		corsConfig.AllowOrigins = append([]string(nil), s.cfg.Server.CORSOrigins...)
+	}
 	s.router.Use(cors.New(corsConfig))
 }
 

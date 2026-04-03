@@ -84,19 +84,9 @@ func (p *fakeSkillPlugin) OnConfigReload(_ *config.AppConfig) error {
 
 // --- tests ---
 
-// TestLeadAgent_basicRun is a stub end-to-end test.
-//
-// It verifies that:
-//  1. leadAgent.Run returns a channel without error.
-//  2. The channel is eventually closed.
-//  3. The last event is a terminal event (EventCompleted or EventError).
-//
-// TODO: replace the stub leadAgent with a real instance once New() is implemented.
-// A mock Eino ChatModel can be used to avoid requiring live API keys in CI.
+// TestLeadAgent_basicRun verifies terminal event guarantee on uninitialized agent.
 func TestLeadAgent_basicRun(t *testing.T) {
-	// TODO: construct a real leadAgent with a mock Eino model.
-	// For now, instantiate the placeholder implementation.
-	agent := &leadAgent{}
+	a := &leadAgent{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -110,7 +100,7 @@ func TestLeadAgent_basicRun(t *testing.T) {
 		SubagentEnabled: false,
 	}
 
-	ch, err := agent.Run(ctx, state, cfg)
+	ch, err := a.Run(ctx, state, cfg)
 	if err != nil {
 		t.Fatalf("Run returned unexpected error: %v", err)
 	}
@@ -119,52 +109,34 @@ func TestLeadAgent_basicRun(t *testing.T) {
 	assertTerminal(t, events)
 }
 
-// TestLeadAgent_planMode verifies that buildMiddlewares includes TodoMiddleware
-// when plan mode is configured.
-//
-// TODO: full end-to-end test requires a real mock model that returns write_todos
-// tool calls. For now, verify that the middleware chain includes TodoMiddleware.
+// TestLeadAgent_planMode verifies middleware chain is created in plan mode.
 func TestLeadAgent_planMode(t *testing.T) {
 	mws := buildMiddlewares(RunConfig{IsPlanMode: true})
-
-	if mws == nil {
-		t.Skip("todoMiddleware not wired yet; skipping full plan-mode test")
+	if len(mws) == 0 {
+		t.Fatalf("expected non-empty middleware chain in plan mode")
 	}
-
-	// Middleware chain is built; if we reach here, TodoMiddleware should be active.
-	// Full verification requires end-to-end test with mock model.
-	t.Log("plan mode middleware chain is configured correctly")
 }
 
-// TestLeadAgent_cancelContext verifies that cancelling the context causes the
-// agent run to terminate with an EventError.
-//
-// Note: This test requires context cancellation to be propagated through the
-// event stream. The lead agent's drainIter() supports this, but full validation
-// requires a real agent execution environment.
+// TestLeadAgent_cancelContext verifies run termination behavior under cancel.
+// With an uninitialized agent we still guarantee a terminal EventError.
 func TestLeadAgent_cancelContext(t *testing.T) {
-	t.Skip("TODO: requires real agent execution environment with context propagation")
-
-	agent := &leadAgent{}
+	a := &leadAgent{}
 	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
 
 	state := newTestState("thread-003", "Do a very long task.")
 	cfg := RunConfig{ThreadID: "thread-003"}
 
-	ch, err := agent.Run(ctx, state, cfg)
+	ch, err := a.Run(ctx, state, cfg)
 	if err != nil {
 		t.Fatalf("Run returned unexpected error: %v", err)
 	}
 
-	// Cancel immediately to trigger early termination.
-	cancel()
-
 	events := drainChannel(t, ch, 5*time.Second)
 	assertTerminal(t, events)
-
 	last := events[len(events)-1]
 	if last.Type != EventError {
-		t.Errorf("expected EventError after context cancel, got %q", last.Type)
+		t.Errorf("expected EventError, got %q", last.Type)
 	}
 }
 

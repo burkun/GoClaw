@@ -7,6 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudwego/eino/schema"
+
+	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/models"
 	toolruntime "github.com/bookerbai/goclaw/internal/tools"
 )
 
@@ -41,6 +45,11 @@ type taskToolOutput struct {
 	Error   string `json:"error,omitempty"`
 	Message string `json:"message,omitempty"`
 }
+
+var (
+	loadAppConfig     = config.GetAppConfig
+	createChatModelFn = models.CreateChatModel
+)
 
 // NewTaskTool creates a task delegation tool.
 func NewTaskTool(cfg TaskToolConfig) *TaskTool {
@@ -147,18 +156,36 @@ func mustJSON(v any) string {
 	return string(b)
 }
 
-// defaultWorker is a deterministic placeholder worker for Phase7B minimal closure.
+// defaultWorker executes a focused single-turn subagent task.
+// It tries to use the configured chat model first, then falls back to a
+// deterministic local summarizer when model creation/inference is unavailable.
 func defaultWorker(ctx context.Context, req TaskRequest) (string, error) {
-	select {
-	case <-time.After(10 * time.Millisecond):
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-
 	if strings.Contains(strings.ToLower(req.Prompt), "force_fail") {
 		return "", fmt.Errorf("subagent forced failure")
 	}
-	return fmt.Sprintf("subagent[%s] completed: %s", defaultString(req.SubagentType, "general-purpose"), req.Prompt), nil
+
+	cfg, err := loadAppConfig()
+	if err == nil && cfg != nil {
+		modelReq := models.CreateRequest{}
+		if dm := cfg.DefaultModel(); dm != nil {
+			modelReq.ModelName = dm.Name
+		}
+		chatModel, modelErr := createChatModelFn(ctx, cfg, modelReq)
+		if modelErr == nil && chatModel != nil {
+			resp, genErr := chatModel.Generate(ctx, []*schema.Message{
+				schema.SystemMessage("You are a focused subagent. Solve the task directly and return concise actionable output."),
+				schema.UserMessage(buildSubagentPrompt(req)),
+			})
+			if genErr == nil && resp != nil {
+				out := strings.TrimSpace(resp.Content)
+				if out != "" {
+					return out, nil
+				}
+			}
+		}
+	}
+
+	return fallbackSubagentOutput(req), nil
 }
 
 func defaultString(s, def string) string {
@@ -177,6 +204,28 @@ func taskSubject(req TaskRequest) string {
 		return s[:80]
 	}
 	return s
+}
+
+func buildSubagentPrompt(req TaskRequest) string {
+	parts := []string{
+		"Subagent type: " + defaultString(req.SubagentType, "general-purpose"),
+		"Task prompt:\n" + strings.TrimSpace(req.Prompt),
+	}
+	if strings.TrimSpace(req.Description) != "" {
+		parts = append(parts, "Description: "+strings.TrimSpace(req.Description))
+	}
+	if req.MaxTurns > 0 {
+		parts = append(parts, fmt.Sprintf("Max turns hint: %d", req.MaxTurns))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func fallbackSubagentOutput(req TaskRequest) string {
+	subject := taskSubject(req)
+	if subject == "" {
+		subject = "delegated task"
+	}
+	return fmt.Sprintf("subagent[%s] completed: %s", defaultString(req.SubagentType, "general-purpose"), subject)
 }
 
 var _ toolruntime.Tool = (*TaskTool)(nil)

@@ -4,12 +4,16 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/bookerbai/goclaw/internal/agent"
 )
 
 // ---------------------------------------------------------------------------
@@ -47,71 +51,92 @@ func newRunRequest(t *testing.T, threadID, body string) *http.Request {
 	return req
 }
 
+type mockLeadAgent struct {
+	runErr    error
+	resumeErr error
+	events    []agent.Event
+}
+
+func (m *mockLeadAgent) Run(ctx context.Context, _ *agent.ThreadState, cfg agent.RunConfig) (<-chan agent.Event, error) {
+	if m.runErr != nil {
+		return nil, m.runErr
+	}
+	ch := make(chan agent.Event, len(m.events))
+	go func() {
+		defer close(ch)
+		for _, ev := range m.events {
+			select {
+			case <-ctx.Done():
+				ch <- agent.Event{Type: agent.EventError, ThreadID: cfg.ThreadID, Payload: agent.ErrorPayload{Code: agent.ErrorCodeContextCancelled, Message: ctx.Err().Error()}, Timestamp: time.Now().UnixMilli()}
+				return
+			case ch <- ev:
+			}
+		}
+	}()
+	return ch, nil
+}
+
+func (m *mockLeadAgent) Resume(ctx context.Context, _ *agent.ThreadState, cfg agent.RunConfig, checkpointID string) (<-chan agent.Event, error) {
+	_ = checkpointID
+	if m.resumeErr != nil {
+		return nil, m.resumeErr
+	}
+	return m.Run(ctx, nil, cfg)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 // TestRunThread_SSETermination verifies that every call to RunThread produces
 // a stream that ends with either a "completed" or "error" terminal event.
-// This is the P0 SSE contract: the client must always receive an explicit
-// end-of-stream signal so it can clean up its connection.
 func TestRunThread_SSETermination(t *testing.T) {
-	// TODO: Replace with a real mock agent once agent.LeadAgent interface is defined.
-	//   handler := NewThreadsHandler(testConfig(), &mockAgent{})
-	//
-	// Stub setup:
-	//   - mockAgent.Run returns a closed channel immediately (happy path).
-	//   - Expect the handler to emit "completed" as the last event.
-
-	handler := NewThreadsHandler(nil, nil) // nil cfg/agent: uses placeholder path
+	mock := &mockLeadAgent{events: []agent.Event{
+		{Type: agent.EventMessageDelta, ThreadID: "thread-001", Payload: agent.MessageDeltaPayload{Content: "hello"}, Timestamp: time.Now().UnixMilli()},
+		{Type: agent.EventCompleted, ThreadID: "thread-001", Payload: agent.CompletedPayload{FinalMessage: "done"}, Timestamp: time.Now().UnixMilli()},
+	}}
+	handler := NewThreadsHandler(nil, mock)
 
 	req := newRunRequest(t, "thread-001", `{"input": "hello"}`)
 	rr := httptest.NewRecorder()
-
-	// Call the handler directly through a minimal Gin context.
-	// TODO: Switch to router.ServeHTTP once the full Gin test harness is wired.
-	//   For now we invoke the underlying function to keep the test self-contained.
 	ginCtx, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-001"})
 	handler.RunThread(ginCtx)
 
-	body := rr.Body.String()
-	events := collectSSEEvents(t, body)
-
+	events := collectSSEEvents(t, rr.Body.String())
 	if len(events) == 0 {
 		t.Fatal("expected at least one SSE event, got none")
 	}
-
 	last := events[len(events)-1]
 	if last.Type != "completed" && last.Type != "error" {
 		t.Errorf("last SSE event must be 'completed' or 'error', got %q", last.Type)
 	}
 }
 
-// TestRunThread_errorEvent verifies that when the agent returns an error the
-// SSE stream contains an "error" event with a non-empty message in its payload.
+// TestRunThread_errorEvent verifies that when the agent start fails the
+// SSE stream contains an "error" event with a non-empty message payload.
 func TestRunThread_errorEvent(t *testing.T) {
-	// TODO: Create a mockAgent whose Run method closes with an error.
-	//   handler := NewThreadsHandler(testConfig(), &errorAgent{err: errors.New("boom")})
-	//
-	// Until the agent interface is defined, this test documents the expected
-	// contract and acts as a compilation guard.
+	handler := NewThreadsHandler(nil, &mockLeadAgent{runErr: errors.New("boom")})
 
-	// Placeholder assertion — confirms the helper compiles correctly.
-	ev := SSEEvent{
-		Type:     "error",
-		ThreadID: "thread-001",
-		Payload:  map[string]string{"message": "boom"},
-	}
-	if ev.Type != "error" {
-		t.Errorf("expected type 'error', got %q", ev.Type)
-	}
+	req := newRunRequest(t, "thread-001", `{"input": "hello"}`)
+	rr := httptest.NewRecorder()
+	ginCtx, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-001"})
+	handler.RunThread(ginCtx)
 
-	payloadMap, ok := ev.Payload.(map[string]string)
+	events := collectSSEEvents(t, rr.Body.String())
+	if len(events) == 0 {
+		t.Fatal("expected at least one SSE event")
+	}
+	last := events[len(events)-1]
+	if last.Type != "error" {
+		t.Fatalf("expected terminal error event, got %q", last.Type)
+	}
+	payloadMap, ok := last.Payload.(map[string]interface{})
 	if !ok {
-		t.Fatal("payload should be a map[string]string")
+		t.Fatalf("payload type mismatch: %T", last.Payload)
 	}
-	if msg := payloadMap["message"]; msg == "" {
-		t.Error("error event payload must contain a non-empty 'message' field")
+	msg, _ := payloadMap["message"].(string)
+	if strings.TrimSpace(msg) == "" {
+		t.Fatal("expected non-empty error message")
 	}
 }
 

@@ -39,7 +39,7 @@ func TestMemoryStore_dedup(t *testing.T) {
 			wantGone: []string{"Go"},
 		},
 		{
-			name: "unrelated facts both kept",
+			name:     "unrelated facts both kept",
 			input:    []string{"User likes coffee", "User prefers Go"},
 			wantKept: []string{"User likes coffee", "User prefers Go"},
 		},
@@ -121,8 +121,8 @@ type stubStore struct {
 	mem *Memory
 }
 
-func (s *stubStore) Load() (*Memory, error)       { return s.mem, nil }
-func (s *stubStore) Save(m *Memory) error         { s.mem = m; return nil }
+func (s *stubStore) Load() (*Memory, error) { return s.mem, nil }
+func (s *stubStore) Save(m *Memory) error   { s.mem = m; return nil }
 func (s *stubStore) AddFact(m *Memory, fact string) bool {
 	for _, f := range m.Facts {
 		if strings.EqualFold(f, fact) {
@@ -227,3 +227,46 @@ func TestMemoryMiddleware_inject(t *testing.T) {
 	})
 }
 
+func TestUpdateQueueProcess_ExtractsFacts(t *testing.T) {
+	store := &stubStore{mem: newEmptyMemory()}
+	q := &UpdateQueue{
+		entries: make(map[string]*updateEntry),
+		store:   store,
+	}
+	q.entries["thread-1"] = &updateEntry{
+		threadID: "thread-1",
+		messages: []map[string]any{
+			{"role": "human", "content": "我偏好使用 Go 语言做后端开发。"},
+			{"role": "assistant", "content": "收到"},
+		},
+	}
+
+	q.process()
+
+	if len(store.mem.Facts) == 0 {
+		t.Fatalf("expected extracted facts to be saved")
+	}
+}
+
+func TestUpdateQueueProcess_CorrectionFact(t *testing.T) {
+	store := &stubStore{mem: newEmptyMemory()}
+	q := &UpdateQueue{
+		entries: make(map[string]*updateEntry),
+		store:   store,
+	}
+	q.entries["thread-2"] = &updateEntry{
+		threadID:           "thread-2",
+		correctionDetected: true,
+		messages: []map[string]any{
+			{"role": "human", "content": "你理解错了，我主要用 Go。"},
+			{"role": "assistant", "content": "好的，我会修正。"},
+		},
+	}
+
+	q.process()
+
+	joined := strings.ToLower(strings.Join(store.mem.Facts, "\n"))
+	if !strings.Contains(joined, "corrected") {
+		t.Fatalf("expected correction fact, got %v", store.mem.Facts)
+	}
+}
