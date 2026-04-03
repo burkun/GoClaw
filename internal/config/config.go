@@ -7,6 +7,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,17 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// logger is the package-level logger for config events.
+// Callers may replace it via SetLogger.
+var logger = slog.Default()
+
+// SetLogger allows external code to inject a custom logger.
+func SetLogger(l *slog.Logger) {
+	if l != nil {
+		logger = l
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Top-level AppConfig
@@ -337,12 +349,12 @@ type SummarizationKeep struct {
 
 // SummarizationConfig configures automatic context summarization.
 type SummarizationConfig struct {
-	Enabled              bool                   `yaml:"enabled"`
-	ModelName            string                 `yaml:"model_name,omitempty"`
-	Trigger              []SummarizationTrigger `yaml:"trigger,omitempty"`
-	Keep                 SummarizationKeep      `yaml:"keep,omitempty"`
-	TrimTokensToSummarize int                  `yaml:"trim_tokens_to_summarize,omitempty"`
-	SummaryPrompt        string                 `yaml:"summary_prompt,omitempty"`
+	Enabled               bool                   `yaml:"enabled"`
+	ModelName             string                 `yaml:"model_name,omitempty"`
+	Trigger               []SummarizationTrigger `yaml:"trigger,omitempty"`
+	Keep                  SummarizationKeep      `yaml:"keep,omitempty"`
+	TrimTokensToSummarize int                    `yaml:"trim_tokens_to_summarize,omitempty"`
+	SummaryPrompt         string                 `yaml:"summary_prompt,omitempty"`
 }
 
 // SubagentOverrideConfig allows per-agent timeout overrides.
@@ -388,11 +400,11 @@ type SlackConfig struct {
 
 // TelegramConfig holds Telegram channel configuration.
 type TelegramConfig struct {
-	Enabled      bool                       `yaml:"enabled"`
-	BotToken     string                     `yaml:"bot_token,omitempty"`
-	AllowedUsers []string                   `yaml:"allowed_users,omitempty"`
-	Session      *SessionConfig             `yaml:"session,omitempty"`
-	Users        map[string]*SessionConfig  `yaml:"users,omitempty"`
+	Enabled      bool                      `yaml:"enabled"`
+	BotToken     string                    `yaml:"bot_token,omitempty"`
+	AllowedUsers []string                  `yaml:"allowed_users,omitempty"`
+	Session      *SessionConfig            `yaml:"session,omitempty"`
+	Users        map[string]*SessionConfig `yaml:"users,omitempty"`
 }
 
 // ChannelsConfig holds all IM channel configurations.
@@ -677,7 +689,7 @@ var (
 func Watch(path string, onChange func(*AppConfig)) (stop func()) {
 	resolved, err := resolvePath(path)
 	if err != nil {
-		// TODO: log error; return no-op stop
+		logger.Warn("config: Watch path resolution failed", "path", path, "error", err)
 		return func() {}
 	}
 
@@ -692,11 +704,6 @@ func Watch(path string, onChange func(*AppConfig)) (stop func()) {
 	watchersMu.Unlock()
 
 	go func() {
-		// TODO: Record initial mtime via os.Stat(resolved).
-		// TODO: Loop with time.NewTicker(2 * time.Second):
-		//   - On tick: call os.Stat, compare mtime.
-		//   - If mtime changed: call Load(resolved), call onChange(cfg).
-		//   - On <-w.stop: return.
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
@@ -712,14 +719,14 @@ func Watch(path string, onChange func(*AppConfig)) (stop func()) {
 			case <-ticker.C:
 				info, err := os.Stat(resolved)
 				if err != nil {
-					// TODO: log warning – file may have been temporarily removed
+					logger.Warn("config: file stat failed, may be temporarily removed", "path", resolved, "error", err)
 					continue
 				}
 				if info.ModTime().After(lastMtime) {
 					lastMtime = info.ModTime()
 					cfg, err := Load(resolved)
 					if err != nil {
-						// TODO: log error; retain old config
+						logger.Error("config: reload failed, retaining old config", "path", resolved, "error", err)
 						continue
 					}
 					onChange(cfg)
@@ -780,7 +787,7 @@ func GetAppConfig() (*AppConfig, error) {
 	cfg, err := Load(path)
 	if err != nil {
 		if current != nil {
-			// TODO: log warning about reload failure; serve stale config
+			logger.Warn("config: reload failed, serving stale config", "path", path, "error", err)
 			return current, nil
 		}
 		return nil, err
@@ -827,7 +834,7 @@ func ResetAppConfig() {
 func SetAppConfig(cfg *AppConfig) {
 	globalMu.Lock()
 	globalConfig = cfg
-	globalPath = ""          // mark as custom – skip mtime checks
+	globalPath = "" // mark as custom – skip mtime checks
 	globalMtime = time.Time{}
 	globalMu.Unlock()
 }

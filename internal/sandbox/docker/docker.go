@@ -20,6 +20,7 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -28,10 +29,11 @@ import (
 	"sync"
 	"time"
 
-	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
+	dockerclient "github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 
 	"github.com/bookerbai/goclaw/internal/sandbox"
 )
@@ -137,10 +139,8 @@ func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.Ex
 	defer resp.Close()
 
 	var stdoutBuf, stderrBuf bytes.Buffer
-	// TODO: Use stdcopy.StdCopy to demultiplex the Docker multiplexed stream.
-	// import "github.com/docker/docker/pkg/stdcopy" and call:
-	//   stdcopy.StdCopy(&stdoutBuf, &stderrBuf, resp.Reader)
-	if _, err := io.Copy(&stdoutBuf, resp.Reader); err != nil && err != io.EOF {
+	// Use stdcopy to demultiplex Docker's multiplexed stream into stdout/stderr.
+	if _, err := stdcopy.StdCopy(&stdoutBuf, &stderrBuf, resp.Reader); err != nil && err != io.EOF {
 		// Non-fatal: return what we have.
 		_ = err
 	}
@@ -180,11 +180,6 @@ func (s *DockerSandbox) ReadFile(ctx context.Context, virtualPath string) (strin
 
 // WriteFile writes content to a file inside the container.
 func (s *DockerSandbox) WriteFile(ctx context.Context, virtualPath string, content string, appendMode bool) error {
-	// TODO:
-	//  1. virtualToContainerPath.
-	//  2. Use docker CopyToContainer with a tar archive containing the file.
-	//     Alternatively: Execute "mkdir -p $(dirname path) && tee/>> path" via heredoc.
-	//  3. For appendMode use ">>" redirect; otherwise use ">".
 	containerPath, err := virtualToContainerPath(virtualPath)
 	if err != nil {
 		return err
@@ -194,11 +189,10 @@ func (s *DockerSandbox) WriteFile(ctx context.Context, virtualPath string, conte
 	if appendMode {
 		redirect = ">>"
 	}
-	// Encode content as base64 to avoid shell quoting issues with arbitrary content.
-	// TODO: replace this naive approach with CopyToContainer + tar for binary safety.
-	escaped := strings.ReplaceAll(content, "'", "'\\''")
-	cmd := fmt.Sprintf("mkdir -p %s && printf '%%s' '%s' %s %s",
-		shellQuote(dir), escaped, redirect, shellQuote(containerPath))
+	// Use base64 encoding to safely handle arbitrary content including special characters and binary data.
+	encoded := base64.StdEncoding.EncodeToString([]byte(content))
+	cmd := fmt.Sprintf("mkdir -p %s && echo %s | base64 -d %s %s",
+		shellQuote(dir), shellQuote(encoded), redirect, shellQuote(containerPath))
 	result, execErr := s.Execute(ctx, cmd)
 	if execErr != nil {
 		return execErr
@@ -290,19 +284,19 @@ func (s *DockerSandbox) StrReplace(ctx context.Context, virtualPath string, oldS
 // ensureContainerRunning starts the container if it is stopped, or creates it
 // if it does not exist yet.
 func (s *DockerSandbox) ensureContainerRunning(ctx context.Context) error {
-	// TODO:
-	//  1. client.ContainerInspect(ctx, s.containerID) to get current state.
-	//  2. If not found (IsErrNotFound), call createContainer(ctx) to create it.
-	//  3. If found but not running, call client.ContainerStart.
-	//  4. Update s.containerID if newly created.
-	_, err := s.client.ContainerInspect(ctx, s.containerID)
+	inspect, err := s.client.ContainerInspect(ctx, s.containerID)
 	if err != nil {
 		if dockerclient.IsErrNotFound(err) {
 			return s.createContainer(ctx)
 		}
 		return fmt.Errorf("inspect container %q: %w", s.containerID, err)
 	}
-	// TODO: Check inspect result State.Running and start if not running.
+	// If container exists but is not running, start it.
+	if !inspect.State.Running {
+		if err := s.client.ContainerStart(ctx, s.containerID, container.StartOptions{}); err != nil {
+			return fmt.Errorf("start existing container %q: %w", s.containerID, err)
+		}
+	}
 	return nil
 }
 
