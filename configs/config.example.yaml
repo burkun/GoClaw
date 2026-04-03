@@ -1,0 +1,272 @@
+# Configuration for GoClaw
+#
+# Guidelines:
+# - Copy this file to `config.yaml` and customise it for your environment.
+# - The default config path is `config.yaml` in the current working directory.
+#   Override with the GOCLAW_CONFIG_PATH environment variable.
+# - Environment variables are supported for all string values: `api_key: $OPENAI_API_KEY`
+# - The `use` field for sandbox providers accepts: "local" or "docker".
+# - The `use` field for models accepts: "openai", "anthropic", "google", or any
+#   registered Eino provider identifier.
+
+# ============================================================================
+# Config Version (used to detect outdated config files)
+# ============================================================================
+# Bump this number whenever the config schema changes.
+config_version: 1
+
+# ============================================================================
+# Logging
+# ============================================================================
+# Log level for goclaw modules (debug / info / warning / error)
+log_level: info
+
+# ============================================================================
+# Models Configuration
+# ============================================================================
+# Configure available LLM models. The first entry is used as the default.
+
+models:
+  # Example: OpenAI GPT-4o
+  - name: gpt-4o
+    display_name: GPT-4o
+    use: openai
+    model: gpt-4o
+    api_key: $OPENAI_API_KEY        # resolved from environment at startup
+    max_tokens: 4096
+    temperature: 0.7
+    request_timeout: 600.0
+    max_retries: 2
+    supports_vision: true
+
+  # Example: OpenAI-compatible gateway (e.g. OpenRouter, local Ollama)
+  # - name: deepseek-v3
+  #   display_name: DeepSeek V3
+  #   use: openai
+  #   model: deepseek-chat
+  #   api_key: $DEEPSEEK_API_KEY
+  #   base_url: https://api.deepseek.com/v1
+  #   request_timeout: 600.0
+  #   max_retries: 2
+  #   max_tokens: 8192
+  #   supports_thinking: true
+
+  # Example: Anthropic Claude
+  # - name: claude-3-5-sonnet
+  #   display_name: Claude 3.5 Sonnet
+  #   use: anthropic
+  #   model: claude-3-5-sonnet-20241022
+  #   api_key: $ANTHROPIC_API_KEY
+  #   max_tokens: 8192
+  #   request_timeout: 600.0
+  #   supports_vision: true
+  #   when_thinking_enabled:
+  #     thinking:
+  #       type: enabled
+
+  # Example: Google Gemini (via Eino Google provider)
+  # - name: gemini-2.5-pro
+  #   display_name: Gemini 2.5 Pro
+  #   use: google
+  #   model: gemini-2.5-pro
+  #   api_key: $GEMINI_API_KEY
+  #   max_tokens: 8192
+  #   request_timeout: 600.0
+  #   supports_vision: true
+
+# ============================================================================
+# Tool Groups Configuration
+# ============================================================================
+# Group tools for access control and organisation.
+
+tool_groups:
+  - name: web          # Internet search and fetch tools
+  - name: file:read    # Read-only file system tools
+  - name: file:write   # File write/edit tools
+  - name: bash         # Shell execution (requires explicit sandbox opt-in)
+
+# ============================================================================
+# Tools Configuration
+# ============================================================================
+# Each tool is wired to a Go factory function via the `use` path.
+
+tools:
+  # Web search (DuckDuckGo, no API key required)
+  - name: web_search
+    group: web
+    use: goclaw/internal/tools/websearch:WebSearchTool
+    max_results: 5
+
+  # Web search via Tavily (requires TAVILY_API_KEY)
+  # - name: web_search
+  #   group: web
+  #   use: goclaw/internal/tools/tavily:TavilySearchTool
+  #   api_key: $TAVILY_API_KEY
+  #   max_results: 5
+
+  # Web fetch (Jina Reader)
+  - name: web_fetch
+    group: web
+    use: goclaw/internal/tools/webfetch:JinaFetchTool
+    timeout: 10
+
+  # File system – read
+  - name: ls
+    group: file:read
+    use: goclaw/internal/tools/fs:LsTool
+
+  - name: read_file
+    group: file:read
+    use: goclaw/internal/tools/fs:ReadFileTool
+
+  - name: glob
+    group: file:read
+    use: goclaw/internal/tools/fs:GlobTool
+    max_results: 200
+
+  - name: grep
+    group: file:read
+    use: goclaw/internal/tools/fs:GrepTool
+    max_results: 100
+
+  # File system – write
+  - name: write_file
+    group: file:write
+    use: goclaw/internal/tools/fs:WriteFileTool
+
+  - name: str_replace
+    group: file:write
+    use: goclaw/internal/tools/fs:StrReplaceTool
+
+  # Bash execution — only active when sandbox.allow_host_bash: true
+  # or when a Docker sandbox is configured.
+  - name: bash
+    group: bash
+    use: goclaw/internal/tools/bash:BashTool
+
+# ============================================================================
+# Sandbox Configuration
+# ============================================================================
+# Choose between local sandbox (direct execution) or Docker sandbox.
+
+# Option 1: Local Sandbox (default — no Docker required)
+sandbox:
+  use: local
+  # allow_host_bash: false  # Set to true only for fully trusted local workflows
+  bash_output_max_chars: 20000       # 0 = no truncation
+  read_file_output_max_chars: 50000  # 0 = no truncation
+
+# Option 2: Docker Sandbox (isolated container execution)
+# sandbox:
+#   use: docker
+#   image: enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
+#   port: 8080
+#   replicas: 3
+#   container_prefix: goclaw-sandbox
+#   idle_timeout: 600  # seconds; 0 = never evict idle containers
+#   bash_output_max_chars: 20000
+#   read_file_output_max_chars: 50000
+#   # Optional volume mounts
+#   mounts:
+#     - host_path: /Users/me/shared
+#       container_path: /home/user/shared
+#       read_only: false
+#   # Optional env vars injected into the container
+#   environment:
+#     NODE_ENV: production
+#     API_KEY: $MY_API_KEY   # $VAR resolved from host environment
+
+# ============================================================================
+# Memory Configuration
+# ============================================================================
+# Persistent fact store: extracts and injects user context across sessions.
+
+memory:
+  enabled: true
+  storage_path: memory.json   # relative to goclaw data directory
+  debounce_seconds: 30        # delay before processing queued updates (1–300)
+  model_name:                 # null = use default model
+  max_facts: 100
+  fact_confidence_threshold: 0.7
+  injection_enabled: true
+  max_injection_tokens: 2000
+
+# ============================================================================
+# Skills Configuration
+# ============================================================================
+
+skills:
+  # path: /absolute/path/to/skills   # override the host-side skills directory
+  container_path: /mnt/skills        # path inside sandbox container
+
+# ============================================================================
+# Title Generation Configuration
+# ============================================================================
+
+title:
+  enabled: true
+  max_words: 6
+  max_chars: 60
+  model_name:   # null = use default model
+
+# ============================================================================
+# Summarization Configuration
+# ============================================================================
+
+summarization:
+  enabled: true
+  model_name:   # null = use default model
+  trigger:
+    - type: tokens
+      value: 15564
+  keep:
+    type: messages
+    value: 10
+  trim_tokens_to_summarize: 15564
+
+# ============================================================================
+# Sub-agents Configuration
+# ============================================================================
+
+subagents:
+  timeout_seconds: 900  # default 15 minutes
+  # per-agent overrides:
+  # agents:
+  #   general-purpose:
+  #     timeout_seconds: 1800
+  #   bash:
+  #     timeout_seconds: 300
+
+# ============================================================================
+# IM Channels Configuration
+# ============================================================================
+# Connect GoClaw to external messaging platforms.
+# All channels use outbound connections — no public IP required.
+
+# channels:
+#   langgraph_url: http://localhost:2024   # GoClaw agent server
+#   gateway_url: http://localhost:8001     # GoClaw gateway API
+#
+#   session:
+#     assistant_id: lead_agent
+#     context:
+#       thinking_enabled: false
+#       subagent_enabled: false
+#
+#   feishu:
+#     enabled: false
+#     app_id: $FEISHU_APP_ID
+#     app_secret: $FEISHU_APP_SECRET
+#     # domain: https://open.feishu.cn      # China (default)
+#     # domain: https://open.larksuite.com  # International
+#
+#   slack:
+#     enabled: false
+#     bot_token: $SLACK_BOT_TOKEN   # xoxb-...
+#     app_token: $SLACK_APP_TOKEN   # xapp-... (Socket Mode)
+#     allowed_users: []             # empty = allow all users
+#
+#   telegram:
+#     enabled: false
+#     bot_token: $TELEGRAM_BOT_TOKEN
+#     allowed_users: []             # empty = allow all users
