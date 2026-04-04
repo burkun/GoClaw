@@ -177,6 +177,7 @@ func TestExecutorUnsubscribe(t *testing.T) {
 	exec := NewExecutor(ExecutorConfig{})
 
 	called := false
+	var mu sync.Mutex
 	taskID, err := exec.Submit(context.Background(), TaskRequest{Prompt: "test"}, func(ctx context.Context, req TaskRequest) (string, error) {
 		_ = ctx
 		_ = req
@@ -187,7 +188,9 @@ func TestExecutorUnsubscribe(t *testing.T) {
 	}
 
 	unsub := exec.Subscribe(taskID, func(ctx context.Context, id string, ev TaskEvent) {
+		mu.Lock()
 		called = true
+		mu.Unlock()
 	})
 	unsub()
 
@@ -195,7 +198,9 @@ func TestExecutorUnsubscribe(t *testing.T) {
 	exec.Wait(context.Background(), taskID)
 	time.Sleep(50 * time.Millisecond)
 
-	// Note: we can't easily assert !called due to concurrency; this test mainly verifies
-	// that unsubscribe doesn't crash.
-	_ = called
+	mu.Lock()
+	defer mu.Unlock()
+	if called {
+		t.Fatalf("expected callback not to be invoked after unsubscribe")
+	}
 }

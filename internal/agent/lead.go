@@ -87,6 +87,8 @@ type leadAgent struct {
 }
 
 var getAppConfig = config.GetAppConfig
+var registerDefaultTools = toolbootstrap.RegisterDefaultTools
+var invalidateMCPConfigCache = toolruntime.InvalidateMCPConfigCache
 
 func New(ctx context.Context) (*leadAgent, error) {
 	appCfg, err := config.GetAppConfig()
@@ -287,12 +289,19 @@ func filterToolsByAllowed(ctx context.Context, tools []lcTool.BaseTool, allowed 
 }
 
 func (a *leadAgent) syncSkillsOnConfigReload() error {
-	if a == nil || a.skills == nil {
+	if a == nil {
 		return nil
 	}
 	cfg, err := getAppConfig()
 	if err != nil {
 		return err
+	}
+	if err := registerDefaultTools(cfg); err != nil {
+		return fmt.Errorf("reload tools failed: %w", err)
+	}
+	invalidateMCPConfigCache()
+	if a.skills == nil {
+		return nil
 	}
 	return a.skills.OnConfigReload(cfg)
 }

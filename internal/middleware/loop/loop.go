@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
@@ -16,11 +17,14 @@ type Config struct {
 	// MaxRepeats is the number of consecutive identical tool calls allowed
 	// before injecting a break-loop reminder. Default 3.
 	MaxRepeats int
+	// AlternatingMinCycles controls alternating pattern detection threshold.
+	// Example: A->B->A->B is 2 cycles.
+	AlternatingMinCycles int
 }
 
 // DefaultConfig returns reasonable defaults.
 func DefaultConfig() Config {
-	return Config{MaxRepeats: 3}
+	return Config{MaxRepeats: 3, AlternatingMinCycles: 2}
 }
 
 // LoopDetectionMiddleware detects repeated identical tool calls.
@@ -32,6 +36,9 @@ type LoopDetectionMiddleware struct {
 func New(cfg Config) *LoopDetectionMiddleware {
 	if cfg.MaxRepeats <= 0 {
 		cfg.MaxRepeats = 3
+	}
+	if cfg.AlternatingMinCycles <= 0 {
+		cfg.AlternatingMinCycles = 2
 	}
 	return &LoopDetectionMiddleware{cfg: cfg}
 }
@@ -53,30 +60,24 @@ func (m *LoopDetectionMiddleware) After(_ context.Context, state *middleware.Sta
 		return nil
 	}
 
+	limit := m.cfg.MaxRepeats + 1
+	altLimit := m.cfg.AlternatingMinCycles*2 + 1
+	if altLimit > limit {
+		limit = altLimit
+	}
 	// Compute hashes for the last N tool calls in state.Messages (assistant messages).
-	hashes := collectToolCallHashes(state.Messages, m.cfg.MaxRepeats+1)
-	if len(hashes) < m.cfg.MaxRepeats {
+	hashes := collectToolCallHashes(state.Messages, limit)
+	if len(hashes) == 0 {
 		return nil
 	}
 
-	// Check if the last MaxRepeats hashes are identical.
-	lastHash := hashes[len(hashes)-1]
-	repeatCount := 0
-	for i := len(hashes) - 1; i >= 0; i-- {
-		if hashes[i] == lastHash {
-			repeatCount++
-		} else {
-			break
-		}
+	if hasConsecutiveLoop(hashes, m.cfg.MaxRepeats) {
+		state.Messages = append(state.Messages, loopReminder("You appear to be repeating the same tool call. Please try a different approach or provide a final answer."))
+		return nil
 	}
 
-	if repeatCount >= m.cfg.MaxRepeats {
-		reminder := map[string]any{
-			"role":    "system",
-			"name":    "loop_detection",
-			"content": "You appear to be repeating the same tool call. Please try a different approach or provide a final answer.",
-		}
-		state.Messages = append(state.Messages, reminder)
+	if hasAlternatingLoop(hashes, m.cfg.AlternatingMinCycles) {
+		state.Messages = append(state.Messages, loopReminder("You appear to be alternating between the same tool calls. Please try a different strategy or provide a final answer."))
 	}
 	return nil
 }
@@ -92,8 +93,8 @@ func collectToolCallHashes(messages []map[string]any, limit int) []string {
 		if role != "assistant" {
 			continue
 		}
-		tcs, ok := msg["tool_calls"].([]map[string]any)
-		if !ok || len(tcs) == 0 {
+		tcs := normalizeToolCalls(parseToolCalls(msg["tool_calls"]))
+		if len(tcs) == 0 {
 			continue
 		}
 		b, _ := json.Marshal(tcs)
@@ -101,6 +102,118 @@ func collectToolCallHashes(messages []map[string]any, limit int) []string {
 		hashes = append([]string{hex.EncodeToString(sum[:])}, hashes...)
 	}
 	return hashes
+}
+
+func hasConsecutiveLoop(hashes []string, maxRepeats int) bool {
+	if maxRepeats <= 0 || len(hashes) < maxRepeats {
+		return false
+	}
+	lastHash := hashes[len(hashes)-1]
+	repeatCount := 0
+	for i := len(hashes) - 1; i >= 0; i-- {
+		if hashes[i] == lastHash {
+			repeatCount++
+		} else {
+			break
+		}
+	}
+	return repeatCount >= maxRepeats
+}
+
+func hasAlternatingLoop(hashes []string, minCycles int) bool {
+	windowSize := minCycles * 2
+	if minCycles <= 1 || len(hashes) < windowSize {
+		return false
+	}
+	window := hashes[len(hashes)-windowSize:]
+	a, b := window[0], window[1]
+	if a == b {
+		return false
+	}
+	for i, h := range window {
+		if i%2 == 0 && h != a {
+			return false
+		}
+		if i%2 == 1 && h != b {
+			return false
+		}
+	}
+	return true
+}
+
+func parseToolCalls(raw any) []map[string]any {
+	switch v := raw.(type) {
+	case []map[string]any:
+		return v
+	case []any:
+		out := make([]map[string]any, 0, len(v))
+		for _, item := range v {
+			if tc, ok := item.(map[string]any); ok {
+				out = append(out, tc)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func normalizeToolCalls(calls []map[string]any) []map[string]any {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(calls))
+	for _, tc := range calls {
+		n := make(map[string]any, len(tc))
+		for k, v := range tc {
+			if k == "arguments" {
+				n[k] = normalizeArguments(v)
+				continue
+			}
+			n[k] = v
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+func normalizeArguments(raw any) any {
+	switch v := raw.(type) {
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return v
+		}
+		var parsed any
+		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
+			if b, err := json.Marshal(parsed); err == nil {
+				return string(b)
+			}
+		}
+		return v
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return v
+		}
+		var parsed any
+		if err := json.Unmarshal(b, &parsed); err != nil {
+			return v
+		}
+		canonical, err := json.Marshal(parsed)
+		if err != nil {
+			return v
+		}
+		return string(canonical)
+	}
+}
+
+func loopReminder(content string) map[string]any {
+	return map[string]any{
+		"role":    "system",
+		"name":    "loop_detection",
+		"content": content,
+	}
 }
 
 var _ middleware.Middleware = (*LoopDetectionMiddleware)(nil)

@@ -3,6 +3,7 @@ package subagents
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +67,10 @@ func TestTaskToolExecuteRunningSnapshot(t *testing.T) {
 	if parsed["message"] == nil {
 		t.Fatalf("expected running message in output")
 	}
+	status, _ := parsed["status"].(string)
+	if status != string(StatusQueued) && status != string(StatusInProgress) {
+		t.Fatalf("expected status queued/in_progress, got %v", parsed["status"])
+	}
 }
 
 func TestValidateAndApplySubagentType_Disabled(t *testing.T) {
@@ -85,7 +90,7 @@ func TestValidateAndApplySubagentType_Disabled(t *testing.T) {
 
 	req := &TaskRequest{Prompt: "test"}
 	err := ValidateAndApplySubagentType("test-disabled", req)
-	if err == nil || !contains(err.Error(), "disabled") {
+	if err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("expected disabled error, got %v", err)
 	}
 }
@@ -100,8 +105,11 @@ func TestValidateAndApplySubagentType_TimeoutApplied(t *testing.T) {
 			Subagents: config.SubagentsConfig{
 				Types: map[string]config.SubagentTypeConfig{
 					"test-with-timeout": {
-						Enabled:     true,
-						TimeoutSecs: 42,
+						Enabled:      true,
+						TimeoutSecs:  42,
+						Model:        "gpt-4o-mini",
+						SystemPrompt: "you are subagent",
+						AllowedTools: []string{"bash", "read_file"},
 					},
 				},
 			},
@@ -113,16 +121,24 @@ func TestValidateAndApplySubagentType_TimeoutApplied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+	if req.SubagentType != "test-with-timeout" {
+		t.Fatalf("expected subagent type to be set, got %q", req.SubagentType)
+	}
 	if req.Timeout != 42*time.Second {
 		t.Fatalf("expected timeout 42s, got %v", req.Timeout)
 	}
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
+	if req.ModelName != "gpt-4o-mini" {
+		t.Fatalf("expected model override, got %q", req.ModelName)
 	}
-	return false
+	if req.SystemPrompt != "you are subagent" {
+		t.Fatalf("expected system prompt override, got %q", req.SystemPrompt)
+	}
+	if len(req.AllowedTools) != 2 || req.AllowedTools[0] != "bash" {
+		t.Fatalf("expected allowed tools override, got %#v", req.AllowedTools)
+	}
+
+	prompt := buildSubagentPrompt(*req)
+	if !strings.Contains(prompt, "Allowed tools: bash, read_file") {
+		t.Fatalf("expected prompt to include allowed tools, got %q", prompt)
+	}
 }

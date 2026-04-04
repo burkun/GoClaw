@@ -119,6 +119,15 @@ func (t *TaskTool) Execute(ctx context.Context, input string) (string, error) {
 		return "", fmt.Errorf("task tool: submit failed: %w", err)
 	}
 
+	eventCh := make(chan TaskEvent, 4)
+	unsubscribe := t.cfg.Executor.Subscribe(taskID, func(_ context.Context, _ string, ev TaskEvent) {
+		select {
+		case eventCh <- ev:
+		default:
+		}
+	})
+	defer unsubscribe()
+
 	waitCtx, cancel := context.WithTimeout(ctx, t.cfg.WaitTimeout)
 	defer cancel()
 
@@ -127,10 +136,24 @@ func (t *TaskTool) Execute(ctx context.Context, input string) (string, error) {
 		// Timed out while waiting; return current snapshot.
 		snapshot, ok := t.cfg.Executor.Get(taskID)
 		if ok {
+			status := snapshot.Status
+			// Prefer latest streamed event status when available.
+			for {
+				select {
+				case ev := <-eventCh:
+					status = ev.Status
+				default:
+					goto doneDrain
+				}
+			}
+		doneDrain:
+			if status == StatusPending {
+				status = StatusQueued
+			}
 			return mustJSON(taskToolOutput{
 				TaskID:  snapshot.TaskID,
 				Subject: taskSubject(req),
-				Status:  snapshot.Status,
+				Status:  status,
 				Output:  snapshot.Output,
 				Error:   snapshot.Error,
 				Message: "task submitted; still running",
@@ -172,13 +195,19 @@ func defaultWorker(ctx context.Context, req TaskRequest) (string, error) {
 	cfg, err := loadAppConfig()
 	if err == nil && cfg != nil {
 		modelReq := models.CreateRequest{}
-		if dm := cfg.DefaultModel(); dm != nil {
+		if strings.TrimSpace(req.ModelName) != "" {
+			modelReq.ModelName = strings.TrimSpace(req.ModelName)
+		} else if dm := cfg.DefaultModel(); dm != nil {
 			modelReq.ModelName = dm.Name
+		}
+		systemPrompt := "You are a focused subagent. Solve the task directly and return concise actionable output."
+		if strings.TrimSpace(req.SystemPrompt) != "" {
+			systemPrompt = strings.TrimSpace(req.SystemPrompt)
 		}
 		chatModel, modelErr := createChatModelFn(ctx, cfg, modelReq)
 		if modelErr == nil && chatModel != nil {
 			resp, genErr := chatModel.Generate(ctx, []*schema.Message{
-				schema.SystemMessage("You are a focused subagent. Solve the task directly and return concise actionable output."),
+				schema.SystemMessage(systemPrompt),
 				schema.UserMessage(buildSubagentPrompt(req)),
 			})
 			if genErr == nil && resp != nil {
@@ -222,6 +251,9 @@ func buildSubagentPrompt(req TaskRequest) string {
 	if req.MaxTurns > 0 {
 		parts = append(parts, fmt.Sprintf("Max turns hint: %d", req.MaxTurns))
 	}
+	if len(req.AllowedTools) > 0 {
+		parts = append(parts, "Allowed tools: "+strings.Join(req.AllowedTools, ", "))
+	}
 	return strings.Join(parts, "\n\n")
 }
 
@@ -238,6 +270,7 @@ func ValidateAndApplySubagentType(subagentType string, req *TaskRequest) error {
 	if subagentType == "" {
 		subagentType = "general-purpose"
 	}
+	req.SubagentType = subagentType
 
 	cfg, err := loadAppConfig()
 	if err != nil || cfg == nil {
@@ -252,7 +285,7 @@ func ValidateAndApplySubagentType(subagentType string, req *TaskRequest) error {
 
 	typeCfg, ok := cfg.Subagents.Types[subagentType]
 	if !ok {
-		// Type not explicitly defined; allow but warn.
+		// Type not explicitly defined; allow by default.
 		return nil
 	}
 
@@ -264,8 +297,14 @@ func ValidateAndApplySubagentType(subagentType string, req *TaskRequest) error {
 	if typeCfg.TimeoutSecs > 0 && req.Timeout <= 0 {
 		req.Timeout = time.Duration(typeCfg.TimeoutSecs) * time.Second
 	}
-	if typeCfg.Model != "" && typeCfg.Model != "inherit" {
-		// Note: model override would be applied by the worker, not here.
+	if strings.TrimSpace(typeCfg.Model) != "" && !strings.EqualFold(strings.TrimSpace(typeCfg.Model), "inherit") && strings.TrimSpace(req.ModelName) == "" {
+		req.ModelName = strings.TrimSpace(typeCfg.Model)
+	}
+	if strings.TrimSpace(typeCfg.SystemPrompt) != "" && strings.TrimSpace(req.SystemPrompt) == "" {
+		req.SystemPrompt = strings.TrimSpace(typeCfg.SystemPrompt)
+	}
+	if len(typeCfg.AllowedTools) > 0 && len(req.AllowedTools) == 0 {
+		req.AllowedTools = append([]string{}, typeCfg.AllowedTools...)
 	}
 
 	return nil

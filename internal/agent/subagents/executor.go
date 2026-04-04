@@ -40,6 +40,9 @@ type TaskRequest struct {
 	SubagentType string
 	MaxTurns     int
 	Timeout      time.Duration
+	ModelName    string
+	SystemPrompt string
+	AllowedTools []string
 }
 
 // TaskResult is the observable result/state of a task.
@@ -67,11 +70,12 @@ type ExecutorConfig struct {
 
 // Executor runs subagent tasks with bounded concurrency.
 type Executor struct {
-	cfg       ExecutorConfig
-	sem       chan struct{}
-	mu        sync.RWMutex
-	tasks     map[string]*taskRecord
-	callbacks map[string][]EventCallback
+	cfg          ExecutorConfig
+	sem          chan struct{}
+	mu           sync.RWMutex
+	tasks        map[string]*taskRecord
+	callbacks    map[string]map[int]EventCallback
+	callbackSeq  int
 }
 
 type taskRecord struct {
@@ -104,7 +108,7 @@ func NewExecutor(cfg ExecutorConfig) *Executor {
 		cfg:       cfg,
 		sem:       make(chan struct{}, cfg.MaxConcurrent),
 		tasks:     make(map[string]*taskRecord),
-		callbacks: make(map[string][]EventCallback),
+		callbacks: make(map[string]map[int]EventCallback),
 	}
 }
 
@@ -267,6 +271,7 @@ func (e *Executor) markStarted(taskID string) {
 	}
 	rec.result.Status = StatusInProgress
 	rec.result.StartedAt = time.Now()
+	e.dispatchEventLocked(taskID, TaskEvent{Status: StatusInProgress, Timestamp: rec.result.StartedAt})
 }
 
 func (e *Executor) finishTask(taskID string, st Status, output, errMsg string) {
@@ -296,17 +301,19 @@ func (e *Executor) finishTask(taskID string, st Status, output, errMsg string) {
 func (e *Executor) Subscribe(taskID string, cb EventCallback) func() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.callbacks[taskID] = append(e.callbacks[taskID], cb)
+	e.callbackSeq++
+	id := e.callbackSeq
+	if e.callbacks[taskID] == nil {
+		e.callbacks[taskID] = make(map[int]EventCallback)
+	}
+	e.callbacks[taskID][id] = cb
 	return func() {
 		e.mu.Lock()
 		defer e.mu.Unlock()
-		cbs := e.callbacks[taskID]
-		for i, c := range cbs {
-			if &c == &cb {
-				e.callbacks[taskID] = append(cbs[:i], cbs[i+1:]...)
-				break
-			}
+		if e.callbacks[taskID] == nil {
+			return
 		}
+		delete(e.callbacks[taskID], id)
 		if len(e.callbacks[taskID]) == 0 {
 			delete(e.callbacks, taskID)
 		}
@@ -316,12 +323,16 @@ func (e *Executor) Subscribe(taskID string, cb EventCallback) func() {
 // dispatchEventLocked calls all registered callbacks for taskID.
 // Must be called while e.mu is held.
 func (e *Executor) dispatchEventLocked(taskID string, event TaskEvent) {
-	cbs, ok := e.callbacks[taskID]
-	if !ok || len(cbs) == 0 {
+	cbMap, ok := e.callbacks[taskID]
+	if !ok || len(cbMap) == 0 {
 		return
 	}
+	callbacks := make([]EventCallback, 0, len(cbMap))
+	for _, cb := range cbMap {
+		callbacks = append(callbacks, cb)
+	}
 	// Non-blocking dispatch to avoid deadlock.
-	for _, cb := range cbs {
+	for _, cb := range callbacks {
 		go cb(context.Background(), taskID, event)
 	}
 }

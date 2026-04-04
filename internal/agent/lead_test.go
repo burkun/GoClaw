@@ -180,11 +180,25 @@ func TestSyncSkillsOnConfigReload(t *testing.T) {
 		t.Fatalf("register skill failed: %v", err)
 	}
 
-	old := getAppConfig
-	defer func() { getAppConfig = old }()
+	oldGet := getAppConfig
+	oldRegister := registerDefaultTools
+	oldInvalidate := invalidateMCPConfigCache
+	defer func() {
+		getAppConfig = oldGet
+		registerDefaultTools = oldRegister
+		invalidateMCPConfigCache = oldInvalidate
+	}()
+
 	getAppConfig = func() (*config.AppConfig, error) {
 		return &config.AppConfig{}, nil
 	}
+	registerCalled := 0
+	registerDefaultTools = func(_ *config.AppConfig) error {
+		registerCalled++
+		return nil
+	}
+	invalidateCalled := 0
+	invalidateMCPConfigCache = func() { invalidateCalled++ }
 
 	a := &leadAgent{skills: reg}
 	if err := a.syncSkillsOnConfigReload(); err != nil {
@@ -193,13 +207,32 @@ func TestSyncSkillsOnConfigReload(t *testing.T) {
 	if plugin.reloadCnt != 1 {
 		t.Fatalf("expected reload count 1, got %d", plugin.reloadCnt)
 	}
+	if registerCalled != 1 {
+		t.Fatalf("expected registerDefaultTools called once, got %d", registerCalled)
+	}
+	if invalidateCalled != 1 {
+		t.Fatalf("expected invalidateMCPConfigCache called once, got %d", invalidateCalled)
+	}
 }
 
 func TestSyncSkillsOnConfigReload_ConfigError(t *testing.T) {
-	old := getAppConfig
-	defer func() { getAppConfig = old }()
+	oldGet := getAppConfig
+	oldRegister := registerDefaultTools
+	oldInvalidate := invalidateMCPConfigCache
+	defer func() {
+		getAppConfig = oldGet
+		registerDefaultTools = oldRegister
+		invalidateMCPConfigCache = oldInvalidate
+	}()
 	getAppConfig = func() (*config.AppConfig, error) {
 		return nil, errors.New("load failed")
+	}
+	registerDefaultTools = func(_ *config.AppConfig) error {
+		t.Fatalf("registerDefaultTools should not be called on get config error")
+		return nil
+	}
+	invalidateMCPConfigCache = func() {
+		t.Fatalf("invalidateMCPConfigCache should not be called on get config error")
 	}
 
 	a := &leadAgent{skills: skillsruntime.NewRegistry()}
