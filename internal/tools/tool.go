@@ -122,3 +122,9 @@ func Get(name string) (Tool, bool) {
 func GetAll() []Tool {
 	return defaultRegistry.GetAll()
 }
+
+// ResetDefaultRegistry clears and recreates the default registry.
+// Useful when rebuilding runtime tool sets from config.
+func ResetDefaultRegistry() {
+	defaultRegistry = NewToolRegistry()
+}

@@ -25,6 +25,7 @@ import (
 	"github.com/bookerbai/goclaw/internal/models"
 	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
 	toolruntime "github.com/bookerbai/goclaw/internal/tools"
+	toolbootstrap "github.com/bookerbai/goclaw/internal/tools/bootstrap"
 )
 
 type UploadedFile struct {
@@ -115,6 +116,10 @@ func New(ctx context.Context) (*leadAgent, error) {
 	chatModel, err := models.CreateChatModel(ctx, appCfg, req)
 	if err != nil {
 		return nil, fmt.Errorf("agent.New: create model failed: %w", err)
+	}
+
+	if err := toolbootstrap.RegisterDefaultTools(appCfg); err != nil {
+		return nil, fmt.Errorf("agent.New: register default tools failed: %w", err)
 	}
 
 	tools := toolruntime.AdaptDefaultRegistryToEinoTools()
