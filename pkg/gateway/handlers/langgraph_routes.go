@@ -1,0 +1,575 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/cloudwego/eino/schema"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"github.com/bookerbai/goclaw/internal/agent"
+	"github.com/bookerbai/goclaw/internal/config"
+)
+
+// LangGraphHandler serves the LangGraph SDK compatible API endpoints.
+// These endpoints are mounted under /api/langgraph/* and follow the
+// LangGraph Platform API contract for compatibility with the @langchain/langgraph-sdk.
+type LangGraphHandler struct {
+	cfg   *config.AppConfig
+	agent agent.LeadAgent
+
+	runsMu sync.RWMutex
+	runs   map[string]lgRunHandle
+}
+
+type lgRunHandle struct {
+	ThreadID     string
+	RunID        string
+	CheckpointID string
+	Cancel       context.CancelFunc
+}
+
+// NewLangGraphHandler creates a handler for LangGraph-compatible endpoints.
+func NewLangGraphHandler(cfg *config.AppConfig, a agent.LeadAgent) *LangGraphHandler {
+	return &LangGraphHandler{
+		cfg:   cfg,
+		agent: a,
+		runs:  make(map[string]lgRunHandle),
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Request / Response types (LangGraph SDK format)
+// ---------------------------------------------------------------------------
+
+// LGCreateThreadRequest is the body for POST /threads.
+type LGCreateThreadRequest struct {
+	ThreadID string         `json:"thread_id,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// LGThread represents a thread in LangGraph format.
+type LGThread struct {
+	ThreadID  string         `json:"thread_id"`
+	CreatedAt string         `json:"created_at"`
+	UpdatedAt string         `json:"updated_at"`
+	Status    string         `json:"status"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Values    map[string]any `json:"values,omitempty"`
+}
+
+// LGThreadState represents thread state in LangGraph format.
+type LGThreadState struct {
+	Values       map[string]any `json:"values"`
+	Next         []string       `json:"next"`
+	CheckpointID string         `json:"checkpoint_id,omitempty"`
+	CreatedAt    string         `json:"created_at,omitempty"`
+	ParentID     string         `json:"parent_id,omitempty"`
+}
+
+// LGRunRequest is the body for POST /threads/{id}/runs/stream.
+type LGRunRequest struct {
+	AssistantID      string         `json:"assistant_id"`
+	Input            any            `json:"input,omitempty"`
+	Config           map[string]any `json:"config,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	StreamMode       any            `json:"stream_mode,omitempty"` // string or []string
+	StreamSubgraphs  bool           `json:"stream_subgraphs,omitempty"`
+	StreamResumable  bool           `json:"stream_resumable,omitempty"`
+	CheckpointID     string         `json:"checkpoint_id,omitempty"`
+	InterruptBefore  any            `json:"interrupt_before,omitempty"`
+	InterruptAfter   any            `json:"interrupt_after,omitempty"`
+}
+
+// LGSearchRequest is the body for POST /threads/search.
+type LGSearchRequest struct {
+	Limit    int    `json:"limit,omitempty"`
+	Offset   int    `json:"offset,omitempty"`
+	Query    string `json:"query,omitempty"`
+	Status   string `json:"status,omitempty"`
+	SortBy   string `json:"sort_by,omitempty"`
+	SortDesc bool   `json:"sort_desc,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// Thread CRUD endpoints
+// ---------------------------------------------------------------------------
+
+// CreateThread handles POST /threads.
+func (h *LangGraphHandler) CreateThread(c *gin.Context) {
+	var req LGCreateThreadRequest
+	if err := c.ShouldBindJSON(&req); err != nil && err.Error() != "EOF" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	threadID := strings.TrimSpace(req.ThreadID)
+	if threadID == "" {
+		threadID = uuid.NewString()
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	thread := LGThread{
+		ThreadID:  threadID,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Status:    "idle",
+		Metadata:  req.Metadata,
+	}
+
+	c.JSON(http.StatusCreated, thread)
+}
+
+// GetThread handles GET /threads/{thread_id}.
+func (h *LangGraphHandler) GetThread(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	thread := LGThread{
+		ThreadID:  threadID,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Status:    "idle",
+	}
+
+	c.JSON(http.StatusOK, thread)
+}
+
+// DeleteThread handles DELETE /threads/{thread_id}.
+func (h *LangGraphHandler) DeleteThread(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"thread_id": threadID, "deleted": true})
+}
+
+// SearchThreads handles POST /threads/search.
+func (h *LangGraphHandler) SearchThreads(c *gin.Context) {
+	var req LGSearchRequest
+	_ = c.ShouldBindJSON(&req)
+
+	// Minimal implementation: return empty list.
+	// Full implementation would query a persistent store.
+	c.JSON(http.StatusOK, []LGThread{})
+}
+
+// GetThreadState handles GET /threads/{thread_id}/state.
+func (h *LangGraphHandler) GetThreadState(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	state := LGThreadState{
+		Values: map[string]any{
+			"messages": []any{},
+		},
+		Next: []string{},
+	}
+
+	c.JSON(http.StatusOK, state)
+}
+
+// UpdateThreadState handles PATCH /threads/{thread_id}/state.
+func (h *LangGraphHandler) UpdateThreadState(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	var req struct {
+		Values map[string]any `json:"values"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	state := LGThreadState{
+		Values:       req.Values,
+		Next:         []string{},
+		CheckpointID: uuid.NewString(),
+	}
+
+	c.JSON(http.StatusOK, state)
+}
+
+// ---------------------------------------------------------------------------
+// Runs endpoints
+// ---------------------------------------------------------------------------
+
+// StreamRun handles POST /threads/{thread_id}/runs/stream.
+// This is the core endpoint that the LangGraph SDK uses for streaming agent responses.
+func (h *LangGraphHandler) StreamRun(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	var req LGRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	runID := uuid.NewString()
+
+	// Determine stream mode.
+	streamMode := "values"
+	switch v := req.StreamMode.(type) {
+	case string:
+		if v != "" {
+			streamMode = v
+		}
+	case []any:
+		if len(v) > 0 {
+			if s, ok := v[0].(string); ok {
+				streamMode = s
+			}
+		}
+	}
+
+	// Set SSE headers.
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	w := c.Writer
+
+	// Create converter for this stream.
+	converter := NewLangGraphEventConverter(threadID, runID, streamMode)
+
+	// Write metadata event first.
+	if err := WriteLangGraphSSE(w, converter.ConvertMetadataEvent()); err != nil {
+		return
+	}
+	w.Flush()
+
+	// Check agent is initialized.
+	if h.agent == nil {
+		_ = WriteLangGraphSSE(w, LangGraphSSEEvent{
+			Event: "error",
+			Data:  LangGraphErrorEvent{Message: "agent not initialized"},
+		})
+		w.Flush()
+		return
+	}
+
+	// Prepare agent state from request input.
+	state := &agent.ThreadState{
+		Messages: make([]*schema.Message, 0),
+	}
+
+	// Extract messages from input if present.
+	if input, ok := req.Input.(map[string]any); ok {
+		if msgs, ok := input["messages"].([]any); ok {
+			for _, m := range msgs {
+				if msgMap, ok := m.(map[string]any); ok {
+					if msg := parseLangGraphMessage(msgMap); msg != nil {
+						state.Messages = append(state.Messages, msg)
+					}
+				}
+			}
+		}
+	}
+
+	// Prepare run configuration.
+	modelName := "gpt-4"
+	if h.cfg != nil && h.cfg.DefaultModel() != nil {
+		modelName = h.cfg.DefaultModel().Name
+	}
+
+	// Extract context from request config.
+	thinkEnabled := true
+	planMode := false
+	subagentEnabled := true
+	if ctx, ok := req.Config["context"].(map[string]any); ok {
+		if v, ok := ctx["thinking_enabled"].(bool); ok {
+			thinkEnabled = v
+		}
+		if v, ok := ctx["is_plan_mode"].(bool); ok {
+			planMode = v
+		}
+		if v, ok := ctx["subagent_enabled"].(bool); ok {
+			subagentEnabled = v
+		}
+	}
+
+	cfg := agent.RunConfig{
+		ThreadID:        threadID,
+		ModelName:       modelName,
+		ThinkingEnabled: thinkEnabled,
+		IsPlanMode:      planMode,
+		SubagentEnabled: subagentEnabled,
+		CheckpointID:    req.CheckpointID,
+		AgentName:       "lead_agent",
+		RunID:           runID,
+	}
+
+	// Run the agent.
+	runCtx, cancel := context.WithCancel(c.Request.Context())
+	h.registerRun(runID, lgRunHandle{
+		ThreadID:     threadID,
+		RunID:        runID,
+		CheckpointID: req.CheckpointID,
+		Cancel:       cancel,
+	})
+	defer h.unregisterRun(runID)
+
+	var eventChan <-chan agent.Event
+	var err error
+
+	if strings.TrimSpace(req.CheckpointID) != "" {
+		eventChan, err = h.agent.Resume(runCtx, state, cfg, req.CheckpointID)
+	} else {
+		eventChan, err = h.agent.Run(runCtx, state, cfg)
+	}
+
+	if err != nil {
+		_ = WriteLangGraphSSE(w, LangGraphSSEEvent{
+			Event: "error",
+			Data:  LangGraphErrorEvent{Message: fmt.Sprintf("failed to start agent: %v", err)},
+		})
+		w.Flush()
+		return
+	}
+
+	// Stream events.
+	for ev := range eventChan {
+		events := converter.Convert(ev)
+		for _, sseEv := range events {
+			if err := WriteLangGraphSSE(w, sseEv); err != nil {
+				return
+			}
+		}
+		w.Flush()
+	}
+}
+
+// StreamRunStandalone handles POST /runs/stream (without thread_id).
+// Creates a new thread internally.
+func (h *LangGraphHandler) StreamRunStandalone(c *gin.Context) {
+	var req LGRunRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Create a new thread.
+	threadID := uuid.NewString()
+
+	// Forward to StreamRun with the new thread_id.
+	c.Params = append(c.Params, gin.Param{Key: "thread_id", Value: threadID})
+	h.StreamRun(c)
+}
+
+// CancelRun handles POST /threads/{thread_id}/runs/{run_id}/cancel.
+func (h *LangGraphHandler) CancelRun(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	runID := c.Param("run_id")
+	if threadID == "" || runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id and run_id are required"})
+		return
+	}
+
+	run, ok := h.getRun(runID)
+	if !ok || run.ThreadID != threadID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		return
+	}
+
+	if run.Cancel != nil {
+		run.Cancel()
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"thread_id": threadID,
+		"run_id":    runID,
+		"status":    "cancelling",
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func (h *LangGraphHandler) registerRun(runID string, run lgRunHandle) {
+	h.runsMu.Lock()
+	defer h.runsMu.Unlock()
+	h.runs[runID] = run
+}
+
+func (h *LangGraphHandler) unregisterRun(runID string) {
+	h.runsMu.Lock()
+	defer h.runsMu.Unlock()
+	delete(h.runs, runID)
+}
+
+func (h *LangGraphHandler) getRun(runID string) (lgRunHandle, bool) {
+	h.runsMu.RLock()
+	defer h.runsMu.RUnlock()
+	r, ok := h.runs[runID]
+	return r, ok
+}
+
+// parseLangGraphMessage converts a LangGraph message map to schema.Message.
+func parseLangGraphMessage(m map[string]any) *schema.Message {
+	role, _ := m["type"].(string)
+	content, _ := m["content"].(string)
+
+	switch role {
+	case "human":
+		return schema.UserMessage(content)
+	case "ai":
+		// Parse tool calls if present.
+		var toolCalls []schema.ToolCall
+		if tcs, ok := m["tool_calls"].([]any); ok {
+			for _, tc := range tcs {
+				if tcMap, ok := tc.(map[string]any); ok {
+					id, _ := tcMap["id"].(string)
+					name, _ := tcMap["name"].(string)
+					argsJSON, _ := tcMap["args"].(string)
+					if argsJSON == "" {
+						argsBytes, _ := json.Marshal(tcMap["args"])
+						argsJSON = string(argsBytes)
+					}
+					toolCalls = append(toolCalls, schema.ToolCall{
+						ID:   id,
+						Type: "tool_call",
+						Function: schema.FunctionCall{
+							Name:      name,
+							Arguments: argsJSON,
+						},
+					})
+				}
+			}
+		}
+		msg := schema.AssistantMessage(content, toolCalls)
+		if name, ok := m["name"].(string); ok {
+			msg.Name = name
+		}
+		return msg
+	case "tool":
+		toolCallID, _ := m["tool_call_id"].(string)
+		name, _ := m["name"].(string)
+		return schema.ToolMessage(content, toolCallID, schema.WithToolName(name))
+	case "system":
+		return schema.SystemMessage(content)
+	default:
+		return schema.UserMessage(content)
+	}
+}
+
+// WaitForRun handles GET /threads/{thread_id}/runs/{run_id}/join (for non-streaming clients).
+func (h *LangGraphHandler) WaitForRun(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	runID := c.Param("run_id")
+	if threadID == "" || runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id and run_id are required"})
+		return
+	}
+
+	// Minimal implementation: return run status.
+	c.JSON(http.StatusOK, gin.H{
+		"thread_id": threadID,
+		"run_id":    runID,
+		"status":    "pending",
+	})
+}
+
+// GetRun handles GET /threads/{thread_id}/runs/{run_id}.
+func (h *LangGraphHandler) GetRun(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	runID := c.Param("run_id")
+	if threadID == "" || runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id and run_id are required"})
+		return
+	}
+
+	run, ok := h.getRun(runID)
+	if !ok || run.ThreadID != threadID {
+		c.JSON(http.StatusNotFound, gin.H{"error": "run not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"thread_id":     threadID,
+		"run_id":        runID,
+		"status":        "running",
+		"checkpoint_id": run.CheckpointID,
+	})
+}
+
+// ListRuns handles GET /threads/{thread_id}/runs.
+func (h *LangGraphHandler) ListRuns(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	h.runsMu.RLock()
+	defer h.runsMu.RUnlock()
+
+	runs := make([]map[string]any, 0)
+	for runID, run := range h.runs {
+		if run.ThreadID == threadID {
+			runs = append(runs, map[string]any{
+				"run_id": runID,
+				"status": "running",
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, runs)
+}
+
+// ---------------------------------------------------------------------------
+// Assistants endpoints (stub for SDK compatibility)
+// ---------------------------------------------------------------------------
+
+// GetAssistant handles GET /assistants/{assistant_id}.
+// LangGraph SDK expects this to exist for the assistant_id parameter.
+func (h *LangGraphHandler) GetAssistant(c *gin.Context) {
+	assistantID := c.Param("assistant_id")
+	if assistantID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "assistant_id is required"})
+		return
+	}
+
+	// Return a stub assistant for "lead_agent".
+	c.JSON(http.StatusOK, gin.H{
+		"assistant_id": assistantID,
+		"name":         "lead_agent",
+		"graph_id":     "lead_agent",
+		"config":       map[string]any{},
+	})
+}
+
+// ListAssistants handles GET /assistants.
+func (h *LangGraphHandler) ListAssistants(c *gin.Context) {
+	c.JSON(http.StatusOK, []gin.H{
+		{
+			"assistant_id": "lead_agent",
+			"name":         "Lead Agent",
+			"graph_id":     "lead_agent",
+		},
+	})
+}

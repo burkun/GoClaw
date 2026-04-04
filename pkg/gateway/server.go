@@ -89,6 +89,7 @@ func (s *Server) registerRoutes() {
 	suggestionsH := handlers.NewSuggestionsHandler(s.cfg)
 	agentsH := handlers.NewAgentsHandler(s.cfg)
 	channelsH := handlers.NewChannelsHandler(buildChannelsManager(s.cfg))
+	langgraphH := handlers.NewLangGraphHandler(s.cfg, s.agent)
 
 	api := s.router.Group("/api")
 	{
@@ -157,6 +158,34 @@ func (s *Server) registerRoutes() {
 			// POST /api/threads/:thread_id/suggestions — generate follow-up suggestions.
 			threads.POST("/suggestions", suggestionsH.GenerateSuggestions)
 		}
+	}
+
+	// LangGraph SDK compatible API routes.
+	// These endpoints follow the LangGraph Platform API contract.
+	lg := api.Group("/langgraph")
+	{
+		// Assistants (stub for SDK compatibility).
+		lg.GET("/assistants", langgraphH.ListAssistants)
+		lg.GET("/assistants/:assistant_id", langgraphH.GetAssistant)
+
+		// Threads CRUD.
+		lg.POST("/threads", langgraphH.CreateThread)
+		lg.GET("/threads/:thread_id", langgraphH.GetThread)
+		lg.DELETE("/threads/:thread_id", langgraphH.DeleteThread)
+		lg.POST("/threads/search", langgraphH.SearchThreads)
+
+		// Thread state.
+		lg.GET("/threads/:thread_id/state", langgraphH.GetThreadState)
+		lg.PATCH("/threads/:thread_id/state", langgraphH.UpdateThreadState)
+
+		// Runs (streaming).
+		lg.GET("/threads/:thread_id/runs", langgraphH.ListRuns)
+		lg.GET("/threads/:thread_id/runs/:run_id", langgraphH.GetRun)
+		lg.POST("/threads/:thread_id/runs/stream", langgraphH.StreamRun)
+		lg.POST("/threads/:thread_id/runs/:run_id/cancel", langgraphH.CancelRun)
+
+		// Standalone run (creates thread internally).
+		lg.POST("/runs/stream", langgraphH.StreamRunStandalone)
 	}
 
 	// Health check endpoint.
