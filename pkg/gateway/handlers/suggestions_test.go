@@ -10,7 +10,7 @@ import (
 
 func TestSuggestionsHandler_GenerateSuggestions_Fallback(t *testing.T) {
 	h := NewSuggestionsHandler(nil)
-	body := `{"messages":[],"count":2}`
+	body := `{"messages":[{"role":"user","content":"hi"}],"count":2}`
 	req := httptest.NewRequest(http.MethodPost, "/api/threads/t1/suggestions", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -29,7 +29,26 @@ func TestSuggestionsHandler_GenerateSuggestions_Fallback(t *testing.T) {
 	}
 }
 
-func TestParseSuggestions(t *testing.T) {
+func TestParseSuggestions_JSONArray(t *testing.T) {
+	content := `["First question?", "Second question?", "Third question?"]`
+	got := parseSuggestions(content, 2)
+	if len(got) != 2 {
+		t.Fatalf("expected 2, got %d", len(got))
+	}
+	if got[0] != "First question?" {
+		t.Fatalf("unexpected first suggestion: %q", got[0])
+	}
+}
+
+func TestParseSuggestions_JSONWithTrailingGarbage(t *testing.T) {
+	content := `["A", "B"] extra text`
+	got := parseSuggestions(content, 3)
+	if len(got) != 2 {
+		t.Fatalf("expected 2, got %d (%v)", len(got), got)
+	}
+}
+
+func TestParseSuggestions_NumberedListFallback(t *testing.T) {
 	content := "1. What is the next step?\n2. Can you clarify?\n3. Show an example."
 	got := parseSuggestions(content, 3)
 	if len(got) != 3 {

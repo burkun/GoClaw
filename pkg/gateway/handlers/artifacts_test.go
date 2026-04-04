@@ -1,10 +1,12 @@
 package handlers
 
 import (
+	"archive/zip"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -56,4 +58,73 @@ func TestArtifactsHandler_GetArtifact_PathTraversal(t *testing.T) {
 	if rr.Code == http.StatusOK {
 		t.Error("expected non-200 for path traversal")
 	}
+}
+
+func TestArtifactsHandler_GetArtifact_FromSkillArchive(t *testing.T) {
+	tmp := t.TempDir()
+	threadDir := filepath.Join(tmp, "thread-001", "user-data", "outputs")
+	if err := os.MkdirAll(threadDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(threadDir, "demo.skill")
+	if err := writeArtifactSkillArchive(archivePath, "SKILL.md", "# Demo"); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewArtifactsHandler(nil, tmp)
+	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-001/artifacts/outputs/demo.skill/SKILL.md", nil)
+	rr := httptest.NewRecorder()
+	ctx, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-001", "path": "outputs/demo.skill/SKILL.md"})
+
+	h.GetArtifact(ctx)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "# Demo") {
+		t.Fatalf("expected extracted content")
+	}
+}
+
+func TestArtifactsHandler_GetArtifact_DownloadParam(t *testing.T) {
+	tmp := t.TempDir()
+	threadDir := filepath.Join(tmp, "thread-001", "user-data", "outputs")
+	if err := os.MkdirAll(threadDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(threadDir, "report.txt")
+	if err := os.WriteFile(artifactPath, []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewArtifactsHandler(nil, tmp)
+	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-001/artifacts/outputs/report.txt?download=true", nil)
+	rr := httptest.NewRecorder()
+	ctx, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-001", "path": "outputs/report.txt"})
+
+	h.GetArtifact(ctx)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if cd := rr.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") {
+		t.Fatalf("expected attachment disposition, got %q", cd)
+	}
+}
+
+func writeArtifactSkillArchive(path, innerName, content string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	w, err := zw.Create(innerName)
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte(content)); err != nil {
+		return err
+	}
+	return zw.Close()
 }

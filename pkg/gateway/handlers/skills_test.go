@@ -1,12 +1,16 @@
 package handlers
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/bookerbai/goclaw/internal/config"
 	"github.com/bookerbai/goclaw/internal/skills"
 )
 
@@ -83,4 +87,90 @@ func TestSkillsHandler_UpdateSkill(t *testing.T) {
 	if !updated.Metadata.Enabled {
 		t.Error("expected skill to be enabled")
 	}
+}
+
+func TestSkillsHandler_InstallSkill_Success(t *testing.T) {
+	cwd, _ := os.Getwd()
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	threadID := "thread-1"
+	archiveRel := "outputs/demo.skill"
+	archiveHost := filepath.Join(".goclaw", "threads", threadID, "user-data", archiveRel)
+	if err := os.MkdirAll(filepath.Dir(archiveHost), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := writeSkillArchive(archiveHost, "demo-skill", "Demo skill"); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	extPath := filepath.Join(tmp, "extensions_config.json")
+	cfg := &config.AppConfig{
+		ExtensionsRef: config.ExtensionsConfigRef{ConfigPath: extPath},
+		Skills:        config.SkillsConfig{Path: filepath.Join(tmp, "skills")},
+	}
+	h := NewSkillsHandler(cfg, nil)
+
+	body := `{"thread_id":"thread-1","path":"/mnt/user-data/outputs/demo.skill"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/install", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ctx, _ := newGinContext(rr, req, nil)
+
+	h.InstallSkill(ctx)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	data, err := os.ReadFile(extPath)
+	if err != nil {
+		t.Fatalf("read extensions: %v", err)
+	}
+	var ext config.ExtensionsConfig
+	if err := json.Unmarshal(data, &ext); err != nil {
+		t.Fatalf("unmarshal extensions: %v", err)
+	}
+	if !ext.Skills["demo-skill"].Enabled {
+		t.Fatalf("expected demo-skill enabled in extensions")
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "skills", "custom", "demo-skill", "SKILL.md")); err != nil {
+		t.Fatalf("expected extracted SKILL.md: %v", err)
+	}
+}
+
+func TestSkillsHandler_InstallSkill_NotFound(t *testing.T) {
+	cfg := &config.AppConfig{
+		ExtensionsRef: config.ExtensionsConfigRef{ConfigPath: filepath.Join(t.TempDir(), "extensions_config.json")},
+	}
+	h := NewSkillsHandler(cfg, nil)
+	body := `{"thread_id":"thread-1","path":"/mnt/user-data/outputs/missing.skill"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/install", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ctx, _ := newGinContext(rr, req, nil)
+
+	h.InstallSkill(ctx)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func writeSkillArchive(path, skillName, desc string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	w, err := zw.Create("SKILL.md")
+	if err != nil {
+		return err
+	}
+	content := "---\nname: " + skillName + "\ndescription: " + desc + "\n---\n\n# Hello"
+	if _, err := w.Write([]byte(content)); err != nil {
+		return err
+	}
+	return zw.Close()
 }

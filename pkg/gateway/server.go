@@ -84,6 +84,7 @@ func (s *Server) registerRoutes() {
 	artifactsH := handlers.NewArtifactsHandler(s.cfg, "")
 	suggestionsH := handlers.NewSuggestionsHandler(s.cfg)
 	agentsH := handlers.NewAgentsHandler(s.cfg)
+	channelsH := handlers.NewChannelsHandler()
 
 	api := s.router.Group("/api")
 	{
@@ -101,11 +102,18 @@ func (s *Server) registerRoutes() {
 		api.GET("/skills", skillsH.ListSkills)
 		api.GET("/skills/:name", skillsH.GetSkill)
 		api.PUT("/skills/:name", skillsH.UpdateSkill)
+		api.POST("/skills/install", skillsH.InstallSkill)
 
 		// Agents routes.
 		api.GET("/agents", agentsH.ListAgents)
 		api.GET("/agents/:name", agentsH.GetAgent)
+		api.POST("/agents", agentsH.CreateAgent)
 		api.PUT("/agents/:name", agentsH.UpdateAgent)
+		api.DELETE("/agents/:name", agentsH.DeleteAgent)
+		api.GET("/agents/check", agentsH.CheckAgentName)
+		api.GET("/user-profile", agentsH.GetUserProfile)
+
+		handlers.RegisterChannelsRoutes(api, channelsH)
 
 		threads := api.Group("/threads/:thread_id")
 		{
