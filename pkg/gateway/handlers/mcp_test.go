@@ -37,8 +37,8 @@ func TestMCPHandler_UpdateConfig(t *testing.T) {
 	tmp := t.TempDir()
 	extPath := filepath.Join(tmp, "extensions_config.json")
 	_ = os.WriteFile(extPath, []byte(`{"mcp_servers":{}}`), 0o644)
-
-	h := NewMCPHandler(&config.AppConfig{ExtensionsRef: config.ExtensionsConfigRef{ConfigPath: extPath}})
+	cfg := &config.AppConfig{ExtensionsRef: config.ExtensionsConfigRef{ConfigPath: extPath}}
+	h := NewMCPHandler(cfg)
 
 	body := `{"mcp_servers":{"demo":{"transport":"stdio","command":"demo-server"}}}`
 	req := httptest.NewRequest(http.MethodPut, "/api/mcp/config", strings.NewReader(body))
@@ -55,5 +55,8 @@ func TestMCPHandler_UpdateConfig(t *testing.T) {
 	data, _ := os.ReadFile(extPath)
 	if !strings.Contains(string(data), "demo-server") {
 		t.Error("expected updated file to contain demo-server")
+	}
+	if cfg.Extensions.MCPServers["demo"].Command != "demo-server" {
+		t.Fatalf("expected in-memory cfg sync after update")
 	}
 }

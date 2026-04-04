@@ -10,6 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/bookerbai/goclaw/internal/agent"
+	"github.com/bookerbai/goclaw/internal/channels"
+	feishuch "github.com/bookerbai/goclaw/internal/channels/feishu"
+	slackch "github.com/bookerbai/goclaw/internal/channels/slack"
+	telegramch "github.com/bookerbai/goclaw/internal/channels/telegram"
 	"github.com/bookerbai/goclaw/internal/config"
 	"github.com/bookerbai/goclaw/pkg/gateway/handlers"
 )
@@ -84,7 +88,7 @@ func (s *Server) registerRoutes() {
 	artifactsH := handlers.NewArtifactsHandler(s.cfg, "")
 	suggestionsH := handlers.NewSuggestionsHandler(s.cfg)
 	agentsH := handlers.NewAgentsHandler(s.cfg)
-	channelsH := handlers.NewChannelsHandler()
+	channelsH := handlers.NewChannelsHandler(buildChannelsManager(s.cfg))
 
 	api := s.router.Group("/api")
 	{
@@ -137,4 +141,23 @@ func (s *Server) registerRoutes() {
 	s.router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "healthy", "service": "goclaw-gateway"})
 	})
+}
+
+func buildChannelsManager(cfg *config.AppConfig) *channels.Manager {
+	mgr := channels.NewManager(nil, nil)
+	if cfg == nil {
+		return mgr
+	}
+	if cfg.Channels != nil {
+		if cfg.Channels.Feishu != nil && cfg.Channels.Feishu.Enabled {
+			_ = mgr.RegisterChannel(feishuch.New())
+		}
+		if cfg.Channels.Slack != nil && cfg.Channels.Slack.Enabled {
+			_ = mgr.RegisterChannel(slackch.New())
+		}
+		if cfg.Channels.Telegram != nil && cfg.Channels.Telegram.Enabled {
+			_ = mgr.RegisterChannel(telegramch.New())
+		}
+	}
+	return mgr
 }

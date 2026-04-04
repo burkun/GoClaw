@@ -102,6 +102,22 @@ func (h *SkillsHandler) UpdateSkill(c *gin.Context) {
 
 	if req.Enabled != nil {
 		sk.Metadata.Enabled = *req.Enabled
+		extCfg, err := h.loadExtensions()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if extCfg.Skills == nil {
+			extCfg.Skills = map[string]config.SkillStateConfig{}
+		}
+		extCfg.Skills[name] = config.SkillStateConfig{Enabled: *req.Enabled}
+		if err := h.saveExtensions(extCfg); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if h.cfg != nil {
+			h.cfg.Extensions.Skills = extCfg.Skills
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "updated"})

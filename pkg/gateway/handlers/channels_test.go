@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,8 +10,43 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+type fakeChannelsManager struct {
+	running  bool
+	channels map[string]bool
+}
+
+func (m *fakeChannelsManager) IsRunning() bool { return m.running }
+func (m *fakeChannelsManager) GetChannelStatus() map[string]bool {
+	out := make(map[string]bool, len(m.channels))
+	for k, v := range m.channels {
+		out[k] = v
+	}
+	return out
+}
+func (m *fakeChannelsManager) RestartChannel(_ context.Context, name string) error {
+	if m.channels == nil {
+		m.channels = map[string]bool{}
+	}
+	m.channels[name] = true
+	return nil
+}
+func (m *fakeChannelsManager) Start(_ context.Context) error {
+	m.running = true
+	for k := range m.channels {
+		m.channels[k] = true
+	}
+	return nil
+}
+func (m *fakeChannelsManager) Stop(_ context.Context) error {
+	m.running = false
+	for k := range m.channels {
+		m.channels[k] = false
+	}
+	return nil
+}
+
 func TestChannelsHandler_GetChannelsStatus_Empty(t *testing.T) {
-	h := NewChannelsHandler()
+	h := NewChannelsHandler(nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/channels", nil)
 	rr := httptest.NewRecorder()
 	ctx, _ := newGinContext(rr, req, nil)
@@ -33,7 +69,7 @@ func TestChannelsHandler_GetChannelsStatus_Empty(t *testing.T) {
 }
 
 func TestChannelsHandler_RestartChannel_EmptyName(t *testing.T) {
-	h := NewChannelsHandler()
+	h := NewChannelsHandler(nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/channels//restart", nil)
 	rr := httptest.NewRecorder()
 	ctx, _ := newGinContext(rr, req, map[string]string{"name": ""})
@@ -45,41 +81,61 @@ func TestChannelsHandler_RestartChannel_EmptyName(t *testing.T) {
 	}
 }
 
-func TestChannelsHandler_RestartChannel_NotInitialized(t *testing.T) {
-	h := NewChannelsHandler()
-	req := httptest.NewRequest(http.MethodPost, "/api/channels/feishu/restart", nil)
-	rr := httptest.NewRecorder()
-	ctx, _ := newGinContext(rr, req, map[string]string{"name": "feishu"})
+func TestChannelsHandler_WithManager(t *testing.T) {
+	mgr := &fakeChannelsManager{channels: map[string]bool{"feishu": false}}
+	h := NewChannelsHandler(mgr)
 
-	h.RestartChannel(ctx)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
-	}
-	var resp ChannelRestartResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-	if resp.Success {
-		t.Fatalf("expected success=false")
-	}
-}
-
-func TestChannelsHandler_StartStop_NotImplemented(t *testing.T) {
-	h := NewChannelsHandler()
+	// restart
 	{
-		req := httptest.NewRequest(http.MethodPost, "/api/channels/slack/start", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/channels/feishu/restart", nil)
 		rr := httptest.NewRecorder()
-		ctx, _ := newGinContext(rr, req, map[string]string{"name": "slack"})
+		ctx, _ := newGinContext(rr, req, map[string]string{"name": "feishu"})
+		h.RestartChannel(ctx)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var resp ChannelRestartResponse
+		_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+		if !resp.Success {
+			t.Fatalf("expected restart success=true")
+		}
+	}
+
+	// start
+	{
+		req := httptest.NewRequest(http.MethodPost, "/api/channels/feishu/start", nil)
+		rr := httptest.NewRecorder()
+		ctx, _ := newGinContext(rr, req, map[string]string{"name": "feishu"})
 		h.StartChannel(ctx)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rr.Code)
 		}
 	}
+
+	// get status
 	{
-		req := httptest.NewRequest(http.MethodPost, "/api/channels/telegram/stop", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/channels", nil)
 		rr := httptest.NewRecorder()
-		ctx, _ := newGinContext(rr, req, map[string]string{"name": "telegram"})
+		ctx, _ := newGinContext(rr, req, nil)
+		h.GetChannelsStatus(ctx)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var resp ChannelsStatusResponse
+		_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+		if !resp.ServiceRunning {
+			t.Fatalf("expected service_running=true")
+		}
+		if !resp.Channels["feishu"].Running {
+			t.Fatalf("expected feishu running=true")
+		}
+	}
+
+	// stop
+	{
+		req := httptest.NewRequest(http.MethodPost, "/api/channels/feishu/stop", nil)
+		rr := httptest.NewRecorder()
+		ctx, _ := newGinContext(rr, req, map[string]string{"name": "feishu"})
 		h.StopChannel(ctx)
 		if rr.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rr.Code)
@@ -91,7 +147,7 @@ func TestRegisterChannelsRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	api := r.Group("/api")
-	RegisterChannelsRoutes(api, NewChannelsHandler())
+	RegisterChannelsRoutes(api, NewChannelsHandler(nil))
 
 	cases := []struct {
 		method string

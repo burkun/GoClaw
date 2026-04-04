@@ -3,11 +3,13 @@ package handlers
 
 import (
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 
 	"github.com/bookerbai/goclaw/internal/config"
 )
@@ -108,6 +110,11 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 		Model:       strings.TrimSpace(req.Model),
 		Description: strings.TrimSpace(req.Description),
 	}
+	if err := h.saveAgents(); err != nil {
+		delete(h.cfg.Agents, name)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "persist agents failed"})
+		return
+	}
 	c.JSON(http.StatusCreated, gin.H{"status": "created", "name": name})
 }
 
@@ -143,7 +150,13 @@ func (h *AgentsHandler) UpdateAgent(c *gin.Context) {
 	if req.Description != nil {
 		agentCfg.Description = strings.TrimSpace(*req.Description)
 	}
+	original := h.cfg.Agents[name]
 	h.cfg.Agents[name] = agentCfg
+	if err := h.saveAgents(); err != nil {
+		h.cfg.Agents[name] = original
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "persist agents failed"})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "updated"})
 }
@@ -159,8 +172,29 @@ func (h *AgentsHandler) DeleteAgent(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
 		return
 	}
+	original := h.cfg.Agents[name]
 	delete(h.cfg.Agents, name)
+	if err := h.saveAgents(); err != nil {
+		h.cfg.Agents[name] = original
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "persist agents failed"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
+}
+
+func (h *AgentsHandler) saveAgents() error {
+	if h == nil || h.cfg == nil {
+		return nil
+	}
+	path := strings.TrimSpace(os.Getenv("DEER_FLOW_CONFIG_PATH"))
+	if path == "" {
+		path = "config.yaml"
+	}
+	data, err := yaml.Marshal(h.cfg)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
 }
 
 // CheckAgentName validates whether an agent name is available.

@@ -4,11 +4,29 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/bookerbai/goclaw/internal/config"
+	"gopkg.in/yaml.v3"
 )
+
+func newPersistedAgentsHandler(t *testing.T, cfg *config.AppConfig) *AgentsHandler {
+	t.Helper()
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "config.yaml")
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("DEER_FLOW_CONFIG_PATH", path)
+	return NewAgentsHandler(cfg)
+}
 
 func TestAgentsHandler_ListAgents_Empty(t *testing.T) {
 	h := NewAgentsHandler(nil)
@@ -46,7 +64,7 @@ func TestAgentsHandler_UpdateAgent(t *testing.T) {
 	cfg := &config.AppConfig{Agents: map[string]config.AgentConfig{
 		"demo": {Enabled: false, Model: "gpt-4"},
 	}}
-	h := NewAgentsHandler(cfg)
+	h := newPersistedAgentsHandler(t, cfg)
 
 	body := `{"enabled": true, "model": "gpt-4o"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/agents/demo", strings.NewReader(body))
@@ -66,7 +84,7 @@ func TestAgentsHandler_UpdateAgent(t *testing.T) {
 
 func TestAgentsHandler_CreateAndDeleteAgent(t *testing.T) {
 	cfg := &config.AppConfig{Agents: map[string]config.AgentConfig{}}
-	h := NewAgentsHandler(cfg)
+	h := newPersistedAgentsHandler(t, cfg)
 
 	createBody := `{"name":"worker-1","enabled":true,"model":"gpt-4o"}`
 	createReq := httptest.NewRequest(http.MethodPost, "/api/agents", strings.NewReader(createBody))

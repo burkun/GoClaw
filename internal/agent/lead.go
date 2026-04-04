@@ -18,15 +18,27 @@ import (
 	"github.com/bookerbai/goclaw/internal/config"
 	einoruntime "github.com/bookerbai/goclaw/internal/eino"
 	basemw "github.com/bookerbai/goclaw/internal/middleware"
+	clarificationmw "github.com/bookerbai/goclaw/internal/middleware/clarification"
+	danglingmw "github.com/bookerbai/goclaw/internal/middleware/dangling"
+	deferredtoolmw "github.com/bookerbai/goclaw/internal/middleware/deferredtool"
+	guardrailmw "github.com/bookerbai/goclaw/internal/middleware/guardrail"
+	llmerrormw "github.com/bookerbai/goclaw/internal/middleware/llmerror"
+	loopmw "github.com/bookerbai/goclaw/internal/middleware/loop"
 	memorymw "github.com/bookerbai/goclaw/internal/middleware/memory"
+	sandboxmw "github.com/bookerbai/goclaw/internal/middleware/sandboxmw"
+	subagentlimitmw "github.com/bookerbai/goclaw/internal/middleware/subagentlimit"
 	summarizemw "github.com/bookerbai/goclaw/internal/middleware/summarize"
+	threaddatamw "github.com/bookerbai/goclaw/internal/middleware/threaddata"
 	titlemw "github.com/bookerbai/goclaw/internal/middleware/title"
 	todomw "github.com/bookerbai/goclaw/internal/middleware/todo"
+	uploadsmw "github.com/bookerbai/goclaw/internal/middleware/uploads"
+	viewimagemw "github.com/bookerbai/goclaw/internal/middleware/viewimage"
 	"github.com/bookerbai/goclaw/internal/models"
+	"github.com/bookerbai/goclaw/internal/sandbox"
+	localsandbox "github.com/bookerbai/goclaw/internal/sandbox/local"
 	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
 	toolruntime "github.com/bookerbai/goclaw/internal/tools"
 	toolbootstrap "github.com/bookerbai/goclaw/internal/tools/bootstrap"
-	loopmw "github.com/bookerbai/goclaw/internal/middleware/loop"
 )
 
 type UploadedFile struct {
@@ -217,6 +229,10 @@ func (a *leadAgent) Run(ctx context.Context, state *ThreadState, cfg RunConfig) 
 		"plan_mode":                cfg.IsPlanMode,
 		"subagent_enabled":         cfg.SubagentEnabled,
 		"max_concurrent_subagents": cfg.MaxConcurrentSubagents,
+		"uploaded_files":           state.UploadedFiles,
+		"viewed_images":            state.ViewedImages,
+		"agent_name":               cfg.AgentName,
+		"is_subagent":              strings.TrimSpace(cfg.AgentName) != "",
 	})}
 	if strings.TrimSpace(cfg.CheckpointID) != "" {
 		opts = append(opts, adk.WithCheckPointID(cfg.CheckpointID))
@@ -230,7 +246,7 @@ func (a *leadAgent) Run(ctx context.Context, state *ThreadState, cfg RunConfig) 
 	return ch, nil
 }
 
-func (a *leadAgent) Resume(ctx context.Context, _ *ThreadState, cfg RunConfig, checkpointID string) (<-chan Event, error) {
+func (a *leadAgent) Resume(ctx context.Context, state *ThreadState, cfg RunConfig, checkpointID string) (<-chan Event, error) {
 	if cfg.ThreadID == "" {
 		return nil, fmt.Errorf("thread_id is required")
 	}
@@ -251,11 +267,18 @@ func (a *leadAgent) Resume(ctx context.Context, _ *ThreadState, cfg RunConfig, c
 		return nil, fmt.Errorf("sync skills config failed: %w", err)
 	}
 
+	if state == nil {
+		state = &ThreadState{}
+	}
 	stream, err := a.runner.Resume(ctx, checkpointID, adk.WithSessionValues(map[string]any{
 		"thread_id":                cfg.ThreadID,
 		"plan_mode":                cfg.IsPlanMode,
 		"subagent_enabled":         cfg.SubagentEnabled,
 		"max_concurrent_subagents": cfg.MaxConcurrentSubagents,
+		"uploaded_files":           state.UploadedFiles,
+		"viewed_images":            state.ViewedImages,
+		"agent_name":               cfg.AgentName,
+		"is_subagent":              strings.TrimSpace(cfg.AgentName) != "",
 	}))
 	if err != nil {
 		return nil, fmt.Errorf("resume from checkpoint failed: %w", err)
@@ -377,7 +400,7 @@ func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
 	_ = cfg
 
 	appCfg, _ := config.GetAppConfig()
-	legacy := make([]basemw.Middleware, 0, 4)
+	legacy := make([]basemw.Middleware, 0, 16)
 
 	memoryEnabled := true
 	titleEnabled := true
@@ -400,6 +423,13 @@ func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
 			memoryConfidence = appCfg.Memory.FactConfidenceThreshold
 		}
 	}
+
+	// Core middleware chain aligned with deer-flow order.
+	legacy = append(legacy, threaddatamw.New(threaddatamw.DefaultConfig()))
+	legacy = append(legacy, uploadsmw.New())
+	legacy = append(legacy, sandboxmw.New(buildSandboxProvider(appCfg)))
+	legacy = append(legacy, danglingmw.New())
+	legacy = append(legacy, guardrailmw.NewGuardrailMiddleware(guardrailmw.DefaultConfig()))
 
 	createChatModel := func(modelName string) (model.BaseChatModel, error) {
 		if appCfg == nil {
@@ -477,6 +507,12 @@ func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
 		legacy = append(legacy, titlemw.NewTitleMiddleware(titleCfg, titleGen))
 	}
 
+	legacy = append(legacy, viewimagemw.NewViewImageMiddleware())
+	legacy = append(legacy, subagentlimitmw.New(subagentlimitmw.DefaultConfig()))
+	legacy = append(legacy, clarificationmw.NewClarificationMiddleware())
+	legacy = append(legacy, deferredtoolmw.NewDeferredToolFilterMiddleware(deferredtoolmw.DefaultDeferredTools()))
+	legacy = append(legacy, llmerrormw.NewLLMErrorHandlingMiddleware(3))
+
 	if len(legacy) == 0 {
 		return nil
 	}
@@ -495,6 +531,12 @@ func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
 		AfterChatModel: func(ctx context.Context, st *adk.ChatModelAgentState) error {
 			mwState := toMiddlewareState(ctx, st)
 			resp := toMiddlewareResponse(st)
+			if mwState.Extra == nil {
+				mwState.Extra = map[string]any{}
+			}
+			if len(resp.ToolCalls) > 0 {
+				mwState.Extra["pending_tool_calls"] = resp.ToolCalls
+			}
 			for i := len(legacy) - 1; i >= 0; i-- {
 				_ = legacy[i].After(ctx, mwState, resp)
 			}
@@ -504,22 +546,95 @@ func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
 	}}
 }
 
+func buildSandboxProvider(appCfg *config.AppConfig) sandbox.SandboxProvider {
+	sbCfg := sandbox.SandboxConfig{
+		Type:        sandbox.SandboxTypeLocal,
+		WorkDir:     ".goclaw",
+		ExecTimeout: 30 * time.Second,
+	}
+	if appCfg != nil && appCfg.Sandbox.AllowHostBash {
+		sbCfg.AllowedCommands = []string{"bash", "sh", "ls", "cat", "pwd", "echo", "grep"}
+	}
+	return localsandbox.NewLocalSandboxProvider(sbCfg, ".goclaw")
+}
+
 func toMiddlewareState(ctx context.Context, st *adk.ChatModelAgentState) *basemw.State {
 	vals := adk.GetSessionValues(ctx)
 	threadID, _ := vals["thread_id"].(string)
 	planMode, _ := vals["plan_mode"].(bool)
+	isSubagent, _ := vals["is_subagent"].(bool)
 
 	msgs := make([]map[string]any, 0, len(st.Messages))
 	for _, m := range st.Messages {
 		msgs = append(msgs, toLegacyMessage(m))
 	}
 
-	return &basemw.State{
-		ThreadID: threadID,
-		Messages: msgs,
-		PlanMode: planMode,
-		Extra:    map[string]any{},
+	extra := map[string]any{
+		"is_subagent": isSubagent,
 	}
+	if uploaded, ok := vals["uploaded_files"]; ok {
+		extra["uploaded_files"] = uploaded
+	}
+	if agentName, ok := vals["agent_name"].(string); ok && strings.TrimSpace(agentName) != "" {
+		extra["agent_name"] = strings.TrimSpace(agentName)
+	}
+
+	// Pre-seed pending_tool_calls from the latest assistant message if present.
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if role, _ := msgs[i]["role"].(string); role == "assistant" {
+			if tcs := parseLegacyToolCalls(msgs[i]["tool_calls"]); len(tcs) > 0 {
+				extra["pending_tool_calls"] = tcs
+			}
+			break
+		}
+	}
+
+	mwState := &basemw.State{
+		ThreadID:     threadID,
+		Messages:     msgs,
+		PlanMode:     planMode,
+		ViewedImages: map[string]basemw.ViewedImage{},
+		Extra:        extra,
+	}
+	if rawImages, ok := vals["viewed_images"]; ok {
+		mwState.ViewedImages = parseViewedImages(rawImages)
+	}
+	return mwState
+}
+
+func parseLegacyToolCalls(raw any) []map[string]any {
+	out := make([]map[string]any, 0)
+	switch vv := raw.(type) {
+	case []map[string]any:
+		out = append(out, vv...)
+	case []any:
+		for _, item := range vv {
+			if m, ok := item.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+	}
+	return out
+}
+
+func parseViewedImages(raw any) map[string]basemw.ViewedImage {
+	out := make(map[string]basemw.ViewedImage)
+	switch vv := raw.(type) {
+	case map[string]ViewedImageData:
+		for path, img := range vv {
+			out[path] = basemw.ViewedImage{Base64: img.Base64, MIMEType: img.MIMEType}
+		}
+	case map[string]any:
+		for path, v := range vv {
+			switch img := v.(type) {
+			case map[string]any:
+				base64Data, _ := img["base64"].(string)
+				mimeType, _ := img["mime_type"].(string)
+				out[path] = basemw.ViewedImage{Base64: base64Data, MIMEType: mimeType}
+			}
+		}
+	}
+	return out
 }
 
 func applyMiddlewareState(ms *basemw.State, st *adk.ChatModelAgentState) {

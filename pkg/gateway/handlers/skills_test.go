@@ -70,8 +70,12 @@ func TestSkillsHandler_UpdateSkill(t *testing.T) {
 	reg := skills.NewRegistry()
 	sk := &skills.Skill{Metadata: skills.SkillMetadata{Name: "demo", Enabled: false}}
 	_ = reg.Register(sk)
+	tmp := t.TempDir()
+	extPath := filepath.Join(tmp, "extensions_config.json")
+	_ = os.WriteFile(extPath, []byte(`{"mcp_servers":{},"skills":{}}`), 0o644)
+	cfg := &config.AppConfig{ExtensionsRef: config.ExtensionsConfigRef{ConfigPath: extPath}}
 
-	h := NewSkillsHandler(nil, reg)
+	h := NewSkillsHandler(cfg, reg)
 	body := `{"enabled": true}`
 	req := httptest.NewRequest(http.MethodPut, "/api/skills/demo", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -86,6 +90,13 @@ func TestSkillsHandler_UpdateSkill(t *testing.T) {
 	updated := reg.GetByName("demo")
 	if !updated.Metadata.Enabled {
 		t.Error("expected skill to be enabled")
+	}
+	data, err := os.ReadFile(extPath)
+	if err != nil {
+		t.Fatalf("read extensions failed: %v", err)
+	}
+	if !strings.Contains(string(data), `"demo"`) {
+		t.Fatalf("expected updated skill persisted to extensions file")
 	}
 }
 

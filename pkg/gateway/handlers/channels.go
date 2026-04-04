@@ -1,19 +1,28 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
+type channelsManager interface {
+	IsRunning() bool
+	GetChannelStatus() map[string]bool
+	RestartChannel(ctx context.Context, name string) error
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+}
+
 // ChannelsHandler handles channels API endpoints.
 type ChannelsHandler struct {
-	// manager would be injected from channels.Manager in production.
+	manager channelsManager
 }
 
 // NewChannelsHandler creates a ChannelsHandler.
-func NewChannelsHandler() *ChannelsHandler {
-	return &ChannelsHandler{}
+func NewChannelsHandler(manager channelsManager) *ChannelsHandler {
+	return &ChannelsHandler{manager: manager}
 }
 
 // ChannelInfo represents a single channel's status.
@@ -36,10 +45,15 @@ type ChannelRestartResponse struct {
 
 // GetChannelsStatus handles GET /api/channels.
 func (h *ChannelsHandler) GetChannelsStatus(c *gin.Context) {
-	// TODO: integrate with channels.Manager when available.
 	resp := ChannelsStatusResponse{
 		ServiceRunning: false,
 		Channels:       map[string]ChannelInfo{},
+	}
+	if h.manager != nil {
+		resp.ServiceRunning = h.manager.IsRunning()
+		for name, running := range h.manager.GetChannelStatus() {
+			resp.Channels[name] = ChannelInfo{Enabled: true, Running: running}
+		}
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -51,13 +65,15 @@ func (h *ChannelsHandler) RestartChannel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "channel name required"})
 		return
 	}
-
-	// TODO: integrate with channels.Manager when available.
-	resp := ChannelRestartResponse{
-		Success: false,
-		Message: "channel service not initialized",
+	if h.manager == nil {
+		c.JSON(http.StatusOK, ChannelRestartResponse{Success: false, Message: "channel service not initialized"})
+		return
 	}
-	c.JSON(http.StatusOK, resp)
+	if err := h.manager.RestartChannel(c.Request.Context(), name); err != nil {
+		c.JSON(http.StatusOK, ChannelRestartResponse{Success: false, Message: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, ChannelRestartResponse{Success: true, Message: "channel restarted"})
 }
 
 // StartChannel handles POST /api/channels/:name/start.
@@ -67,9 +83,15 @@ func (h *ChannelsHandler) StartChannel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "channel name required"})
 		return
 	}
-
-	// TODO: integrate with channels.Manager.
-	c.JSON(http.StatusOK, gin.H{"success": false, "message": "not implemented"})
+	if h.manager == nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel service not initialized"})
+		return
+	}
+	if err := h.manager.Start(c.Request.Context()); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "channel service started"})
 }
 
 // StopChannel handles POST /api/channels/:name/stop.
@@ -79,9 +101,15 @@ func (h *ChannelsHandler) StopChannel(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "channel name required"})
 		return
 	}
-
-	// TODO: integrate with channels.Manager.
-	c.JSON(http.StatusOK, gin.H{"success": false, "message": "not implemented"})
+	if h.manager == nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel service not initialized"})
+		return
+	}
+	if err := h.manager.Stop(c.Request.Context()); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "channel service stopped"})
 }
 
 // RegisterChannelsRoutes registers channels routes on the router.

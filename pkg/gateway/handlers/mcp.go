@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/tools"
 )
 
 // MCPHandler handles MCP configuration routes.
@@ -65,6 +66,10 @@ func (h *MCPHandler) UpdateConfig(c *gin.Context) {
 	h.mu.Lock()
 	h.cachedValue = nil
 	h.mu.Unlock()
+	if h.cfg != nil {
+		h.cfg.Extensions.MCPServers = req.MCPServers
+	}
+	tools.InvalidateMCPConfigCache()
 
 	c.JSON(http.StatusOK, gin.H{"status": "updated"})
 }

@@ -37,6 +37,7 @@ func (h *ArtifactsHandler) GetArtifact(c *gin.Context) {
 	threadID := c.Param("thread_id")
 	artifactPath := strings.TrimPrefix(c.Param("path"), "/")
 	download := strings.EqualFold(c.Query("download"), "true")
+	listDir := strings.EqualFold(c.Query("list"), "true")
 
 	if err := validateThreadID(threadID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid thread_id"})
@@ -70,7 +71,26 @@ func (h *ArtifactsHandler) GetArtifact(c *gin.Context) {
 		return
 	}
 	if info.IsDir() {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "path is a directory"})
+		if !listDir {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "path is a directory"})
+			return
+		}
+		entries, err := os.ReadDir(absPath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		items := make([]map[string]any, 0, len(entries))
+		for _, e := range entries {
+			fi, _ := e.Info()
+			item := map[string]any{"name": e.Name(), "is_dir": e.IsDir()}
+			if fi != nil {
+				item["size"] = fi.Size()
+				item["modified"] = fi.ModTime().Unix()
+			}
+			items = append(items, item)
+		}
+		c.JSON(http.StatusOK, gin.H{"path": artifactPath, "items": items})
 		return
 	}
 

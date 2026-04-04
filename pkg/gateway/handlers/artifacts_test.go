@@ -112,6 +112,31 @@ func TestArtifactsHandler_GetArtifact_DownloadParam(t *testing.T) {
 	}
 }
 
+func TestArtifactsHandler_GetArtifact_ListDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	threadDir := filepath.Join(tmp, "thread-001", "user-data", "outputs")
+	if err := os.MkdirAll(threadDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(threadDir, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewArtifactsHandler(nil, tmp)
+	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-001/artifacts/outputs?list=true", nil)
+	rr := httptest.NewRecorder()
+	ctx, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-001", "path": "outputs"})
+
+	h.GetArtifact(ctx)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "a.txt") {
+		t.Fatalf("expected list response to include a.txt, got %s", rr.Body.String())
+	}
+}
+
 func writeArtifactSkillArchive(path, innerName, content string) error {
 	f, err := os.Create(path)
 	if err != nil {

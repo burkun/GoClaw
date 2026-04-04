@@ -68,44 +68,50 @@ func (m *GuardrailMiddleware) Name() string { return "GuardrailMiddleware" }
 
 // Before checks authorization for pending tool calls.
 func (m *GuardrailMiddleware) Before(_ context.Context, state *middleware.State) error {
-	if !m.cfg.Enabled || state == nil {
+	if !m.cfg.Enabled || state == nil || state.Extra == nil {
 		return nil
 	}
-
-	// Get pending tool calls from state.
 	pendingTools, ok := state.Extra["pending_tool_calls"].([]map[string]any)
 	if !ok || len(pendingTools) == 0 {
 		return nil
 	}
+	m.applyDecisions(pendingTools)
+	state.Extra["pending_tool_calls"] = pendingTools
+	return nil
+}
 
-	// Evaluate each tool call.
-	for i, tc := range pendingTools {
+// After applies authorization checks to current response tool calls.
+func (m *GuardrailMiddleware) After(_ context.Context, state *middleware.State, resp *middleware.Response) error {
+	if !m.cfg.Enabled || resp == nil || len(resp.ToolCalls) == 0 {
+		return nil
+	}
+	m.applyDecisions(resp.ToolCalls)
+	if state != nil {
+		if state.Extra == nil {
+			state.Extra = map[string]any{}
+		}
+		state.Extra["pending_tool_calls"] = resp.ToolCalls
+	}
+	return nil
+}
+
+func (m *GuardrailMiddleware) applyDecisions(toolCalls []map[string]any) {
+	for i, tc := range toolCalls {
 		toolName, _ := tc["name"].(string)
 		if toolName == "" {
 			continue
 		}
-
 		decision, reason := m.evaluate(toolName)
 		tc["guardrail_decision"] = string(decision)
 		tc["guardrail_reason"] = reason
-
 		if decision == DecisionDeny {
 			tc["blocked"] = true
 			tc["block_reason"] = reason
 		} else if decision == DecisionAsk {
 			tc["requires_approval"] = true
 		}
-
-		pendingTools[i] = tc
+		toolCalls[i] = tc
 	}
-
-	state.Extra["pending_tool_calls"] = pendingTools
-	return nil
-}
-
-// After is a no-op.
-func (m *GuardrailMiddleware) After(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
-	return nil
 }
 
 func (m *GuardrailMiddleware) evaluate(toolName string) (Decision, string) {
