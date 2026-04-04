@@ -49,9 +49,19 @@ type State struct {
 	// Populated by SummarizationMiddleware to decide whether to compress.
 	TokenCount int
 
+	// ViewedImages holds base64-encoded images for multimodal injection.
+	// Key is the image path, value contains Base64 and MIMEType.
+	ViewedImages map[string]ViewedImage
+
 	// Extra is an open-ended bag for middleware-specific metadata that does
 	// not deserve a dedicated field on State.
 	Extra map[string]any
+}
+
+// ViewedImage holds base64-encoded image data for multimodal content injection.
+type ViewedImage struct {
+	Base64   string
+	MIMEType string
 }
 
 // Response is the output produced by the agent function (next) and passed to
