@@ -109,6 +109,11 @@ func (t *TaskTool) Execute(ctx context.Context, input string) (string, error) {
 		req.Timeout = time.Duration(in.TimeoutSeconds) * time.Second
 	}
 
+	// Validate and apply type config if available.
+	if err := ValidateAndApplySubagentType(req.SubagentType, &req); err != nil {
+		return "", fmt.Errorf("task tool: subagent type validation failed: %w", err)
+	}
+
 	taskID, err := t.cfg.Executor.Submit(ctx, req, t.cfg.Worker)
 	if err != nil {
 		return "", fmt.Errorf("task tool: submit failed: %w", err)
@@ -226,6 +231,44 @@ func fallbackSubagentOutput(req TaskRequest) string {
 		subject = "delegated task"
 	}
 	return fmt.Sprintf("subagent[%s] completed: %s", defaultString(req.SubagentType, "general-purpose"), subject)
+}
+
+// ValidateAndApplySubagentType checks if the type is registered and applies its config.
+func ValidateAndApplySubagentType(subagentType string, req *TaskRequest) error {
+	if subagentType == "" {
+		subagentType = "general-purpose"
+	}
+
+	cfg, err := loadAppConfig()
+	if err != nil || cfg == nil {
+		// No config; allow any type.
+		return nil
+	}
+
+	if cfg.Subagents.Types == nil || len(cfg.Subagents.Types) == 0 {
+		// No subagents config; allow any type.
+		return nil
+	}
+
+	typeCfg, ok := cfg.Subagents.Types[subagentType]
+	if !ok {
+		// Type not explicitly defined; allow but warn.
+		return nil
+	}
+
+	if !typeCfg.Enabled {
+		return fmt.Errorf("subagent type %q is disabled", subagentType)
+	}
+
+	// Apply type-specific overrides if not already set.
+	if typeCfg.TimeoutSecs > 0 && req.Timeout <= 0 {
+		req.Timeout = time.Duration(typeCfg.TimeoutSecs) * time.Second
+	}
+	if typeCfg.Model != "" && typeCfg.Model != "inherit" {
+		// Note: model override would be applied by the worker, not here.
+	}
+
+	return nil
 }
 
 var _ toolruntime.Tool = (*TaskTool)(nil)

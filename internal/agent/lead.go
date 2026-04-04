@@ -26,6 +26,7 @@ import (
 	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
 	toolruntime "github.com/bookerbai/goclaw/internal/tools"
 	toolbootstrap "github.com/bookerbai/goclaw/internal/tools/bootstrap"
+	loopmw "github.com/bookerbai/goclaw/internal/middleware/loop"
 )
 
 type UploadedFile struct {
@@ -448,6 +449,8 @@ func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
 	}
 
 	legacy = append(legacy, todomw.NewTodoMiddleware())
+
+	legacy = append(legacy, loopmw.New(loopmw.DefaultConfig()))
 
 	if titleEnabled {
 		titleCfg := titlemw.DefaultConfig()

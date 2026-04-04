@@ -23,6 +23,16 @@ const (
 	StatusTimedOut   Status = "timed_out"
 )
 
+// TaskEvent represents a state transition event in a subagent task.
+type TaskEvent struct {
+	Status    Status    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+	Message   string    `json:"message,omitempty"`
+}
+
+// EventCallback is invoked when a task's status changes.
+type EventCallback func(ctx context.Context, taskID string, event TaskEvent)
+
 // TaskRequest is the input for a subagent task.
 type TaskRequest struct {
 	Description  string
@@ -57,10 +67,11 @@ type ExecutorConfig struct {
 
 // Executor runs subagent tasks with bounded concurrency.
 type Executor struct {
-	cfg   ExecutorConfig
-	sem   chan struct{}
-	mu    sync.RWMutex
-	tasks map[string]*taskRecord
+	cfg       ExecutorConfig
+	sem       chan struct{}
+	mu        sync.RWMutex
+	tasks     map[string]*taskRecord
+	callbacks map[string][]EventCallback
 }
 
 type taskRecord struct {
@@ -90,9 +101,10 @@ func NewExecutor(cfg ExecutorConfig) *Executor {
 		cfg.DefaultTimeout = 15 * time.Minute
 	}
 	return &Executor{
-		cfg:   cfg,
-		sem:   make(chan struct{}, cfg.MaxConcurrent),
-		tasks: make(map[string]*taskRecord),
+		cfg:       cfg,
+		sem:       make(chan struct{}, cfg.MaxConcurrent),
+		tasks:     make(map[string]*taskRecord),
+		callbacks: make(map[string][]EventCallback),
 	}
 }
 
@@ -242,6 +254,8 @@ func (e *Executor) setStatus(taskID string, st Status, output, errMsg string) {
 	if errMsg != "" {
 		rec.result.Error = errMsg
 	}
+	// Dispatch event to subscribed callbacks.
+	e.dispatchEventLocked(taskID, TaskEvent{Status: st, Timestamp: time.Now(), Message: errMsg})
 }
 
 func (e *Executor) markStarted(taskID string) {
@@ -272,5 +286,42 @@ func (e *Executor) finishTask(taskID string, st Status, output, errMsg string) {
 	default:
 		close(rec.done)
 	}
+	// Dispatch final event before unlock.
+	e.dispatchEventLocked(taskID, TaskEvent{Status: st, Timestamp: time.Now(), Message: errMsg})
 	e.mu.Unlock()
+}
+
+// Subscribe registers a callback to be invoked on status changes for a given taskID.
+// Returns a function to unsubscribe.
+func (e *Executor) Subscribe(taskID string, cb EventCallback) func() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.callbacks[taskID] = append(e.callbacks[taskID], cb)
+	return func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		cbs := e.callbacks[taskID]
+		for i, c := range cbs {
+			if &c == &cb {
+				e.callbacks[taskID] = append(cbs[:i], cbs[i+1:]...)
+				break
+			}
+		}
+		if len(e.callbacks[taskID]) == 0 {
+			delete(e.callbacks, taskID)
+		}
+	}
+}
+
+// dispatchEventLocked calls all registered callbacks for taskID.
+// Must be called while e.mu is held.
+func (e *Executor) dispatchEventLocked(taskID string, event TaskEvent) {
+	cbs, ok := e.callbacks[taskID]
+	if !ok || len(cbs) == 0 {
+		return
+	}
+	// Non-blocking dispatch to avoid deadlock.
+	for _, cb := range cbs {
+		go cb(context.Background(), taskID, event)
+	}
 }

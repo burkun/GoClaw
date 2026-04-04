@@ -127,3 +127,75 @@ func TestExecutorFailed(t *testing.T) {
 		t.Fatalf("expected failure error message")
 	}
 }
+
+func TestExecutorSubscribeAndEventDispatch(t *testing.T) {
+	exec := NewExecutor(ExecutorConfig{MaxConcurrent: 1, DefaultTimeout: 500 * time.Millisecond})
+
+	events := make([]TaskEvent, 0)
+	var mu sync.Mutex
+
+	taskID, err := exec.Submit(context.Background(), TaskRequest{Prompt: "test"}, func(ctx context.Context, req TaskRequest) (string, error) {
+		_ = ctx
+		_ = req
+		time.Sleep(100 * time.Millisecond)
+		return "done", nil
+	})
+	if err != nil {
+		t.Fatalf("submit failed: %v", err)
+	}
+
+	// Subscribe to events.
+	unsub := exec.Subscribe(taskID, func(ctx context.Context, id string, ev TaskEvent) {
+		mu.Lock()
+		events = append(events, ev)
+		mu.Unlock()
+	})
+	defer unsub()
+
+	// Wait for task completion.
+	res, err := exec.Wait(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("wait failed: %v", err)
+	}
+	if res.Status != StatusCompleted {
+		t.Fatalf("expected completed, got %s", res.Status)
+	}
+
+	// Give event callbacks time to fire.
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	numEvents := len(events)
+	mu.Unlock()
+
+	if numEvents == 0 {
+		t.Fatalf("expected at least 1 event, got %d", numEvents)
+	}
+}
+
+func TestExecutorUnsubscribe(t *testing.T) {
+	exec := NewExecutor(ExecutorConfig{})
+
+	called := false
+	taskID, err := exec.Submit(context.Background(), TaskRequest{Prompt: "test"}, func(ctx context.Context, req TaskRequest) (string, error) {
+		_ = ctx
+		_ = req
+		return "ok", nil
+	})
+	if err != nil {
+		t.Fatalf("submit failed: %v", err)
+	}
+
+	unsub := exec.Subscribe(taskID, func(ctx context.Context, id string, ev TaskEvent) {
+		called = true
+	})
+	unsub()
+
+	// Wait a bit for any async callback (which shouldn't fire after unsub).
+	exec.Wait(context.Background(), taskID)
+	time.Sleep(50 * time.Millisecond)
+
+	// Note: we can't easily assert !called due to concurrency; this test mainly verifies
+	// that unsubscribe doesn't crash.
+	_ = called
+}

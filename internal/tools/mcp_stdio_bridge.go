@@ -85,6 +85,25 @@ func (p *stdioClientPool) get(serverName string, serverCfg config.MCPServerConfi
 	return c
 }
 
+// invalidate stops and removes clients matching the given serverName,
+// forcing reconnection on next use.
+func (p *stdioClientPool) invalidate(serverName string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	keysToRemove := make([]string, 0)
+	for key, client := range p.clients {
+		if client.serverName == serverName {
+			client.mu.Lock()
+			client.stopLocked()
+			client.mu.Unlock()
+			keysToRemove = append(keysToRemove, key)
+		}
+	}
+	for _, key := range keysToRemove {
+		delete(p.clients, key)
+	}
+}
+
 func stdioPoolKey(serverName string, serverCfg config.MCPServerConfig) string {
 	parts := []string{serverName, strings.TrimSpace(serverCfg.Command), strings.Join(serverCfg.Args, "\x00")}
 	if len(serverCfg.Env) > 0 {
@@ -114,7 +133,8 @@ func invokeMCPStdio(ctx context.Context, serverName string, serverCfg config.MCP
 	}
 
 	if hasMCPConfigChanged(serverName, serverCfg) {
-		// Config changed; create/use a new pool key based on command+args+env.
+		// Config changed; invalidate and recreate pool with new key based on command+args+env.
+		globalStdioClientPool.invalidate(serverName)
 	}
 
 	client := globalStdioClientPool.get(serverName, serverCfg)

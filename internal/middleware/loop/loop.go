@@ -83,6 +83,7 @@ func (m *LoopDetectionMiddleware) After(_ context.Context, state *middleware.Sta
 
 // collectToolCallHashes scans messages for assistant messages with tool_calls
 // and returns a slice of their content hashes (up to limit entries).
+// Uses full SHA256 hash (not truncated) to avoid collisions.
 func collectToolCallHashes(messages []map[string]any, limit int) []string {
 	var hashes []string
 	for i := len(messages) - 1; i >= 0 && len(hashes) < limit; i-- {
@@ -97,7 +98,7 @@ func collectToolCallHashes(messages []map[string]any, limit int) []string {
 		}
 		b, _ := json.Marshal(tcs)
 		sum := sha256.Sum256(b)
-		hashes = append([]string{hex.EncodeToString(sum[:8])}, hashes...)
+		hashes = append([]string{hex.EncodeToString(sum[:])}, hashes...)
 	}
 	return hashes
 }

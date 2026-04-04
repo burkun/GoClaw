@@ -385,6 +385,15 @@ type SubagentOverrideConfig struct {
 	TimeoutSeconds int `yaml:"timeout_seconds,omitempty"`
 }
 
+// SubagentTypeConfig configures a subagent type with capabilities and overrides.
+type SubagentTypeConfig struct {
+	Enabled      bool     `yaml:"enabled,omitempty"`
+	Model        string   `yaml:"model,omitempty"`
+	TimeoutSecs  int      `yaml:"timeout_seconds,omitempty"`
+	SystemPrompt string   `yaml:"system_prompt,omitempty"`
+	AllowedTools []string `yaml:"allowed_tools,omitempty"`
+}
+
 // SubagentsConfig configures sub-agent execution behaviour.
 type SubagentsConfig struct {
 	// TimeoutSeconds is the default timeout for all sub-agents (default: 900).
@@ -392,6 +401,9 @@ type SubagentsConfig struct {
 
 	// MaxConcurrent is the global concurrency limit for subagent execution.
 	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
+
+	// Types holds configuration for predefined subagent types.
+	Types map[string]SubagentTypeConfig `yaml:"types,omitempty"`
 
 	// Agents holds per-agent timeout overrides keyed by agent name.
 	Agents map[string]SubagentOverrideConfig `yaml:"agents,omitempty"`

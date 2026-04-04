@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/bookerbai/goclaw/internal/config"
 )
 
 func TestTaskToolExecuteCompleted(t *testing.T) {
@@ -64,4 +66,63 @@ func TestTaskToolExecuteRunningSnapshot(t *testing.T) {
 	if parsed["message"] == nil {
 		t.Fatalf("expected running message in output")
 	}
+}
+
+func TestValidateAndApplySubagentType_Disabled(t *testing.T) {
+	// Mock config with disabled type.
+	oldLoadCfg := loadAppConfig
+	defer func() { loadAppConfig = oldLoadCfg }()
+
+	loadAppConfig = func() (*config.AppConfig, error) {
+		return &config.AppConfig{
+			Subagents: config.SubagentsConfig{
+				Types: map[string]config.SubagentTypeConfig{
+					"test-disabled": {Enabled: false},
+				},
+			},
+		}, nil
+	}
+
+	req := &TaskRequest{Prompt: "test"}
+	err := ValidateAndApplySubagentType("test-disabled", req)
+	if err == nil || !contains(err.Error(), "disabled") {
+		t.Fatalf("expected disabled error, got %v", err)
+	}
+}
+
+func TestValidateAndApplySubagentType_TimeoutApplied(t *testing.T) {
+	// Mock config with type that has timeout.
+	oldLoadCfg := loadAppConfig
+	defer func() { loadAppConfig = oldLoadCfg }()
+
+	loadAppConfig = func() (*config.AppConfig, error) {
+		return &config.AppConfig{
+			Subagents: config.SubagentsConfig{
+				Types: map[string]config.SubagentTypeConfig{
+					"test-with-timeout": {
+						Enabled:     true,
+						TimeoutSecs: 42,
+					},
+				},
+			},
+		}, nil
+	}
+
+	req := &TaskRequest{Prompt: "test"}
+	err := ValidateAndApplySubagentType("test-with-timeout", req)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if req.Timeout != 42*time.Second {
+		t.Fatalf("expected timeout 42s, got %v", req.Timeout)
+	}
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
