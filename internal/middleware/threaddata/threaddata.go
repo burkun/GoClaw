@@ -31,6 +31,7 @@ func DefaultConfig() Config {
 //	{BaseDir}/{thread_id}/user-data/uploads/
 //	{BaseDir}/{thread_id}/user-data/outputs/
 type ThreadDataMiddleware struct {
+	middleware.MiddlewareWrapper
 	cfg Config
 }
 

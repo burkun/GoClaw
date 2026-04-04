@@ -11,7 +11,9 @@ import (
 // DanglingToolCallMiddleware detects incomplete (dangling) tool calls at the
 // end of state.Messages and inserts placeholder tool_message responses so the
 // model does not get stuck waiting for a tool response that never comes.
-type DanglingToolCallMiddleware struct{}
+type DanglingToolCallMiddleware struct {
+	middleware.MiddlewareWrapper
+}
 
 // New creates a DanglingToolCallMiddleware.
 func New() *DanglingToolCallMiddleware {

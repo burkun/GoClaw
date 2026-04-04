@@ -14,7 +14,9 @@ import (
 )
 
 // ViewImageMiddleware handles image injection for multimodal models.
-type ViewImageMiddleware struct{}
+type ViewImageMiddleware struct {
+	middleware.MiddlewareWrapper
+}
 
 // NewViewImageMiddleware constructs a ViewImageMiddleware.
 func NewViewImageMiddleware() *ViewImageMiddleware {

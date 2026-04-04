@@ -80,7 +80,9 @@ const WriteTodosToolName = "write_todos"
 
 // TodoMiddleware manages the plan-mode task list and its visibility in context.
 // It implements middleware.Middleware.
-type TodoMiddleware struct{}
+type TodoMiddleware struct {
+	middleware.MiddlewareWrapper
+}
 
 // NewTodoMiddleware constructs a TodoMiddleware.
 func NewTodoMiddleware() *TodoMiddleware { return &TodoMiddleware{} }

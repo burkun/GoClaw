@@ -591,6 +591,7 @@ const MaxFactsToInject = 15
 // MemoryMiddleware injects persisted facts before model invocation and queues
 // conversation updates for asynchronous extraction after model completion.
 type MemoryMiddleware struct {
+	middleware.MiddlewareWrapper
 	store     MemoryStore
 	queue     *UpdateQueue
 	agentName string // empty = global memory scope

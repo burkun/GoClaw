@@ -27,6 +27,7 @@ func DefaultConfig() Config {
 // SubagentLimitMiddleware tracks active subagent count and rejects new runs
 // when the limit is exceeded.
 type SubagentLimitMiddleware struct {
+	middleware.MiddlewareWrapper
 	cfg     Config
 	current *int64
 }

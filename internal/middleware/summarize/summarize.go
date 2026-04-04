@@ -89,6 +89,7 @@ func (c *Config) thresholdTokens() int {
 // Before checks whether compression is needed and applies it.
 // After is a no-op.
 type SummarizationMiddleware struct {
+	middleware.MiddlewareWrapper
 	cfg  Config
 	summ Summarizer
 }

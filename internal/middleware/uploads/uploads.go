@@ -12,7 +12,9 @@ import (
 
 // UploadsMiddleware injects uploaded file list into state.Extra["uploads"].
 // Depends on ThreadDataMiddleware having run first to populate state.Extra["uploads_path"].
-type UploadsMiddleware struct{}
+type UploadsMiddleware struct {
+	middleware.MiddlewareWrapper
+}
 
 // New creates an UploadsMiddleware.
 func New() *UploadsMiddleware {

@@ -72,6 +72,7 @@ Assistant: {assistant_msg}`,
 // TitleMiddleware generates a conversation title after the first exchange.
 // It implements middleware.Middleware; Before is a no-op.
 type TitleMiddleware struct {
+	middleware.MiddlewareWrapper
 	cfg Config
 	gen TitleGenerator
 }

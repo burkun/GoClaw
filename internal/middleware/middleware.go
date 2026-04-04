@@ -64,6 +64,36 @@ type ViewedImage struct {
 	MIMEType string
 }
 
+// ToolCall represents a single tool invocation request.
+// It is passed to Middleware.WrapToolCall for interception and wrapping.
+type ToolCall struct {
+	// ID is the unique identifier for this tool call.
+	ID string
+
+	// Name is the tool name to invoke.
+	Name string
+
+	// Input is the tool arguments (usually JSON-decoded map).
+	Input map[string]any
+}
+
+// ToolResult represents the result of a tool invocation.
+// It is returned by ToolHandler after executing a tool call.
+type ToolResult struct {
+	// ID is the tool call ID (matches ToolCall.ID).
+	ID string
+
+	// Output is the tool return value (usually JSON-encodable).
+	Output any
+
+	// Error holds the error if the tool execution failed.
+	Error error
+}
+
+// ToolHandler is the function signature for executing a tool call.
+// Middlewares can intercept and wrap this handler in WrapToolCall.
+type ToolHandler func(ctx context.Context, toolCall *ToolCall) (*ToolResult, error)
+
 // Response is the output produced by the agent function (next) and passed to
 // Middleware.After so middlewares can inspect or annotate the result.
 type Response struct {
@@ -89,6 +119,10 @@ type Response struct {
 // Implementors may read Response (e.g. queue memory updates) but SHOULD NOT
 // fail the turn for non-critical bookkeeping errors — log and continue instead.
 //
+// WrapToolCall is called for each tool invocation during the agent turn.
+// It allows middlewares to intercept, audit, or retry individual tool calls.
+// The default implementation (MiddlewareWrapper) simply calls the handler.
+//
 // Name returns a stable identifier used for logging and metrics.
 type Middleware interface {
 	// Before runs before the agent model invocation.
@@ -100,6 +134,13 @@ type Middleware interface {
 	// Returning a non-nil error is logged but does NOT prevent the Response
 	// from being delivered to the caller — it only signals a bookkeeping issue.
 	After(ctx context.Context, state *State, response *Response) error
+
+	// WrapToolCall wraps a single tool call execution.
+	// Middlewares can intercept tool calls for auditing, error handling, or retry.
+	// The handler parameter is the next stage (usually the actual tool executor).
+	// Middlewares should call handler(ctx, toolCall) to proceed with execution,
+	// or return a synthetic ToolResult without calling handler to short-circuit.
+	WrapToolCall(ctx context.Context, state *State, toolCall *ToolCall, handler ToolHandler) (*ToolResult, error)
 
 	// Name returns a human-readable identifier for this middleware instance.
 	Name() string
@@ -186,3 +227,25 @@ afterHooks:
 
 	return runErr
 }
+
+// MiddlewareWrapper provides a default implementation of Middleware
+// that does nothing in Before/After and passes through in WrapToolCall.
+// Embed this in your middleware struct to avoid implementing all methods.
+type MiddlewareWrapper struct{}
+
+// Before does nothing and returns nil.
+func (MiddlewareWrapper) Before(ctx context.Context, state *State) error { return nil }
+
+// After does nothing and returns nil.
+func (MiddlewareWrapper) After(ctx context.Context, state *State, response *Response) error {
+	return nil
+}
+
+// WrapToolCall passes through to the handler without modification.
+func (MiddlewareWrapper) WrapToolCall(ctx context.Context, state *State, toolCall *ToolCall, handler ToolHandler) (*ToolResult, error) {
+	return handler(ctx, toolCall)
+}
+
+// Name returns "wrapper" as a placeholder. Override in your middleware.
+func (MiddlewareWrapper) Name() string { return "wrapper" }
+

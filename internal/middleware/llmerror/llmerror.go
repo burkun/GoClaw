@@ -14,6 +14,7 @@ import (
 
 // LLMErrorHandlingMiddleware handles tool execution errors gracefully.
 type LLMErrorHandlingMiddleware struct {
+	middleware.MiddlewareWrapper
 	// MaxRetries is the maximum number of retries for failed tool calls.
 	MaxRetries int
 }

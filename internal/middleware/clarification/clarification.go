@@ -14,7 +14,9 @@ import (
 )
 
 // ClarificationMiddleware intercepts clarification requests.
-type ClarificationMiddleware struct{}
+type ClarificationMiddleware struct {
+	middleware.MiddlewareWrapper
+}
 
 // NewClarificationMiddleware constructs a ClarificationMiddleware.
 func NewClarificationMiddleware() *ClarificationMiddleware {

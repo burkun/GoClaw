@@ -12,6 +12,7 @@ import (
 
 // SandboxMiddleware acquires a sandbox on Before and stores it in state.Extra["sandbox"].
 type SandboxMiddleware struct {
+	middleware.MiddlewareWrapper
 	provider sandbox.SandboxProvider
 }
 

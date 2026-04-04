@@ -14,6 +14,7 @@ import (
 
 // DeferredToolFilterMiddleware filters deferred tools from model bindings.
 type DeferredToolFilterMiddleware struct {
+	middleware.MiddlewareWrapper
 	// DeferredToolNames is the list of tool names to hide when tool_search is enabled.
 	DeferredToolNames []string
 }

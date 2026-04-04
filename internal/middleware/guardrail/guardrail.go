@@ -55,6 +55,7 @@ func DefaultConfig() Config {
 
 // GuardrailMiddleware enforces authorization policies.
 type GuardrailMiddleware struct {
+	middleware.MiddlewareWrapper
 	cfg Config
 }
 

@@ -29,6 +29,7 @@ func DefaultConfig() Config {
 
 // LoopDetectionMiddleware detects repeated identical tool calls.
 type LoopDetectionMiddleware struct {
+	middleware.MiddlewareWrapper
 	cfg Config
 }
 

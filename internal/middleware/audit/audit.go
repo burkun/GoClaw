@@ -41,6 +41,7 @@ func (l *DefaultAuditLogger) Log(entry AuditEntry) {
 
 // SandboxAuditMiddleware logs sandbox operations.
 type SandboxAuditMiddleware struct {
+	middleware.MiddlewareWrapper
 	logger AuditLogger
 }
 
