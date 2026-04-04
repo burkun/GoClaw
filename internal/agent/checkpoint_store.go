@@ -2,9 +2,8 @@ package agent
 
 import (
 	"context"
-	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"sync"
 
 	"github.com/cloudwego/eino/adk"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/bookerbai/goclaw/internal/config"
 )
@@ -31,9 +32,12 @@ func newCheckPointStore(appCfg *config.AppConfig) (adk.CheckPointStore, error) {
 	switch typ {
 	case "memory":
 		return newInMemoryCheckPointStore(), nil
-	case "sqlite", "postgres":
+	case "sqlite":
 		path := checkpointStorePath(cp, typ)
-		return newFileCheckPointStore(path), nil
+		return newSQLiteCheckPointStore(path)
+	case "postgres":
+		conn := checkpointStorePath(cp, typ)
+		return newPostgresCheckPointStore(conn)
 	default:
 		return nil, fmt.Errorf("agent.New: unknown checkpointer type %q", cp.Type)
 	}
@@ -45,20 +49,137 @@ func checkpointStorePath(cp *config.CheckpointerConfig, typ string) string {
 
 	if typ == "sqlite" {
 		if conn == "" {
-			return filepath.Join(baseDir, "checkpoints", "sqlite-checkpoints.json")
+			return filepath.Join(baseDir, "checkpoints", "sqlite-checkpoints.db")
 		}
-		if strings.Contains(conn, "://") || strings.Contains(conn, "?") {
-			h := sha256.Sum256([]byte(conn))
-			return filepath.Join(baseDir, "checkpoints", "sqlite-"+hex.EncodeToString(h[:8])+".json")
-		}
-		return conn + ".checkpoints.json"
+		return conn
 	}
 
-	if conn == "" {
-		return filepath.Join(baseDir, "checkpoints", "postgres-checkpoints.json")
+	return conn
+}
+
+type sqliteCheckPointStore struct {
+	db *sql.DB
+}
+
+func newSQLiteCheckPointStore(path string) (*sqliteCheckPointStore, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("checkpoint sqlite path is required")
 	}
-	h := sha256.Sum256([]byte(conn))
-	return filepath.Join(baseDir, "checkpoints", "postgres-"+hex.EncodeToString(h[:8])+".json")
+	if !strings.HasPrefix(strings.ToLower(path), "file:") && !strings.Contains(path, ":memory:") {
+		dir := filepath.Dir(path)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("checkpoint sqlite mkdir failed: %w", err)
+		}
+	}
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		return nil, fmt.Errorf("checkpoint sqlite open failed: %w", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS checkpoints (
+	id TEXT PRIMARY KEY,
+	payload BLOB NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("checkpoint sqlite init schema failed: %w", err)
+	}
+	return &sqliteCheckPointStore{db: db}, nil
+}
+
+func (s *sqliteCheckPointStore) Get(ctx context.Context, checkPointID string) ([]byte, bool, error) {
+	if s == nil || s.db == nil {
+		return nil, false, fmt.Errorf("checkpoint sqlite store is not initialized")
+	}
+	var payload []byte
+	err := s.db.QueryRowContext(ctx, "SELECT payload FROM checkpoints WHERE id = ?", checkPointID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("checkpoint sqlite get failed: %w", err)
+	}
+	out := make([]byte, len(payload))
+	copy(out, payload)
+	return out, true, nil
+}
+
+func (s *sqliteCheckPointStore) Set(ctx context.Context, checkPointID string, checkPoint []byte) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("checkpoint sqlite store is not initialized")
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO checkpoints(id, payload, updated_at)
+VALUES (?, ?, strftime('%s','now'))
+ON CONFLICT(id) DO UPDATE SET
+	payload = excluded.payload,
+	updated_at = excluded.updated_at;
+`, checkPointID, checkPoint)
+	if err != nil {
+		return fmt.Errorf("checkpoint sqlite set failed: %w", err)
+	}
+	return nil
+}
+
+type postgresCheckPointStore struct {
+	db *sql.DB
+}
+
+func newPostgresCheckPointStore(connectionString string) (*postgresCheckPointStore, error) {
+	conn := strings.TrimSpace(connectionString)
+	if conn == "" {
+		return nil, fmt.Errorf("checkpoint postgres connection_string is required")
+	}
+	db, err := sql.Open("pgx", conn)
+	if err != nil {
+		return nil, fmt.Errorf("checkpoint postgres open failed: %w", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS goclaw_checkpoints (
+	id TEXT PRIMARY KEY,
+	payload BYTEA NOT NULL,
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("checkpoint postgres init schema failed: %w", err)
+	}
+	return &postgresCheckPointStore{db: db}, nil
+}
+
+func (s *postgresCheckPointStore) Get(ctx context.Context, checkPointID string) ([]byte, bool, error) {
+	if s == nil || s.db == nil {
+		return nil, false, fmt.Errorf("checkpoint postgres store is not initialized")
+	}
+	var payload []byte
+	err := s.db.QueryRowContext(ctx, "SELECT payload FROM goclaw_checkpoints WHERE id = $1", checkPointID).Scan(&payload)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("checkpoint postgres get failed: %w", err)
+	}
+	out := make([]byte, len(payload))
+	copy(out, payload)
+	return out, true, nil
+}
+
+func (s *postgresCheckPointStore) Set(ctx context.Context, checkPointID string, checkPoint []byte) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("checkpoint postgres store is not initialized")
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO goclaw_checkpoints(id, payload, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT(id) DO UPDATE SET
+	payload = EXCLUDED.payload,
+	updated_at = NOW();
+`, checkPointID, checkPoint)
+	if err != nil {
+		return fmt.Errorf("checkpoint postgres set failed: %w", err)
+	}
+	return nil
 }
 
 type inMemoryCheckPointStore struct {

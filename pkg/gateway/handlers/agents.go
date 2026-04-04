@@ -186,7 +186,7 @@ func (h *AgentsHandler) saveAgents() error {
 	if h == nil || h.cfg == nil {
 		return nil
 	}
-	path := strings.TrimSpace(os.Getenv("DEER_FLOW_CONFIG_PATH"))
+	path := strings.TrimSpace(os.Getenv("GOCLAW_CONFIG_PATH"))
 	if path == "" {
 		path = "config.yaml"
 	}

@@ -2,9 +2,13 @@ package agent
 
 import (
 	"context"
-	"os"
+	"database/sql"
 	"path/filepath"
+	"regexp"
 	"testing"
+
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/bookerbai/goclaw/internal/config"
 )
@@ -58,6 +62,19 @@ func TestNewCheckPointStore_SQLite_Persistent(t *testing.T) {
 		t.Fatalf("set failed: %v", err)
 	}
 
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open sqlite db failed: %v", err)
+	}
+	defer db.Close()
+	var rowCount int
+	if err := db.QueryRow("SELECT COUNT(1) FROM checkpoints WHERE id = ?", "cp-sqlite").Scan(&rowCount); err != nil {
+		t.Fatalf("query sqlite row failed: %v", err)
+	}
+	if rowCount != 1 {
+		t.Fatalf("expected rowCount=1, got %d", rowCount)
+	}
+
 	store2, err := newCheckPointStore(&config.AppConfig{
 		Checkpointer: &config.CheckpointerConfig{Type: "sqlite", ConnectionString: path},
 	})
@@ -73,41 +90,54 @@ func TestNewCheckPointStore_SQLite_Persistent(t *testing.T) {
 	}
 }
 
-func TestNewCheckPointStore_Postgres_Persistent(t *testing.T) {
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd failed: %v", err)
-	}
-	tmp := t.TempDir()
-	if err := os.Chdir(tmp); err != nil {
-		t.Fatalf("chdir failed: %v", err)
-	}
-	defer func() { _ = os.Chdir(oldWD) }()
-
-	dsn := "postgres://user:pass@localhost:5432/app"
-	store, err := newCheckPointStore(&config.AppConfig{
-		Checkpointer: &config.CheckpointerConfig{Type: "postgres", ConnectionString: dsn},
+func TestNewCheckPointStore_Postgres_RequiresConnectionString(t *testing.T) {
+	_, err := newCheckPointStore(&config.AppConfig{
+		Checkpointer: &config.CheckpointerConfig{Type: "postgres", ConnectionString: ""},
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("expected error when postgres connection_string is empty")
 	}
+}
+
+func TestPostgresCheckPointStore_SetGet_SQLMock(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock new failed: %v", err)
+	}
+	defer db.Close()
+
+	store := &postgresCheckPointStore{db: db}
 	ctx := context.Background()
-	if err := store.Set(ctx, "cp-pg", []byte("state-b")); err != nil {
+	payload := []byte("state-b")
+
+	mock.ExpectExec(regexp.QuoteMeta(`
+INSERT INTO goclaw_checkpoints(id, payload, updated_at)
+VALUES ($1, $2, NOW())
+ON CONFLICT(id) DO UPDATE SET
+	payload = EXCLUDED.payload,
+	updated_at = NOW();
+`)).
+		WithArgs("cp-pg", payload).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	if err := store.Set(ctx, "cp-pg", payload); err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
 
-	store2, err := newCheckPointStore(&config.AppConfig{
-		Checkpointer: &config.CheckpointerConfig{Type: "postgres", ConnectionString: dsn},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error creating second store: %v", err)
-	}
-	got, ok, err := store2.Get(ctx, "cp-pg")
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT payload FROM goclaw_checkpoints WHERE id = $1")).
+		WithArgs("cp-pg").
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(payload))
+
+	got, ok, err := store.Get(ctx, "cp-pg")
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}
 	if !ok || string(got) != "state-b" {
-		t.Fatalf("unexpected persistent get result ok=%v value=%q", ok, string(got))
+		t.Fatalf("unexpected get result ok=%v value=%q", ok, string(got))
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sql expectations not met: %v", err)
 	}
 }
 

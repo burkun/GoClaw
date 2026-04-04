@@ -24,7 +24,7 @@ func newPersistedAgentsHandler(t *testing.T, cfg *config.AppConfig) *AgentsHandl
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	t.Setenv("DEER_FLOW_CONFIG_PATH", path)
+	t.Setenv("GOCLAW_CONFIG_PATH", path)
 	return NewAgentsHandler(cfg)
 }
 
