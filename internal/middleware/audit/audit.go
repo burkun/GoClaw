@@ -2,11 +2,14 @@
 //
 // SandboxAuditMiddleware logs sandbox operations for security auditing,
 // tracking file operations, command executions, and resource usage.
+// It also intercepts high-risk commands (e.g., rm -rf /, curl | bash) and
+// injects warnings for medium-risk commands.
 package audit
 
 import (
 	"context"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -39,10 +42,21 @@ func (l *DefaultAuditLogger) Log(entry AuditEntry) {
 		entry.ThreadID, entry.ToolName, entry.Operation, entry.Target, entry.Success, entry.ErrorMsg)
 }
 
-// SandboxAuditMiddleware logs sandbox operations.
+// CommandRiskLevel represents the risk classification of a command.
+type CommandRiskLevel string
+
+const (
+	RiskPass   CommandRiskLevel = "pass"   // Safe to execute
+	RiskWarn   CommandRiskLevel = "warn"   // Medium-risk, add warning
+	RiskBlock  CommandRiskLevel = "block"  // High-risk, block execution
+)
+
+// SandboxAuditMiddleware logs sandbox operations and intercepts risky commands.
 type SandboxAuditMiddleware struct {
 	middleware.MiddlewareWrapper
-	logger AuditLogger
+	logger             AuditLogger
+	highRiskPatterns   []*regexp.Regexp
+	mediumRiskPatterns []*regexp.Regexp
 }
 
 // NewSandboxAuditMiddleware constructs a SandboxAuditMiddleware.
@@ -50,15 +64,114 @@ func NewSandboxAuditMiddleware(logger AuditLogger) *SandboxAuditMiddleware {
 	if logger == nil {
 		logger = &DefaultAuditLogger{}
 	}
-	return &SandboxAuditMiddleware{logger: logger}
+	return &SandboxAuditMiddleware{
+		logger: logger,
+		highRiskPatterns: []*regexp.Regexp{
+			// rm -rf / or rm -rf /*
+			regexp.MustCompile(`rm\s+-[^\s]*r[^\s]*\s+(/\*?|~/?\*?)\s*$`),
+			// curl | bash or wget | bash
+			regexp.MustCompile(`(curl|wget).+\|\s*(ba)?sh`),
+			// chmod 777
+			regexp.MustCompile(`chmod\s+777`),
+		},
+		mediumRiskPatterns: []*regexp.Regexp{
+			// pip install
+			regexp.MustCompile(`pip\s+install`),
+			// npm install -g
+			regexp.MustCompile(`npm\s+install\s+-g`),
+		},
+	}
 }
 
 // Name implements middleware.Middleware.
 func (m *SandboxAuditMiddleware) Name() string { return "SandboxAuditMiddleware" }
 
-// Before is a no-op.
-func (m *SandboxAuditMiddleware) Before(_ context.Context, _ *middleware.State) error {
-	return nil
+// WrapToolCall intercepts bash commands and enforces security policies.
+// High-risk commands are blocked, medium-risk commands receive warnings.
+func (m *SandboxAuditMiddleware) WrapToolCall(
+	ctx context.Context,
+	state *middleware.State,
+	toolCall *middleware.ToolCall,
+	handler middleware.ToolHandler,
+) (*middleware.ToolResult, error) {
+	// Only intercept bash tool
+	if toolCall.Name != "bash" && toolCall.Name != "Bash" {
+		return handler(ctx, toolCall)
+	}
+
+	// Extract command
+	command, _ := toolCall.Input["command"].(string)
+	if command == "" {
+		return handler(ctx, toolCall)
+	}
+
+	// Classify command
+	verdict := m.classifyCommand(command)
+	threadID := ""
+	if state != nil {
+		threadID = state.ThreadID
+	}
+
+	// Log the audit
+	m.logger.Log(AuditEntry{
+		Timestamp: time.Now(),
+		ThreadID:  threadID,
+		ToolName:  toolCall.Name,
+		Operation: "execute",
+		Target:    truncateCommand(command),
+		Success:   verdict != RiskBlock,
+		Metadata:  map[string]any{"verdict": string(verdict)},
+	})
+
+	// Block high-risk commands
+	if verdict == RiskBlock {
+		return &middleware.ToolResult{
+			ID: toolCall.ID,
+			Output: map[string]any{
+				"status":  "error",
+				"content": "Command blocked: security violation detected. Choose an alternative approach.",
+			},
+			Error: nil,
+		}, nil
+	}
+
+	// Execute the command
+	result, err := handler(ctx, toolCall)
+	if err != nil {
+		return result, err
+	}
+
+	// Append warning for medium-risk commands
+	if verdict == RiskWarn {
+		if resultMap, ok := result.Output.(map[string]any); ok {
+			if content, ok := resultMap["content"].(string); ok {
+				resultMap["content"] = content + "\n\n⚠️ Warning: This is a medium-risk command. Proceed with caution."
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func (m *SandboxAuditMiddleware) classifyCommand(command string) CommandRiskLevel {
+	for _, pattern := range m.highRiskPatterns {
+		if pattern.MatchString(command) {
+			return RiskBlock
+		}
+	}
+	for _, pattern := range m.mediumRiskPatterns {
+		if pattern.MatchString(command) {
+			return RiskWarn
+		}
+	}
+	return RiskPass
+}
+
+func (m *SandboxAuditMiddleware) getThreadID(state *middleware.State) string {
+	if state == nil {
+		return "unknown"
+	}
+	return state.ThreadID
 }
 
 // After audits completed tool calls.
