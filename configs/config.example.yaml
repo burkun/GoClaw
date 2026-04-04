@@ -192,6 +192,40 @@ memory:
   max_injection_tokens: 2000
 
 # ============================================================================
+# Checkpointer Configuration
+# ============================================================================
+# State persistence backend for thread checkpoints.
+
+# checkpointer:
+#   type: sqlite  # one of: memory, sqlite, postgres
+#   connection_string: .goclaw/checkpoints/sqlite-checkpoints.db  # for sqlite
+#   # connection_string: postgres://user:pass@localhost:5432/dbname  # for postgres
+
+# ============================================================================
+# Token Usage Configuration
+# ============================================================================
+# Track LLM token usage per model call (input/output/total tokens).
+# Logs at info level via TokenUsageMiddleware.
+
+# token_usage:
+#   enabled: false
+
+# ============================================================================
+# Guardrails Configuration
+# ============================================================================
+# Authorization policies for tool execution.
+# When enabled, all tool calls are evaluated against the provider before execution.
+
+# guardrails:
+#   enabled: false
+#   fail_closed: true  # deny on provider error (true) or allow (false)
+#   passport: null     # passed to provider as request.agent_id
+#   provider:
+#     use: deerflow.guardrails.builtin:AllowlistProvider
+#     config:
+#       denied_tools: ["bash", "write_file"]
+
+# ============================================================================
 # Skills Configuration
 # ============================================================================
 
