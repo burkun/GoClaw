@@ -202,3 +202,117 @@ func TestCancelRun_NotFound(t *testing.T) {
 
 // compile-time guard: keep context imported for future fake-agent tests.
 var _ = context.Background
+
+// ---------------------------------------------------------------------------
+// Thread CRUD / state / history tests
+// ---------------------------------------------------------------------------
+
+func TestCreateThread(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+	body := `{"thread_id": "thread-abc", "metadata": {"key": "value"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/threads", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, nil)
+	h.CreateThread(c)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rr.Code)
+	}
+}
+
+func TestGetThread(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz"})
+	h.GetThread(c)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestDeleteThread(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/threads/thread-xyz", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz"})
+	h.DeleteThread(c)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestGetThreadState(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz/state", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz"})
+	h.GetThreadState(c)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestGetThreadHistory(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/threads/thread-xyz/history", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz"})
+	h.GetThreadHistory(c)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestListRuns(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+	h.registerRun("run-1", runHandle{ThreadID: "thread-xyz"})
+	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz/runs", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz"})
+	h.ListRuns(c)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "run-1") {
+		t.Fatalf("expected run-1 in response, got %s", rr.Body.String())
+	}
+}
+
+func TestGetRun(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+	h.registerRun("run-2", runHandle{ThreadID: "thread-xyz"})
+	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz/runs/run-2", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz", "run_id": "run-2"})
+	h.GetRun(c)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+}
+
+func TestGetRun_NotFound(t *testing.T) {
+	h := NewThreadsHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz/runs/run-missing", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz", "run_id": "run-missing"})
+	h.GetRun(c)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestRunThread_ContentLocationHeader(t *testing.T) {
+	mock := &mockLeadAgent{events: []agent.Event{
+		{Type: agent.EventCompleted, ThreadID: "thread-loc", Payload: agent.CompletedPayload{FinalMessage: "done"}, Timestamp: time.Now().UnixMilli()},
+	}}
+	h := NewThreadsHandler(nil, mock)
+	req := newRunRequest(t, "thread-loc", `{"input": "hi"}`)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-loc"})
+	h.RunThread(c)
+	loc := rr.Header().Get("Content-Location")
+	if !strings.Contains(loc, "/api/threads/thread-loc/runs/") {
+		t.Fatalf("expected Content-Location header, got %q", loc)
+	}
+}

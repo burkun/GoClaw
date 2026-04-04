@@ -66,11 +66,11 @@ func (h *ChannelsHandler) RestartChannel(c *gin.Context) {
 		return
 	}
 	if h.manager == nil {
-		c.JSON(http.StatusOK, ChannelRestartResponse{Success: false, Message: "channel service not initialized"})
+		NewServiceUnavailableError("channel service not initialized").Render(c, http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.manager.RestartChannel(c.Request.Context(), name); err != nil {
-		c.JSON(http.StatusOK, ChannelRestartResponse{Success: false, Message: err.Error()})
+		NewServiceUnavailableError("restart failed").Render(c, http.StatusServiceUnavailable)
 		return
 	}
 	c.JSON(http.StatusOK, ChannelRestartResponse{Success: true, Message: "channel restarted"})
@@ -84,11 +84,11 @@ func (h *ChannelsHandler) StartChannel(c *gin.Context) {
 		return
 	}
 	if h.manager == nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel service not initialized"})
+		NewServiceUnavailableError("channel service not initialized").Render(c, http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.manager.Start(c.Request.Context()); err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		NewServiceUnavailableError("start failed").Render(c, http.StatusServiceUnavailable)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "channel service started"})
@@ -102,11 +102,11 @@ func (h *ChannelsHandler) StopChannel(c *gin.Context) {
 		return
 	}
 	if h.manager == nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel service not initialized"})
+		NewServiceUnavailableError("channel service not initialized").Render(c, http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.manager.Stop(c.Request.Context()); err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		NewServiceUnavailableError("stop failed").Render(c, http.StatusServiceUnavailable)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "channel service stopped"})

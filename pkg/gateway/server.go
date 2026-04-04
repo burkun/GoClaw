@@ -119,8 +119,30 @@ func (s *Server) registerRoutes() {
 
 		handlers.RegisterChannelsRoutes(api, channelsH)
 
+		// Thread-level routes (no thread_id param).
+		api.POST("/threads", threadsH.CreateThread)
+		api.POST("/threads/search", threadsH.SearchThreads)
+
 		threads := api.Group("/threads/:thread_id")
 		{
+			// GET /api/threads/:thread_id — get thread metadata.
+			threads.GET("", threadsH.GetThread)
+			// PATCH /api/threads/:thread_id — update thread metadata.
+			threads.PATCH("", threadsH.PatchThread)
+			// DELETE /api/threads/:thread_id — delete thread.
+			threads.DELETE("", threadsH.DeleteThread)
+
+			// GET /api/threads/:thread_id/state — get thread state.
+			threads.GET("/state", threadsH.GetThreadState)
+			// POST /api/threads/:thread_id/state — update thread state.
+			threads.POST("/state", threadsH.UpdateThreadState)
+			// POST /api/threads/:thread_id/history — get checkpoint history.
+			threads.POST("/history", threadsH.GetThreadHistory)
+
+			// GET /api/threads/:thread_id/runs — list runs for thread.
+			threads.GET("/runs", threadsH.ListRuns)
+			// GET /api/threads/:thread_id/runs/:run_id — get run metadata.
+			threads.GET("/runs/:run_id", threadsH.GetRun)
 			// POST /api/threads/:thread_id/runs — run the lead agent and stream SSE.
 			threads.POST("/runs", threadsH.RunThread)
 			// POST /api/threads/:thread_id/runs/:run_id/cancel — cancel a running stream.

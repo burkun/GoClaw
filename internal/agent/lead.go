@@ -83,6 +83,8 @@ type RunConfig struct {
 	MaxConcurrentSubagents int
 	CheckpointID           string
 	AgentName              string
+	// RunID is set by the gateway and used to tag events for consistent tracking.
+	RunID string
 }
 
 type LeadAgent interface {
@@ -241,7 +243,7 @@ func (a *leadAgent) Run(ctx context.Context, state *ThreadState, cfg RunConfig) 
 
 	go func() {
 		defer close(ch)
-		drainIter(ctx, stream, cfg.ThreadID, ch)
+		drainIter(ctx, stream, cfg.ThreadID, cfg.RunID, ch)
 	}()
 	return ch, nil
 }
@@ -286,7 +288,7 @@ func (a *leadAgent) Resume(ctx context.Context, state *ThreadState, cfg RunConfi
 
 	go func() {
 		defer close(ch)
-		drainIter(ctx, stream, cfg.ThreadID, ch)
+		drainIter(ctx, stream, cfg.ThreadID, cfg.RunID, ch)
 	}()
 	return ch, nil
 }
@@ -349,9 +351,9 @@ func prepareRunMessages(messages []*schema.Message, cfg RunConfig) []*schema.Mes
 	return out
 }
 
-func drainIter(ctx context.Context, iter *einoruntime.EventStream, threadID string, ch chan<- Event) {
+func drainIter(ctx context.Context, iter *einoruntime.EventStream, threadID, runID string, ch chan<- Event) {
 	if iter == nil {
-		ch <- Event{Type: EventError, ThreadID: threadID, Payload: ErrorPayload{Code: ErrorCodeEmptyStream, Message: "empty event stream"}, Timestamp: timeUnixMilli()}
+		ch <- Event{Type: EventError, ThreadID: threadID, RunID: runID, Payload: ErrorPayload{Code: ErrorCodeEmptyStream, Message: "empty event stream"}, Timestamp: timeUnixMilli()}
 		return
 	}
 
@@ -366,6 +368,7 @@ func drainIter(ctx context.Context, iter *einoruntime.EventStream, threadID stri
 				finalMessages = append(finalMessages, p.Content)
 			}
 		}
+		ev.RunID = runID
 		ch <- ev
 		if ev.Type == EventError || ev.Type == EventCompleted {
 			terminal = true
@@ -375,7 +378,7 @@ func drainIter(ctx context.Context, iter *einoruntime.EventStream, threadID stri
 	for {
 		select {
 		case <-ctx.Done():
-			emit(Event{Type: EventError, ThreadID: threadID, Payload: ErrorPayload{Code: ErrorCodeContextCancelled, Message: ctx.Err().Error()}, Timestamp: timeUnixMilli()})
+			emit(Event{Type: EventError, ThreadID: threadID, RunID: runID, Payload: ErrorPayload{Code: ErrorCodeContextCancelled, Message: ctx.Err().Error()}, Timestamp: timeUnixMilli()})
 			return
 		default:
 		}
@@ -393,7 +396,7 @@ func drainIter(ctx context.Context, iter *einoruntime.EventStream, threadID stri
 	}
 
 	finalMessage := strings.Join(finalMessages, "")
-	emit(Event{Type: EventCompleted, ThreadID: threadID, Payload: CompletedPayload{FinalMessage: finalMessage}, Timestamp: timeUnixMilli()})
+	emit(Event{Type: EventCompleted, ThreadID: threadID, RunID: runID, Payload: CompletedPayload{FinalMessage: finalMessage}, Timestamp: timeUnixMilli()})
 }
 
 func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {

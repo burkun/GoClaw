@@ -31,13 +31,16 @@ const (
 )
 
 // Event is the envelope sent over the channel returned by LeadAgent.Run.
-// Every event carries the thread ID and a typed payload.
+// Every event carries the thread ID, optional run ID, and a typed payload.
 type Event struct {
 	// Type identifies the kind of event.
 	Type EventType `json:"type"`
 
 	// ThreadID is the conversation/thread identifier this event belongs to.
 	ThreadID string `json:"thread_id"`
+
+	// RunID identifies the current run instance (set by handler/agent layer).
+	RunID string `json:"run_id,omitempty"`
 
 	// Payload holds the event-specific data. Callers should type-assert based on Type.
 	Payload any `json:"payload"`

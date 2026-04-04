@@ -67,7 +67,7 @@ func (h *ArtifactsHandler) GetArtifact(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "artifact not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to stat artifact"})
 		return
 	}
 	if info.IsDir() {
@@ -77,7 +77,7 @@ func (h *ArtifactsHandler) GetArtifact(c *gin.Context) {
 		}
 		entries, err := os.ReadDir(absPath)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read directory"})
 			return
 		}
 		items := make([]map[string]any, 0, len(entries))
@@ -141,7 +141,7 @@ func (h *ArtifactsHandler) serveSkillArchiveEntry(c *gin.Context, threadID, arti
 			c.JSON(http.StatusNotFound, gin.H{"error": "artifact not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to stat skill archive"})
 		return
 	}
 

@@ -81,6 +81,19 @@ func TestChannelsHandler_RestartChannel_EmptyName(t *testing.T) {
 	}
 }
 
+func TestChannelsHandler_RestartChannel_NilManager_Returns503(t *testing.T) {
+	h := NewChannelsHandler(nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/channels/feishu/restart", nil)
+	rr := httptest.NewRecorder()
+	ctx, _ := newGinContext(rr, req, map[string]string{"name": "feishu"})
+
+	h.RestartChannel(ctx)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+}
+
 func TestChannelsHandler_WithManager(t *testing.T) {
 	mgr := &fakeChannelsManager{channels: map[string]bool{"feishu": false}}
 	h := NewChannelsHandler(mgr)

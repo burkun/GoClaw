@@ -137,6 +137,8 @@ func (h *ThreadsHandler) RunThread(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no") // prevents nginx from buffering the stream
+	// Content-Location header for SDK run metadata extraction.
+	c.Header("Content-Location", fmt.Sprintf("/api/threads/%s/runs/%s/stream?thread_id=%s&run_id=%s", threadID, runID, threadID, runID))
 
 	w := c.Writer
 
@@ -174,6 +176,7 @@ func (h *ThreadsHandler) RunThread(c *gin.Context) {
 		SubagentEnabled: true,
 		CheckpointID:    checkpointID,
 		AgentName:       "lead_agent",
+		RunID:           runID,
 	}
 
 	// Check agent is initialized.
@@ -300,4 +303,217 @@ func (h *ThreadsHandler) getRun(runID string) (runHandle, bool) {
 	defer h.runsMu.RUnlock()
 	r, ok := h.runs[runID]
 	return r, ok
+}
+
+// ---------------------------------------------------------------------------
+// Thread CRUD, State, History, and Runs list endpoints
+// ---------------------------------------------------------------------------
+
+// ThreadMetadata contains basic thread information.
+type ThreadMetadata struct {
+	ThreadID  string         `json:"thread_id"`
+	Status    string         `json:"status"`
+	CreatedAt int64          `json:"created_at"`
+	UpdatedAt int64          `json:"updated_at"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Values    map[string]any `json:"values,omitempty"`
+}
+
+// ThreadStateResponse contains the current thread state from checkpoint.
+type ThreadStateResponse struct {
+	ChannelValues map[string]any `json:"channel_values"`
+	CheckpointID  string         `json:"checkpoint_id,omitempty"`
+	Next          []string       `json:"next,omitempty"`
+	Tasks         []any          `json:"tasks,omitempty"`
+}
+
+// HistoryEntry represents a single checkpoint history entry.
+type HistoryEntry struct {
+	CheckpointID string `json:"checkpoint_id"`
+	Timestamp    int64  `json:"timestamp"`
+	ParentID     string `json:"parent_id,omitempty"`
+}
+
+// RunEntry represents a run record for list runs.
+type RunEntry struct {
+	RunID     string `json:"run_id"`
+	ThreadID  string `json:"thread_id"`
+	Status    string `json:"status"`
+	CreatedAt int64  `json:"created_at"`
+}
+
+// CreateThread handles POST /api/threads.
+func (h *ThreadsHandler) CreateThread(c *gin.Context) {
+	var req struct {
+		ThreadID string         `json:"thread_id"`
+		Metadata map[string]any `json:"metadata,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		NewValidationError("invalid request body").Render(c, http.StatusBadRequest)
+		return
+	}
+	threadID := strings.TrimSpace(req.ThreadID)
+	if threadID == "" {
+		threadID = uuid.NewString()
+	}
+	now := time.Now().UnixMilli()
+	meta := ThreadMetadata{
+		ThreadID:  threadID,
+		Status:    "idle",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Metadata:  req.Metadata,
+	}
+	c.JSON(http.StatusCreated, meta)
+}
+
+// SearchThreads handles POST /api/threads/search.
+func (h *ThreadsHandler) SearchThreads(c *gin.Context) {
+	// Minimal implementation: return empty list (no persistent store yet).
+	c.JSON(http.StatusOK, gin.H{"threads": []ThreadMetadata{}})
+}
+
+// GetThread handles GET /api/threads/:thread_id.
+func (h *ThreadsHandler) GetThread(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
+		return
+	}
+	// Minimal implementation: return synthetic metadata (no persistent store yet).
+	now := time.Now().UnixMilli()
+	meta := ThreadMetadata{
+		ThreadID:  threadID,
+		Status:    "idle",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	c.JSON(http.StatusOK, meta)
+}
+
+// PatchThread handles PATCH /api/threads/:thread_id.
+func (h *ThreadsHandler) PatchThread(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Metadata map[string]any `json:"metadata,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		NewValidationError("invalid request body").Render(c, http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UnixMilli()
+	meta := ThreadMetadata{
+		ThreadID:  threadID,
+		Status:    "idle",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Metadata:  req.Metadata,
+	}
+	c.JSON(http.StatusOK, meta)
+}
+
+// DeleteThread handles DELETE /api/threads/:thread_id.
+func (h *ThreadsHandler) DeleteThread(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
+		return
+	}
+	// Minimal implementation: no-op (no persistent store yet).
+	c.JSON(http.StatusOK, gin.H{"thread_id": threadID, "deleted": true})
+}
+
+// GetThreadState handles GET /api/threads/:thread_id/state.
+func (h *ThreadsHandler) GetThreadState(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
+		return
+	}
+	// Minimal implementation: return empty state (no checkpoint store integration yet).
+	resp := ThreadStateResponse{
+		ChannelValues: map[string]any{},
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// UpdateThreadState handles POST /api/threads/:thread_id/state.
+func (h *ThreadsHandler) UpdateThreadState(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Values map[string]any `json:"values"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		NewValidationError("invalid request body").Render(c, http.StatusBadRequest)
+		return
+	}
+	resp := ThreadStateResponse{
+		ChannelValues: req.Values,
+		CheckpointID:  uuid.NewString(),
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// GetThreadHistory handles POST /api/threads/:thread_id/history.
+func (h *ThreadsHandler) GetThreadHistory(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
+		return
+	}
+	// Minimal implementation: return empty list (no persistent history yet).
+	c.JSON(http.StatusOK, gin.H{"thread_id": threadID, "history": []HistoryEntry{}})
+}
+
+// ListRuns handles GET /api/threads/:thread_id/runs.
+func (h *ThreadsHandler) ListRuns(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
+		return
+	}
+	// Return currently in-memory runs for this thread.
+	h.runsMu.RLock()
+	defer h.runsMu.RUnlock()
+	entries := make([]RunEntry, 0)
+	for runID, rh := range h.runs {
+		if rh.ThreadID == threadID {
+			entries = append(entries, RunEntry{
+				RunID:     runID,
+				ThreadID:  threadID,
+				Status:    "running",
+				CreatedAt: time.Now().UnixMilli(),
+			})
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"runs": entries})
+}
+
+// GetRun handles GET /api/threads/:thread_id/runs/:run_id.
+func (h *ThreadsHandler) GetRun(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	runID := c.Param("run_id")
+	if threadID == "" || runID == "" {
+		NewValidationError("thread_id and run_id are required").Render(c, http.StatusBadRequest)
+		return
+	}
+	rh, ok := h.getRun(runID)
+	if !ok || rh.ThreadID != threadID {
+		NewNotFoundError("run not found").Render(c, http.StatusNotFound)
+		return
+	}
+	c.JSON(http.StatusOK, RunEntry{
+		RunID:     runID,
+		ThreadID:  threadID,
+		Status:    "running",
+		CreatedAt: time.Now().UnixMilli(),
+	})
 }
