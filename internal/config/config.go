@@ -73,6 +73,12 @@ type AppConfig struct {
 	// Summarization configures automatic context summarization.
 	Summarization SummarizationConfig `yaml:"summarization"`
 
+	// TokenUsage configures token usage tracking.
+	TokenUsage TokenUsageConfig `yaml:"token_usage"`
+
+	// Guardrails configures authorization policies.
+	Guardrails GuardrailsConfig `yaml:"guardrails"`
+
 	// Subagents configures sub-agent execution timeouts.
 	Subagents SubagentsConfig `yaml:"subagents"`
 
@@ -342,6 +348,47 @@ type SkillsConfig struct {
 	// ContainerPath is the mount path inside the sandbox container.
 	// Default: /mnt/skills
 	ContainerPath string `yaml:"container_path,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// TokenUsageConfig / GuardrailsConfig
+// ---------------------------------------------------------------------------
+
+// TokenUsageConfig holds configuration for token usage tracking.
+// When enabled, logs input/output/total tokens for each model call.
+// Mirrors DeerFlow's TokenUsageConfig.
+type TokenUsageConfig struct {
+	// Enabled controls whether token usage tracking middleware is active.
+	Enabled bool `yaml:"enabled"`
+}
+
+// GuardrailProviderConfig configures the guardrail provider implementation.
+// Use is a class path like "package.module:ClassName".
+type GuardrailProviderConfig struct {
+	// Use is the class path for the provider implementation.
+	Use string `yaml:"use"`
+
+	// Config contains provider-specific configuration.
+	Config map[string]any `yaml:"config,omitempty"`
+}
+
+// GuardrailsConfig configures authorization policies for tool execution.
+// When enabled, all tool calls are evaluated against the provider before execution.
+// Mirrors DeerFlow's GuardrailsConfig.
+type GuardrailsConfig struct {
+	// Enabled controls whether guardrail middleware is active.
+	Enabled bool `yaml:"enabled"`
+
+	// FailClosed controls behavior when provider errors.
+	// If true (default), deny on error. If false, allow on error.
+	FailClosed bool `yaml:"fail_closed"`
+
+	// Passport is passed to provider as request.agent_id.
+	// Can be a file path, managed agent ID, or null.
+	Passport *string `yaml:"passport,omitempty"`
+
+	// Provider configures the authorization provider implementation.
+	Provider *GuardrailProviderConfig `yaml:"provider,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
