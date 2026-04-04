@@ -5,12 +5,32 @@ package sandbox
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
 // VirtualPathPrefix is the virtual mount point agents see for user data.
 // All agent-facing paths should start with this prefix.
 const VirtualPathPrefix = "/mnt/user-data"
+
+var (
+	defaultProviderMu sync.RWMutex
+	defaultProvider   SandboxProvider
+)
+
+// SetDefaultProvider stores the process-wide sandbox provider for tool wrappers.
+func SetDefaultProvider(p SandboxProvider) {
+	defaultProviderMu.Lock()
+	defer defaultProviderMu.Unlock()
+	defaultProvider = p
+}
+
+// DefaultProvider returns the process-wide sandbox provider.
+func DefaultProvider() SandboxProvider {
+	defaultProviderMu.RLock()
+	defer defaultProviderMu.RUnlock()
+	return defaultProvider
+}
 
 // SandboxType identifies which sandbox implementation to use.
 type SandboxType string
@@ -51,10 +71,20 @@ type SandboxConfig struct {
 	Docker DockerConfig `yaml:"docker" json:"docker"`
 }
 
+// DockerVolumeMount describes one host-to-container bind mount.
+type DockerVolumeMount struct {
+	HostPath      string `yaml:"host_path" json:"host_path"`
+	ContainerPath string `yaml:"container_path" json:"container_path"`
+	ReadOnly      bool   `yaml:"read_only,omitempty" json:"read_only,omitempty"`
+}
+
 // DockerConfig holds Docker-specific sandbox configuration.
 type DockerConfig struct {
 	// Image is the Docker image to use for sandbox containers.
 	Image string `yaml:"image" json:"image"`
+
+	// ContainerPrefix is the container name prefix (thread id is appended).
+	ContainerPrefix string `yaml:"container_prefix,omitempty" json:"container_prefix,omitempty"`
 
 	// CPUQuota is the CPU quota in microseconds per 100ms period (e.g. 100000 = 1 CPU).
 	// 0 means no limit.
@@ -73,6 +103,12 @@ type DockerConfig struct {
 	// SkillsMountPath is the host path for the skills directory to mount read-only.
 	// Empty means skills volume is not mounted.
 	SkillsMountPath string `yaml:"skills_mount_path" json:"skills_mount_path"`
+
+	// Mounts are additional bind mounts injected into docker sandboxes.
+	Mounts []DockerVolumeMount `yaml:"mounts,omitempty" json:"mounts,omitempty"`
+
+	// Environment variables injected into the container.
+	Environment map[string]string `yaml:"environment,omitempty" json:"environment,omitempty"`
 }
 
 // ExecuteResult holds the outcome of a command execution.
@@ -110,6 +146,16 @@ type FileInfo struct {
 	ModTime time.Time
 }
 
+// GrepMatch is a single line match returned by Sandbox.Grep.
+type GrepMatch struct {
+	// Path is the virtual path of the file containing the match.
+	Path string
+	// LineNumber is the 1-indexed line number in the file.
+	LineNumber int
+	// Line is the text content of the matched line.
+	Line string
+}
+
 // Sandbox is the core interface every sandbox implementation must satisfy.
 // All path arguments are virtual paths (e.g. /mnt/user-data/workspace/...).
 // Implementations translate them to real host or container paths internally.
@@ -138,6 +184,20 @@ type Sandbox interface {
 	// If replaceAll is false, only the first occurrence is replaced.
 	// Returns an error if oldStr is not found.
 	StrReplace(ctx context.Context, path string, oldStr string, newStr string, replaceAll bool) error
+
+	// Glob finds paths matching pattern under path.
+	// Returns (matches, truncated, error).
+	Glob(ctx context.Context, path string, pattern string, includeDirs bool, maxResults int) ([]string, bool, error)
+
+	// Grep searches lines matching pattern under path.
+	// glob optionally restricts candidate files.
+	// Returns (matches, truncated, error).
+	Grep(ctx context.Context, path string, pattern string, glob string, literal bool, caseSensitive bool, maxResults int) ([]GrepMatch, bool, error)
+
+	// UpdateFile writes binary content to the file at path.
+	// Parent directories are created automatically.
+	// This is the binary equivalent of WriteFile, used for uploading images, archives, etc.
+	UpdateFile(ctx context.Context, path string, content []byte) error
 }
 
 // SandboxProvider manages the lifecycle of Sandbox instances.

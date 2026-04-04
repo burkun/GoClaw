@@ -25,6 +25,15 @@ func (s *stubSandbox) ListDir(_ context.Context, _ string, _ int) ([]sandbox.Fil
 func (s *stubSandbox) StrReplace(_ context.Context, _ string, _ string, _ string, _ bool) error {
 	return nil
 }
+func (s *stubSandbox) Glob(_ context.Context, _ string, _ string, _ bool, _ int) ([]string, bool, error) {
+	return nil, false, nil
+}
+func (s *stubSandbox) Grep(_ context.Context, _ string, _ string, _ string, _ bool, _ bool, _ int) ([]sandbox.GrepMatch, bool, error) {
+	return nil, false, nil
+}
+func (s *stubSandbox) UpdateFile(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
 
 type stubProvider struct {
 	sb      *stubSandbox

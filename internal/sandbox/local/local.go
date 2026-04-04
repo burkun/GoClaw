@@ -14,6 +14,7 @@
 package local
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -22,6 +23,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -51,7 +54,7 @@ const defaultExecTimeout = 30 * time.Second
 type LocalSandbox struct {
 	id       string
 	threadID string
-	baseDir  string  // absolute host path of .goclaw/threads/{threadID}/user-data
+	baseDir  string // absolute host path of .goclaw/threads/{threadID}/user-data
 	cfg      sandbox.SandboxConfig
 }
 
@@ -267,12 +270,16 @@ func (s *LocalSandbox) ReadFile(ctx context.Context, virtualPath string) (string
 // WriteFile writes content to the file at virtualPath.
 // If append is true, content is appended; otherwise the file is overwritten.
 // Parent directories are created automatically.
+// This method uses file locking to prevent concurrent write conflicts.
 func (s *LocalSandbox) WriteFile(ctx context.Context, virtualPath string, content string, appendMode bool) error {
-	// TODO:
-	//  1. Translate virtualPath to real path via virtualToReal.
-	//  2. os.MkdirAll for the parent directory.
-	//  3. If appendMode, open with O_APPEND|O_CREATE|O_WRONLY; otherwise O_CREATE|O_TRUNC|O_WRONLY.
-	//  4. Write content, close file.
+	return sandbox.WithFileLock(s.id, virtualPath, func() error {
+		return s.writeFileLocked(ctx, virtualPath, content, appendMode)
+	})
+}
+
+// writeFileLocked is the internal implementation of WriteFile without locking.
+// It must only be called while holding the file lock.
+func (s *LocalSandbox) writeFileLocked(ctx context.Context, virtualPath string, content string, appendMode bool) error {
 	realPath, err := s.virtualToReal(virtualPath)
 	if err != nil {
 		return err
@@ -351,14 +358,125 @@ func (s *LocalSandbox) ListDir(ctx context.Context, virtualPath string, maxDepth
 	return results, nil
 }
 
+// Glob finds files/directories matching pattern under virtualPath.
+func (s *LocalSandbox) Glob(ctx context.Context, virtualPath string, pattern string, includeDirs bool, maxResults int) ([]string, bool, error) {
+	_ = ctx
+	realPath, err := s.virtualToReal(virtualPath)
+	if err != nil {
+		return nil, false, err
+	}
+	if maxResults <= 0 {
+		maxResults = 200
+	}
+	matches := make([]string, 0, minInt(32, maxResults))
+	truncated := false
+
+	walkErr := filepath.WalkDir(realPath, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if path == realPath {
+			return nil
+		}
+		if d.IsDir() && !includeDirs {
+			return nil
+		}
+		rel, err := filepath.Rel(realPath, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if !matchPattern(rel, pattern) {
+			return nil
+		}
+		matches = append(matches, s.realToVirtual(path))
+		if len(matches) >= maxResults {
+			truncated = true
+			return errStopWalkLocal
+		}
+		return nil
+	})
+	if walkErr != nil && walkErr != errStopWalkLocal {
+		return nil, false, fmt.Errorf("glob %q: %w", virtualPath, walkErr)
+	}
+	sort.Strings(matches)
+	return matches, truncated, nil
+}
+
+// Grep searches matching lines under virtualPath.
+func (s *LocalSandbox) Grep(ctx context.Context, virtualPath string, pattern string, glob string, literal bool, caseSensitive bool, maxResults int) ([]sandbox.GrepMatch, bool, error) {
+	_ = ctx
+	realPath, err := s.virtualToReal(virtualPath)
+	if err != nil {
+		return nil, false, err
+	}
+	if maxResults <= 0 {
+		maxResults = 100
+	}
+	matcher, err := newLineMatcher(pattern, literal, caseSensitive)
+	if err != nil {
+		return nil, false, err
+	}
+
+	matches := make([]sandbox.GrepMatch, 0, minInt(16, maxResults))
+	truncated := false
+	walkErr := filepath.WalkDir(realPath, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(realPath, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if strings.TrimSpace(glob) != "" && !matchPattern(rel, glob) {
+			return nil
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		lineNo := 0
+		vp := s.realToVirtual(path)
+		for scanner.Scan() {
+			lineNo++
+			line := scanner.Text()
+			if !matcher(line) {
+				continue
+			}
+			matches = append(matches, sandbox.GrepMatch{Path: vp, LineNumber: lineNo, Line: line})
+			if len(matches) >= maxResults {
+				truncated = true
+				return errStopWalkLocal
+			}
+		}
+		return nil
+	})
+	if walkErr != nil && walkErr != errStopWalkLocal {
+		return nil, false, fmt.Errorf("grep %q: %w", virtualPath, walkErr)
+	}
+	return matches, truncated, nil
+}
+
 // StrReplace replaces occurrences of oldStr with newStr in the file at virtualPath.
+// If replaceAll is false, only the first occurrence is replaced.
+// Returns an error if oldStr is not found.
+// This method uses file locking to prevent concurrent write conflicts.
 func (s *LocalSandbox) StrReplace(ctx context.Context, virtualPath string, oldStr string, newStr string, replaceAll bool) error {
-	// TODO:
-	//  1. Translate virtualPath to real path.
-	//  2. ReadFile content.
-	//  3. Check oldStr is present; return error if not found.
-	//  4. strings.Replace(content, oldStr, newStr, n) where n=-1 if replaceAll else 1.
-	//  5. WriteFile the new content (no append).
+	return sandbox.WithFileLock(s.id, virtualPath, func() error {
+		return s.strReplaceLocked(ctx, virtualPath, oldStr, newStr, replaceAll)
+	})
+}
+
+// strReplaceLocked is the internal implementation of StrReplace without locking.
+// It must only be called while holding the file lock.
+func (s *LocalSandbox) strReplaceLocked(ctx context.Context, virtualPath string, oldStr string, newStr string, replaceAll bool) error {
 	realPath, err := s.virtualToReal(virtualPath)
 	if err != nil {
 		return err
@@ -377,6 +495,107 @@ func (s *LocalSandbox) StrReplace(ctx context.Context, virtualPath string, oldSt
 	}
 	newContent := strings.Replace(content, oldStr, newStr, n)
 	return os.WriteFile(realPath, []byte(newContent), 0o644)
+}
+
+// UpdateFile writes binary content to the file at virtualPath.
+// Parent directories are created automatically.
+// This method uses file locking to prevent concurrent write conflicts.
+func (s *LocalSandbox) UpdateFile(ctx context.Context, virtualPath string, content []byte) error {
+	return sandbox.WithFileLock(s.id, virtualPath, func() error {
+		return s.updateFileLocked(ctx, virtualPath, content)
+	})
+}
+
+// updateFileLocked is the internal implementation of UpdateFile without locking.
+// It must only be called while holding the file lock.
+func (s *LocalSandbox) updateFileLocked(ctx context.Context, virtualPath string, content []byte) error {
+	realPath, err := s.virtualToReal(virtualPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(realPath), 0o755); err != nil {
+		return fmt.Errorf("create parent dirs for %q: %w", virtualPath, err)
+	}
+	if err := os.WriteFile(realPath, content, 0o644); err != nil {
+		return fmt.Errorf("update file %q: %w", virtualPath, err)
+	}
+	return nil
+}
+
+var errStopWalkLocal = fmt.Errorf("stop walk")
+
+func newLineMatcher(pattern string, literal bool, caseSensitive bool) (func(string) bool, error) {
+	if literal {
+		needle := pattern
+		if caseSensitive {
+			return func(line string) bool { return strings.Contains(line, needle) }, nil
+		}
+		needle = strings.ToLower(needle)
+		return func(line string) bool { return strings.Contains(strings.ToLower(line), needle) }, nil
+	}
+	p := pattern
+	if !caseSensitive {
+		p = "(?i)" + p
+	}
+	r, err := regexp.Compile(p)
+	if err != nil {
+		return nil, err
+	}
+	return func(line string) bool { return r.MatchString(line) }, nil
+}
+
+func matchPattern(relPath, pattern string) bool {
+	rel := filepath.ToSlash(relPath)
+	p := filepath.ToSlash(strings.TrimSpace(pattern))
+	if p == "" {
+		return true
+	}
+	if strings.Contains(p, "**") {
+		re := globToRegexp(p)
+		return re.MatchString(rel)
+	}
+	ok, err := filepath.Match(p, rel)
+	if err != nil {
+		return false
+	}
+	return ok
+}
+
+func globToRegexp(pattern string) *regexp.Regexp {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		ch := pattern[i]
+		switch ch {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				b.WriteString(".*")
+				i++
+			} else {
+				b.WriteString("[^/]*")
+			}
+		case '?':
+			b.WriteString("[^/]")
+		case '.', '(', ')', '+', '|', '^', '$', '{', '}', '[', ']', '\\':
+			b.WriteString("\\")
+			b.WriteByte(ch)
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	b.WriteString("$")
+	r, err := regexp.Compile(b.String())
+	if err != nil {
+		return regexp.MustCompile("^$")
+	}
+	return r
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // ---------------------------------------------------------------------------

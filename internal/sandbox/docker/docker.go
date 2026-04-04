@@ -18,13 +18,17 @@
 package docker
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -38,9 +42,9 @@ import (
 	"github.com/bookerbai/goclaw/internal/sandbox"
 )
 
-// containerNamePrefix is prepended to the thread ID to form the container name.
-// Using a deterministic name lets us find existing containers after a restart.
-const containerNamePrefix = "goclaw-sandbox-"
+// defaultContainerNamePrefix is prepended to thread IDs when no custom prefix is configured.
+// Using deterministic names lets us find existing containers after process restarts.
+const defaultContainerNamePrefix = "goclaw-sandbox-"
 
 // containerStopTimeout is passed to ContainerStop when removing containers.
 const containerStopTimeout = 10 * time.Second
@@ -66,9 +70,20 @@ func (s *DockerSandbox) ID() string {
 	return s.id
 }
 
+func effectiveContainerPrefix(cfg sandbox.SandboxConfig) string {
+	prefix := strings.TrimSpace(cfg.Docker.ContainerPrefix)
+	if prefix == "" {
+		return defaultContainerNamePrefix
+	}
+	if strings.HasSuffix(prefix, "-") {
+		return prefix
+	}
+	return prefix + "-"
+}
+
 // containerName returns the deterministic Docker container name for this thread.
-func containerName(threadID string) string {
-	return containerNamePrefix + threadID
+func containerName(cfg sandbox.SandboxConfig, threadID string) string {
+	return effectiveContainerPrefix(cfg) + threadID
 }
 
 // virtualToContainerPath translates a virtual /mnt/user-data/... path into the
@@ -179,7 +194,15 @@ func (s *DockerSandbox) ReadFile(ctx context.Context, virtualPath string) (strin
 }
 
 // WriteFile writes content to a file inside the container.
+// This method uses file locking to prevent concurrent write conflicts.
 func (s *DockerSandbox) WriteFile(ctx context.Context, virtualPath string, content string, appendMode bool) error {
+	return sandbox.WithFileLock(s.id, virtualPath, func() error {
+		return s.writeFileLocked(ctx, virtualPath, content, appendMode)
+	})
+}
+
+// writeFileLocked is the internal implementation of WriteFile without locking.
+func (s *DockerSandbox) writeFileLocked(ctx context.Context, virtualPath string, content string, appendMode bool) error {
 	containerPath, err := virtualToContainerPath(virtualPath)
 	if err != nil {
 		return err
@@ -260,12 +283,121 @@ func (s *DockerSandbox) ListDir(ctx context.Context, virtualPath string, maxDept
 	return infos, nil
 }
 
+// Glob finds files/directories matching pattern under virtualPath.
+func (s *DockerSandbox) Glob(ctx context.Context, virtualPath string, pattern string, includeDirs bool, maxResults int) ([]string, bool, error) {
+	_ = ctx
+	hostRoot, err := s.virtualToHostPath(virtualPath)
+	if err != nil {
+		return nil, false, err
+	}
+	if maxResults <= 0 {
+		maxResults = 200
+	}
+	matches := make([]string, 0, minIntDocker(32, maxResults))
+	truncated := false
+	walkErr := filepath.WalkDir(hostRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if path == hostRoot {
+			return nil
+		}
+		if d.IsDir() && !includeDirs {
+			return nil
+		}
+		rel, err := filepath.Rel(hostRoot, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if !matchPatternDocker(rel, pattern) {
+			return nil
+		}
+		matches = append(matches, joinVirtualPath(virtualPath, rel))
+		if len(matches) >= maxResults {
+			truncated = true
+			return errStopWalkDocker
+		}
+		return nil
+	})
+	if walkErr != nil && walkErr != errStopWalkDocker {
+		return nil, false, fmt.Errorf("glob %q: %w", virtualPath, walkErr)
+	}
+	sort.Strings(matches)
+	return matches, truncated, nil
+}
+
+// Grep searches matching lines under virtualPath.
+func (s *DockerSandbox) Grep(ctx context.Context, virtualPath string, pattern string, glob string, literal bool, caseSensitive bool, maxResults int) ([]sandbox.GrepMatch, bool, error) {
+	_ = ctx
+	hostRoot, err := s.virtualToHostPath(virtualPath)
+	if err != nil {
+		return nil, false, err
+	}
+	if maxResults <= 0 {
+		maxResults = 100
+	}
+	matcher, err := newLineMatcherDocker(pattern, literal, caseSensitive)
+	if err != nil {
+		return nil, false, err
+	}
+
+	matches := make([]sandbox.GrepMatch, 0, minIntDocker(16, maxResults))
+	truncated := false
+	walkErr := filepath.WalkDir(hostRoot, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(hostRoot, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if strings.TrimSpace(glob) != "" && !matchPatternDocker(rel, glob) {
+			return nil
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		lineNo := 0
+		vp := joinVirtualPath(virtualPath, rel)
+		for scanner.Scan() {
+			lineNo++
+			line := scanner.Text()
+			if !matcher(line) {
+				continue
+			}
+			matches = append(matches, sandbox.GrepMatch{Path: vp, LineNumber: lineNo, Line: line})
+			if len(matches) >= maxResults {
+				truncated = true
+				return errStopWalkDocker
+			}
+		}
+		return nil
+	})
+	if walkErr != nil && walkErr != errStopWalkDocker {
+		return nil, false, fmt.Errorf("grep %q: %w", virtualPath, walkErr)
+	}
+	return matches, truncated, nil
+}
+
 // StrReplace replaces a string inside a file in the container.
+// This method uses file locking to prevent concurrent write conflicts.
 func (s *DockerSandbox) StrReplace(ctx context.Context, virtualPath string, oldStr string, newStr string, replaceAll bool) error {
-	// TODO:
-	//  1. ReadFile to get content.
-	//  2. Perform the replacement in Go (same logic as LocalSandbox).
-	//  3. WriteFile with the new content.
+	return sandbox.WithFileLock(s.id, virtualPath, func() error {
+		return s.strReplaceLocked(ctx, virtualPath, oldStr, newStr, replaceAll)
+	})
+}
+
+// strReplaceLocked is the internal implementation of StrReplace without locking.
+func (s *DockerSandbox) strReplaceLocked(ctx context.Context, virtualPath string, oldStr string, newStr string, replaceAll bool) error {
 	content, err := s.ReadFile(ctx, virtualPath)
 	if err != nil {
 		return err
@@ -278,7 +410,163 @@ func (s *DockerSandbox) StrReplace(ctx context.Context, virtualPath string, oldS
 		n = -1
 	}
 	newContent := strings.Replace(content, oldStr, newStr, n)
-	return s.WriteFile(ctx, virtualPath, newContent, false)
+	return s.writeFileLocked(ctx, virtualPath, newContent, false)
+}
+
+// UpdateFile writes binary content to a file inside the container.
+// Parent directories are created automatically.
+// This method uses file locking to prevent concurrent write conflicts.
+func (s *DockerSandbox) UpdateFile(ctx context.Context, virtualPath string, content []byte) error {
+	return sandbox.WithFileLock(s.id, virtualPath, func() error {
+		return s.updateFileLocked(ctx, virtualPath, content)
+	})
+}
+
+// updateFileLocked is the internal implementation of UpdateFile without locking.
+func (s *DockerSandbox) updateFileLocked(ctx context.Context, virtualPath string, content []byte) error {
+	containerPath, err := virtualToContainerPath(virtualPath)
+	if err != nil {
+		return err
+	}
+	dir := filepath.ToSlash(filepath.Dir(containerPath))
+	// Use base64 encoding to safely handle binary data.
+	encoded := base64.StdEncoding.EncodeToString(content)
+	cmd := fmt.Sprintf("mkdir -p %s && echo %s | base64 -d > %s",
+		shellQuote(dir), shellQuote(encoded), shellQuote(containerPath))
+	result, execErr := s.Execute(ctx, cmd)
+	if execErr != nil {
+		return execErr
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("update file %q: %s", virtualPath, result.Stderr)
+	}
+	return nil
+}
+
+var errStopWalkDocker = fmt.Errorf("stop walk")
+
+func (s *DockerSandbox) virtualToHostPath(virtualPath string) (string, error) {
+	if err := rejectPathTraversal(virtualPath); err != nil {
+		return "", err
+	}
+	prefix := sandbox.VirtualPathPrefix
+	if virtualPath == prefix {
+		return filepath.Clean(s.baseDir), nil
+	}
+	if !strings.HasPrefix(virtualPath, prefix+"/") {
+		return "", fmt.Errorf("path %q is outside allowed virtual prefix %s", virtualPath, prefix)
+	}
+	rel := strings.TrimPrefix(virtualPath, prefix+"/")
+	host := filepath.Join(s.baseDir, rel)
+	host = filepath.Clean(host)
+	base := filepath.Clean(s.baseDir)
+	if host != base && !strings.HasPrefix(host, base+string(os.PathSeparator)) {
+		return "", fmt.Errorf("access denied: path traversal detected")
+	}
+	return host, nil
+}
+
+func joinVirtualPath(rootVirtual string, rel string) string {
+	root := strings.TrimSuffix(filepath.ToSlash(rootVirtual), "/")
+	r := strings.TrimPrefix(filepath.ToSlash(rel), "./")
+	r = strings.TrimPrefix(r, "/")
+	if r == "" {
+		return root
+	}
+	return root + "/" + r
+}
+
+func newLineMatcherDocker(pattern string, literal bool, caseSensitive bool) (func(string) bool, error) {
+	if literal {
+		needle := pattern
+		if caseSensitive {
+			return func(line string) bool { return strings.Contains(line, needle) }, nil
+		}
+		needle = strings.ToLower(needle)
+		return func(line string) bool { return strings.Contains(strings.ToLower(line), needle) }, nil
+	}
+	p := pattern
+	if !caseSensitive {
+		p = "(?i)" + p
+	}
+	r, err := regexp.Compile(p)
+	if err != nil {
+		return nil, err
+	}
+	return func(line string) bool { return r.MatchString(line) }, nil
+}
+
+func matchPatternDocker(relPath, pattern string) bool {
+	rel := filepath.ToSlash(relPath)
+	p := filepath.ToSlash(strings.TrimSpace(pattern))
+	if p == "" {
+		return true
+	}
+	if strings.Contains(p, "**") {
+		re := globToRegexpDocker(p)
+		return re.MatchString(rel)
+	}
+	ok, err := filepath.Match(p, rel)
+	if err != nil {
+		return false
+	}
+	return ok
+}
+
+func globToRegexpDocker(pattern string) *regexp.Regexp {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		ch := pattern[i]
+		switch ch {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				b.WriteString(".*")
+				i++
+			} else {
+				b.WriteString("[^/]*")
+			}
+		case '?':
+			b.WriteString("[^/]")
+		case '.', '(', ')', '+', '|', '^', '$', '{', '}', '[', ']', '\\':
+			b.WriteString("\\")
+			b.WriteByte(ch)
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	b.WriteString("$")
+	r, err := regexp.Compile(b.String())
+	if err != nil {
+		return regexp.MustCompile("^$")
+	}
+	return r
+}
+
+func minIntDocker(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func buildContainerEnv(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s=%s", k, env[k]))
+	}
+	return out
 }
 
 // ensureContainerRunning starts the container if it is stopped, or creates it
@@ -334,6 +622,22 @@ func (s *DockerSandbox) createContainer(ctx context.Context) error {
 			ReadOnly: true,
 		})
 	}
+	for _, vm := range s.cfg.Docker.Mounts {
+		hostPath := filepath.Clean(strings.TrimSpace(vm.HostPath))
+		containerPath := filepath.ToSlash(strings.TrimSpace(vm.ContainerPath))
+		if hostPath == "" || containerPath == "" {
+			continue
+		}
+		if err := os.MkdirAll(hostPath, 0o755); err != nil {
+			return fmt.Errorf("create mount dir %q: %w", hostPath, err)
+		}
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   hostPath,
+			Target:   containerPath,
+			ReadOnly: vm.ReadOnly,
+		})
+	}
 
 	dockerCfg := &container.Config{
 		Image:      s.cfg.Docker.Image,
@@ -341,6 +645,7 @@ func (s *DockerSandbox) createContainer(ctx context.Context) error {
 		Tty:        false,
 		// Keep the container alive with a no-op command.
 		Cmd: []string{"sleep", "infinity"},
+		Env: buildContainerEnv(s.cfg.Docker.Environment),
 	}
 	resources := container.Resources{}
 	if s.cfg.Docker.CPUQuota > 0 {
@@ -358,7 +663,7 @@ func (s *DockerSandbox) createContainer(ctx context.Context) error {
 		hostCfg.NetworkMode = "none"
 	}
 
-	name := containerName(s.threadID)
+	name := s.id
 	resp, err := s.client.ContainerCreate(ctx, dockerCfg, hostCfg, nil, nil, name)
 	if err != nil {
 		return fmt.Errorf("create container %q: %w", name, err)
@@ -430,7 +735,7 @@ func (p *DockerSandboxProvider) Acquire(ctx context.Context, threadID string) (s
 	//  4. Otherwise create a new DockerSandbox (do NOT call createContainer yet –
 	//     that happens lazily inside Execute/ensureContainerRunning).
 	//  5. Store in p.pool, unlock, return sandboxID.
-	sandboxID := containerName(threadID)
+	sandboxID := containerName(p.cfg, threadID)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
