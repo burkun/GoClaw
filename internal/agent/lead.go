@@ -90,6 +90,9 @@ type RunConfig struct {
 	AgentName              string
 	// RunID is set by the gateway and used to tag events for consistent tracking.
 	RunID string
+	// AvailableSkills is an optional set of skill names to make available.
+	// If nil, all enabled skills are available.
+	AvailableSkills map[string]bool
 }
 
 type LeadAgent interface {
@@ -193,7 +196,8 @@ func New(ctx context.Context) (*leadAgent, error) {
 	mws := buildMiddlewares(RunConfig{})
 
 	// Build system prompt with skills (P0 fix)
-	instruction := buildSystemPrompt("", skillRegistry)
+	// Default agent has all skills available (nil = no filter)
+	instruction := buildSystemPrompt("", skillRegistry, nil)
 
 	a, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        "lead_agent",
@@ -362,8 +366,17 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 
 	mws := buildMiddlewares(RunConfig{AgentName: agentName})
 
+	// Build availableSkills map from agent config
+	var availableSkills map[string]bool
+	if len(agentSkills) > 0 {
+		availableSkills = make(map[string]bool)
+		for _, skill := range agentSkills {
+			availableSkills[skill] = true
+		}
+	}
+
 	// Build system prompt with SOUL.md and skills (P0 fix)
-	instruction := buildSystemPrompt(agentSoul, skillRegistry)
+	instruction := buildSystemPrompt(agentSoul, skillRegistry, availableSkills)
 
 	a, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:        "lead_agent",
@@ -1406,7 +1419,8 @@ func filterToolsByToolGroups(ctx context.Context, tools []lcTool.BaseTool, group
 }
 
 // buildSystemPrompt builds the system prompt with optional SOUL.md content and skills (P1 fix).
-func buildSystemPrompt(soul string, skillRegistry *skillsruntime.Registry) string {
+// If availableSkills is not nil, only skills in the set are included in the prompt.
+func buildSystemPrompt(soul string, skillRegistry *skillsruntime.Registry, availableSkills map[string]bool) string {
 	basePrompt := "You are GoClaw lead agent."
 
 	var parts []string
@@ -1414,7 +1428,7 @@ func buildSystemPrompt(soul string, skillRegistry *skillsruntime.Registry) strin
 
 	// Inject skills prompt section (P0 fix)
 	if skillRegistry != nil {
-		if skillsSection := skillRegistry.GetSkillsPromptSection(); skillsSection != "" {
+		if skillsSection := skillRegistry.GetSkillsPromptSection(availableSkills); skillsSection != "" {
 			parts = append(parts, skillsSection)
 		}
 	}

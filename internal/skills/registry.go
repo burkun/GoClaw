@@ -113,9 +113,25 @@ func (r *Registry) OnConfigReload(cfg *config.AppConfig) error {
 
 // GetSkillsPromptSection returns a formatted string for system prompt injection.
 // It includes the name and description of all enabled skills.
+// If availableSkills is not nil, only skills in the set are included.
 // This mirrors DeerFlow's get_skills_prompt_section() functionality.
-func (r *Registry) GetSkillsPromptSection() string {
+func (r *Registry) GetSkillsPromptSection(availableSkills map[string]bool) string {
 	skills := r.List()
+	if len(skills) == 0 {
+		return ""
+	}
+
+	// Filter by availableSkills if specified
+	if availableSkills != nil {
+		filtered := make([]*Skill, 0, len(skills))
+		for _, skill := range skills {
+			if availableSkills[skill.Metadata.Name] {
+				filtered = append(filtered, skill)
+			}
+		}
+		skills = filtered
+	}
+
 	if len(skills) == 0 {
 		return ""
 	}
