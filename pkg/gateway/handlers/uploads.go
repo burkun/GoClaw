@@ -180,3 +180,97 @@ func (h *UploadsHandler) UploadFiles(c *gin.Context) {
 		Message: fmt.Sprintf("Successfully uploaded %d file(s)", len(uploaded)),
 	})
 }
+
+// ListUploadedFiles handles GET /api/threads/:thread_id/uploads/list.
+// Returns a list of all files in the thread's uploads directory.
+func (h *UploadsHandler) ListUploadedFiles(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	if err := validateThreadID(threadID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	uploadsDir := filepath.Join(".goclaw", "threads", threadID, "user-data", "uploads")
+	entries, err := os.ReadDir(uploadsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusOK, gin.H{"files": []interface{}{}})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read uploads directory"})
+		return
+	}
+
+	var files []map[string]interface{}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, map[string]interface{}{
+			"filename":     entry.Name(),
+			"size":         info.Size(),
+			"virtual_path": "/mnt/user-data/uploads/" + entry.Name(),
+			"modified_at":  info.ModTime().Unix(),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"files": files, "count": len(files)})
+}
+
+// DeleteUploadedFile handles DELETE /api/threads/:thread_id/uploads/:filename.
+// Removes a specific file from the thread's uploads directory.
+func (h *UploadsHandler) DeleteUploadedFile(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	if err := validateThreadID(threadID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	filename := c.Param("filename")
+	if filename == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "filename is required"})
+		return
+	}
+
+	safeName, err := sanitiseFilename(filename)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	uploadsDir := filepath.Join(".goclaw", "threads", threadID, "user-data", "uploads")
+	hostPath := filepath.Join(uploadsDir, safeName)
+
+	// Also delete converted markdown if exists
+	mdPath := hostPath + ".md"
+	_ = os.Remove(mdPath)
+
+	if err := os.Remove(hostPath); err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete file"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"filename": safeName,
+		"message":  "File deleted successfully",
+	})
+}

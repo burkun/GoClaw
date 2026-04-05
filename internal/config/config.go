@@ -94,6 +94,9 @@ type AppConfig struct {
 	// Extensions holds MCP server and skill enablement state loaded from
 	// extensions_config.json (or extensions.json).
 	Extensions ExtensionsConfig `yaml:"-"` // populated separately
+
+	// ToolSearch configures lazy loading of MCP tools.
+	ToolSearch ToolSearchConfig `yaml:"tool_search,omitempty"`
 }
 
 // GetModelConfig returns the ModelConfig with the given name, or nil if not found.
@@ -411,16 +414,24 @@ type GuardrailsConfig struct {
 	Provider *GuardrailProviderConfig `yaml:"provider,omitempty"`
 }
 
+// ToolSearchConfig configures lazy loading of MCP tools.
+// When enabled, MCP tools are loaded on-demand rather than at startup.
+type ToolSearchConfig struct {
+	// Enabled controls whether MCP tool lazy loading is active.
+	Enabled bool `yaml:"enabled"`
+}
+
 // ---------------------------------------------------------------------------
 // TitleConfig / SummarizationConfig / SubagentsConfig
 // ---------------------------------------------------------------------------
 
 // TitleConfig configures automatic conversation title generation.
 type TitleConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	MaxWords  int    `yaml:"max_words,omitempty"`
-	MaxChars  int    `yaml:"max_chars,omitempty"`
-	ModelName string `yaml:"model_name,omitempty"`
+	Enabled        bool   `yaml:"enabled"`
+	MaxWords       int    `yaml:"max_words,omitempty"`
+	MaxChars       int    `yaml:"max_chars,omitempty"`
+	ModelName      string `yaml:"model_name,omitempty"`
+	PromptTemplate string `yaml:"prompt_template,omitempty"` // Custom title generation prompt
 }
 
 // SummarizationTrigger defines a single summarization trigger condition.

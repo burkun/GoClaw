@@ -189,6 +189,10 @@ func (s *Server) registerRoutes() {
 
 			// POST /api/threads/:thread_id/uploads — receive multipart files.
 			threads.POST("/uploads", uploadsH.UploadFiles)
+			// GET /api/threads/:thread_id/uploads/list — list uploaded files.
+			threads.GET("/uploads/list", uploadsH.ListUploadedFiles)
+			// DELETE /api/threads/:thread_id/uploads/:filename — delete uploaded file.
+			threads.DELETE("/uploads/:filename", uploadsH.DeleteUploadedFile)
 
 			// GET /api/threads/:thread_id/artifacts/*path — download artifacts.
 			threads.GET("/artifacts/*path", artifactsH.GetArtifact)
