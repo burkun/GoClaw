@@ -161,8 +161,15 @@ func (c *Channel) Stop(_ context.Context) error {
 	return nil
 }
 
-// Send sends an outgoing message to Telegram.
+// Send sends an outgoing message to Telegram with retry support.
 func (c *Channel) Send(ctx context.Context, msg channels.OutgoingMessage) error {
+	return channels.Retry(ctx, channels.DefaultRetryConfig(), func() error {
+		return c.sendOnce(ctx, msg)
+	})
+}
+
+// sendOnce is the internal implementation of Send without retry.
+func (c *Channel) sendOnce(ctx context.Context, msg channels.OutgoingMessage) error {
 	c.mu.RLock()
 	bot := c.bot
 	started := c.started

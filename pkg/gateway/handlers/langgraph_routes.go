@@ -394,15 +394,38 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 		return
 	}
 
-	// Stream events.
-	for ev := range eventChan {
-		events := converter.Convert(ev)
-		for _, sseEv := range events {
-			if err := WriteLangGraphSSE(w, sseEv); err != nil {
+	// Stream events with heartbeat support.
+	// Use a ticker to send heartbeat messages when no events are received.
+	heartbeatTicker := time.NewTicker(HeartbeatInterval)
+	defer heartbeatTicker.Stop()
+
+streamLoop:
+	for {
+		select {
+		case ev, ok := <-eventChan:
+			if !ok {
+				break streamLoop
+			}
+			events := converter.Convert(ev)
+			for _, sseEv := range events {
+				if err := WriteLangGraphSSE(w, sseEv); err != nil {
+					return
+				}
+			}
+			w.Flush()
+			// Reset heartbeat timer after sending events
+			heartbeatTicker.Reset(HeartbeatInterval)
+
+		case <-heartbeatTicker.C:
+			// Send heartbeat to keep connection alive
+			if err := WriteSSEHeartbeat(w); err != nil {
 				return
 			}
+			w.Flush()
+
+		case <-runCtx.Done():
+			break streamLoop
 		}
-		w.Flush()
 	}
 }
 

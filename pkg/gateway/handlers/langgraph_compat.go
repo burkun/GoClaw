@@ -354,6 +354,20 @@ func WriteLangGraphSSE(w io.Writer, ev LangGraphSSEEvent) error {
 	return nil
 }
 
+// WriteSSEHeartbeat writes an SSE heartbeat (comment) to keep the connection alive.
+// Format: `: heartbeat\n\n`
+// This is an SSE comment that browsers ignore but keeps the connection active.
+func WriteSSEHeartbeat(w io.Writer) error {
+	if _, err := fmt.Fprint(w, ": heartbeat\n\n"); err != nil {
+		return fmt.Errorf("write SSE heartbeat: %w", err)
+	}
+	return nil
+}
+
+// HeartbeatInterval is the default interval between heartbeat messages.
+// Aligned with DeerFlow's 15 second interval.
+const HeartbeatInterval = 15 * time.Second
+
 // ConvertSchemaMessageToLangGraph converts a schema.Message to LangGraph message format.
 func ConvertSchemaMessageToLangGraph(msg *schema.Message) LangGraphMessage {
 	if msg == nil {

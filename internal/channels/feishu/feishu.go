@@ -249,10 +249,17 @@ func (c *Channel) Stop(_ context.Context) error {
 	return nil
 }
 
-// Send sends an outgoing message to Feishu.
+// Send sends an outgoing message to Feishu with retry support.
 // It mirrors DeerFlow's behavior: when source_message_id exists, update a running card;
 // otherwise create a new card in chat.
 func (c *Channel) Send(ctx context.Context, msg channels.OutgoingMessage) error {
+	return channels.Retry(ctx, channels.DefaultRetryConfig(), func() error {
+		return c.sendOnce(ctx, msg)
+	})
+}
+
+// sendOnce is the internal implementation of Send without retry.
+func (c *Channel) sendOnce(ctx context.Context, msg channels.OutgoingMessage) error {
 	c.mu.RLock()
 	client := c.client
 	started := c.started
