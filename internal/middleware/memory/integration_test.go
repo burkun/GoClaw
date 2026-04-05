@@ -80,7 +80,7 @@ func TestMemoryIntegration_BeforeInjectsLatest15Facts(t *testing.T) {
 	mw := NewMemoryMiddleware(store, q, "")
 
 	state := &middleware.State{ThreadID: "thread-int-3", Messages: []map[string]any{{"role": "system", "content": "You are helpful."}}}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Fatalf("Before() failed: %v", err)
 	}
 
@@ -104,7 +104,7 @@ func TestMemoryIntegration_Before_RespectsInjectionEnabled(t *testing.T) {
 	mw := NewMemoryMiddleware(store, q, "", WithInjectionEnabled(false))
 
 	state := &middleware.State{ThreadID: "thread-int-4", Messages: []map[string]any{{"role": "system", "content": "You are helpful."}}}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Fatalf("Before() failed: %v", err)
 	}
 

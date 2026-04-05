@@ -192,7 +192,7 @@ func TestAfter_parseWriteTodos(t *testing.T) {
 		},
 	}
 
-	err := mw.After(context.Background(), state, response)
+	err := mw.AfterModel(context.Background(), state, response)
 	if err != nil {
 		t.Fatalf("After returned unexpected error: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestAfter_ignoredInvalidJSON(t *testing.T) {
 		},
 	}
 
-	err := mw.After(context.Background(), state, response)
+	err := mw.AfterModel(context.Background(), state, response)
 	if err != nil {
 		t.Fatalf("After should not return error on invalid JSON: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestBefore_contextLossReminder(t *testing.T) {
 		},
 	}
 
-	err := mw.Before(context.Background(), state)
+	err := mw.BeforeModel(context.Background(), state)
 	if err != nil {
 		t.Fatalf("Before returned error: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestBefore_noReminderWhenWriteTodosPresent(t *testing.T) {
 		},
 	}
 
-	err := mw.Before(context.Background(), state)
+	err := mw.BeforeModel(context.Background(), state)
 	if err != nil {
 		t.Fatalf("Before returned error: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestBefore_noReminderWhenAlreadyPresent(t *testing.T) {
 		},
 	}
 
-	err := mw.Before(context.Background(), state)
+	err := mw.BeforeModel(context.Background(), state)
 	if err != nil {
 		t.Fatalf("Before returned error: %v", err)
 	}

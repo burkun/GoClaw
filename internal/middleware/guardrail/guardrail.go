@@ -86,9 +86,9 @@ func NewGuardrailMiddleware(cfg Config) *GuardrailMiddleware {
 // Name implements middleware.Middleware.
 func (m *GuardrailMiddleware) Name() string { return "GuardrailMiddleware" }
 
-// Before checks authorization for pending tool calls (legacy support).
+// BeforeModel checks authorization for pending tool calls (legacy support).
 // This is kept for backward compatibility with code that uses pending_tool_calls.
-func (m *GuardrailMiddleware) Before(_ context.Context, state *middleware.State) error {
+func (m *GuardrailMiddleware) BeforeModel(_ context.Context, state *middleware.State) error {
 	if !m.cfg.Enabled || state == nil || state.Extra == nil {
 		return nil
 	}
@@ -101,8 +101,8 @@ func (m *GuardrailMiddleware) Before(_ context.Context, state *middleware.State)
 	return nil
 }
 
-// After applies authorization checks to current response tool calls (legacy support).
-func (m *GuardrailMiddleware) After(_ context.Context, state *middleware.State, resp *middleware.Response) error {
+// AfterModel applies authorization checks to current response tool calls (legacy support).
+func (m *GuardrailMiddleware) AfterModel(_ context.Context, state *middleware.State, resp *middleware.Response) error {
 	if !m.cfg.Enabled || resp == nil || len(resp.ToolCalls) == 0 {
 		return nil
 	}

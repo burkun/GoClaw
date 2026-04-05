@@ -104,12 +104,12 @@ func NewSummarizationMiddleware(cfg Config, summ Summarizer) *SummarizationMiddl
 // Name implements middleware.Middleware.
 func (s *SummarizationMiddleware) Name() string { return "SummarizationMiddleware" }
 
-// After is a no-op for SummarizationMiddleware.
-func (s *SummarizationMiddleware) After(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
+// AfterModel is a no-op for SummarizationMiddleware.
+func (s *SummarizationMiddleware) AfterModel(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
 	return nil
 }
 
-// Before checks whether the token budget has been exceeded and, if so,
+// BeforeModel checks whether the token budget has been exceeded and, if so,
 // compresses older messages into a summary.
 //
 // Implementation steps:
@@ -129,7 +129,7 @@ func (s *SummarizationMiddleware) After(_ context.Context, _ *middleware.State, 
 //     content = SummarySentinel + "\n" + summaryText
 //  9. Replace state.Messages with [summaryMsg] + recent.
 // 10. Update state.TokenCount = estimateTokens(state.Messages).
-func (s *SummarizationMiddleware) Before(ctx context.Context, state *middleware.State) error {
+func (s *SummarizationMiddleware) BeforeModel(ctx context.Context, state *middleware.State) error {
 	// TODO: implement all 10 steps above.
 
 	if !s.cfg.Enabled {

@@ -56,7 +56,7 @@ func (a *EinoMiddlewareAdapter) BeforeAgent(ctx context.Context, runCtx *adk.Cha
 func (a *EinoMiddlewareAdapter) BeforeModelRewriteState(ctx context.Context, state *adk.ChatModelAgentState, mc *adk.ModelContext) (context.Context, *adk.ChatModelAgentState, error) {
 	mwState := toMiddlewareStateFromADK(state)
 
-	if err := a.mw.Before(ctx, mwState); err != nil {
+	if err := a.mw.BeforeModel(ctx, mwState); err != nil {
 		return ctx, state, err
 	}
 
@@ -79,7 +79,7 @@ func (a *EinoMiddlewareAdapter) AfterModelRewriteState(ctx context.Context, stat
 
 	resp := toMiddlewareResponseFromADK(state)
 
-	if err := a.mw.After(ctx, mwState, resp); err != nil {
+	if err := a.mw.AfterModel(ctx, mwState, resp); err != nil {
 		// After errors are non-fatal, log them but continue
 		// TODO: use proper logging
 		_ = err

@@ -12,7 +12,7 @@ func TestLLMErrorHandlingMiddleware_After_WithError(t *testing.T) {
 	mw := NewLLMErrorHandlingMiddleware(3)
 	state := &middleware.State{Extra: map[string]any{}}
 	resp := &middleware.Response{ToolCalls: []map[string]any{{"id": "1", "name": "bash", "error": "permission denied"}}}
-	if err := mw.After(context.Background(), state, resp); err != nil {
+	if err := mw.AfterModel(context.Background(), state, resp); err != nil {
 		t.Fatalf("after returned error: %v", err)
 	}
 	tc := resp.ToolCalls[0]
@@ -32,7 +32,7 @@ func TestLLMErrorHandlingMiddleware_After_MaxRetries(t *testing.T) {
 	mw := NewLLMErrorHandlingMiddleware(1)
 	state := &middleware.State{Extra: map[string]any{"tool_retry_1": 1}}
 	resp := &middleware.Response{ToolCalls: []map[string]any{{"id": "1", "name": "bash", "error": "timeout"}}}
-	if err := mw.After(context.Background(), state, resp); err != nil {
+	if err := mw.AfterModel(context.Background(), state, resp); err != nil {
 		t.Fatalf("after returned error: %v", err)
 	}
 	tc := resp.ToolCalls[0]

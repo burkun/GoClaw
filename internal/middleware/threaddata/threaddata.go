@@ -45,8 +45,8 @@ func (m *ThreadDataMiddleware) Name() string {
 	return "ThreadDataMiddleware"
 }
 
-// Before ensures thread directories exist, then populates state.Extra with resolved paths.
-func (m *ThreadDataMiddleware) Before(_ context.Context, state *middleware.State) error {
+// BeforeModel ensures thread directories exist, then populates state.Extra with resolved paths.
+func (m *ThreadDataMiddleware) BeforeModel(_ context.Context, state *middleware.State) error {
 	threadDir := filepath.Join(m.cfg.BaseDir, state.ThreadID, "user-data")
 	dirs := []string{
 		filepath.Join(threadDir, "workspace"),
@@ -69,8 +69,8 @@ func (m *ThreadDataMiddleware) Before(_ context.Context, state *middleware.State
 	return nil
 }
 
-// After is a no-op for ThreadDataMiddleware.
-func (m *ThreadDataMiddleware) After(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
+// AfterModel is a no-op for ThreadDataMiddleware.
+func (m *ThreadDataMiddleware) AfterModel(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
 	return nil
 }
 

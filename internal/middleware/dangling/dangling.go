@@ -33,9 +33,9 @@ func (m *DanglingToolCallMiddleware) Name() string {
 	return "DanglingToolCallMiddleware"
 }
 
-// Before scans the tail of Messages for assistant messages with tool_calls
+// BeforeModel scans the tail of Messages for assistant messages with tool_calls
 // that lack corresponding tool_message responses and inserts placeholders.
-func (m *DanglingToolCallMiddleware) Before(_ context.Context, state *middleware.State) error {
+func (m *DanglingToolCallMiddleware) BeforeModel(_ context.Context, state *middleware.State) error {
 	if len(state.Messages) == 0 {
 		return nil
 	}
@@ -98,8 +98,8 @@ func (m *DanglingToolCallMiddleware) Before(_ context.Context, state *middleware
 	return nil
 }
 
-// After is a no-op.
-func (m *DanglingToolCallMiddleware) After(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
+// AfterModel is a no-op.
+func (m *DanglingToolCallMiddleware) AfterModel(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
 	return nil
 }
 

@@ -22,7 +22,7 @@ func TestSandboxAuditMiddleware_After_SandboxTool(t *testing.T) {
 		"args":        map[string]any{"command": "ls -la"},
 		"duration_ms": float64(12),
 	}}}
-	if err := mw.After(context.Background(), state, resp); err != nil {
+	if err := mw.AfterModel(context.Background(), state, resp); err != nil {
 		t.Fatalf("after returned error: %v", err)
 	}
 	if len(logger.entries) != 1 {
@@ -37,7 +37,7 @@ func TestSandboxAuditMiddleware_After_NonSandboxIgnored(t *testing.T) {
 	logger := &captureLogger{}
 	mw := NewSandboxAuditMiddleware(logger)
 	resp := &middleware.Response{ToolCalls: []map[string]any{{"name": "web_search"}}}
-	if err := mw.After(context.Background(), &middleware.State{}, resp); err != nil {
+	if err := mw.AfterModel(context.Background(), &middleware.State{}, resp); err != nil {
 		t.Fatalf("after returned error: %v", err)
 	}
 	if len(logger.entries) != 0 {

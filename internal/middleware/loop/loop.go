@@ -49,14 +49,14 @@ func (m *LoopDetectionMiddleware) Name() string {
 	return "LoopDetectionMiddleware"
 }
 
-// Before is a no-op; detection happens in After.
-func (m *LoopDetectionMiddleware) Before(_ context.Context, _ *middleware.State) error {
+// BeforeModel is a no-op; detection happens in AfterModel.
+func (m *LoopDetectionMiddleware) BeforeModel(_ context.Context, _ *middleware.State) error {
 	return nil
 }
 
-// After checks the most recent tool calls from Response and inserts a system
+// AfterModel checks the most recent tool calls from Response and inserts a system
 // reminder if the same call has been repeated cfg.MaxRepeats times.
-func (m *LoopDetectionMiddleware) After(_ context.Context, state *middleware.State, resp *middleware.Response) error {
+func (m *LoopDetectionMiddleware) AfterModel(_ context.Context, state *middleware.State, resp *middleware.Response) error {
 	if len(resp.ToolCalls) == 0 {
 		return nil
 	}

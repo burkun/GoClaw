@@ -87,10 +87,10 @@ func NewTitleMiddleware(cfg Config, gen TitleGenerator) *TitleMiddleware {
 // Name implements middleware.Middleware.
 func (t *TitleMiddleware) Name() string { return "TitleMiddleware" }
 
-// Before is a no-op for TitleMiddleware — title generation happens After.
-func (t *TitleMiddleware) Before(_ context.Context, _ *middleware.State) error { return nil }
+// BeforeModel is a no-op for TitleMiddleware — title generation happens AfterModel.
+func (t *TitleMiddleware) BeforeModel(_ context.Context, _ *middleware.State) error { return nil }
 
-// After generates the conversation title and writes it to state.Title.
+// AfterModel generates the conversation title and writes it to state.Title.
 //
 // Implementation steps:
 //  1. Return early if !t.cfg.Enabled || state.Title != "" (already set).
@@ -105,7 +105,7 @@ func (t *TitleMiddleware) Before(_ context.Context, _ *middleware.State) error {
 //     Truncate to MaxTitleChars.
 //  8. If cleaned title is empty, use fallback.
 //  9. Set state.Title = title.
-func (t *TitleMiddleware) After(ctx context.Context, state *middleware.State, _ *middleware.Response) error {
+func (t *TitleMiddleware) AfterModel(ctx context.Context, state *middleware.State, _ *middleware.Response) error {
 	// TODO: implement all 9 steps above.
 	if !t.cfg.Enabled || state.Title != "" {
 		return nil

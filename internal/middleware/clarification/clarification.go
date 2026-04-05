@@ -27,8 +27,8 @@ func NewClarificationMiddleware() *ClarificationMiddleware {
 // Name implements middleware.Middleware.
 func (m *ClarificationMiddleware) Name() string { return "ClarificationMiddleware" }
 
-// Before is a no-op.
-func (m *ClarificationMiddleware) Before(_ context.Context, _ *middleware.State) error {
+// BeforeModel is a no-op.
+func (m *ClarificationMiddleware) BeforeModel(_ context.Context, _ *middleware.State) error {
 	return nil
 }
 
@@ -74,9 +74,9 @@ func (m *ClarificationMiddleware) WrapToolCall(
 	return &middleware.ToolResult{ID: toolCall.ID, Output: payload, Error: nil}, nil
 }
 
-// After checks if the response contains an ask_clarification tool call
+// AfterModel checks if the response contains an ask_clarification tool call
 // and sets state.Extra["clarification_request"] with the parsed output.
-func (m *ClarificationMiddleware) After(_ context.Context, state *middleware.State, resp *middleware.Response) error {
+func (m *ClarificationMiddleware) AfterModel(_ context.Context, state *middleware.State, resp *middleware.Response) error {
 	if resp == nil || len(resp.ToolCalls) == 0 {
 		return nil
 	}

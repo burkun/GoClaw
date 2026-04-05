@@ -18,7 +18,7 @@ func TestClarificationMiddleware_After_NoToolCalls(t *testing.T) {
 	mw := NewClarificationMiddleware()
 	state := &middleware.State{}
 	resp := &middleware.Response{}
-	if err := mw.After(context.Background(), state, resp); err != nil {
+	if err := mw.AfterModel(context.Background(), state, resp); err != nil {
 		t.Fatalf("after returned error: %v", err)
 	}
 	if state.Extra != nil {
@@ -33,7 +33,7 @@ func TestClarificationMiddleware_After_JSONOutput(t *testing.T) {
 		"name":   "ask_clarification",
 		"output": `{"question":"Which file?","options":["a","b"]}`,
 	}}}
-	if err := mw.After(context.Background(), state, resp); err != nil {
+	if err := mw.AfterModel(context.Background(), state, resp); err != nil {
 		t.Fatalf("after returned error: %v", err)
 	}
 	if state.Extra == nil || state.Extra["interrupt"] != true {
@@ -55,7 +55,7 @@ func TestClarificationMiddleware_After_RawFallback(t *testing.T) {
 		"name":   "ask_clarification",
 		"output": "not-json",
 	}}}
-	if err := mw.After(context.Background(), state, resp); err != nil {
+	if err := mw.AfterModel(context.Background(), state, resp); err != nil {
 		t.Fatalf("after returned error: %v", err)
 	}
 	if state.Extra["interrupt"] != true {
@@ -73,7 +73,7 @@ func TestClarificationMiddleware_After_UsesArgumentsWhenOutputMissing(t *testing
 		"name":      "ask_clarification",
 		"arguments": `{"question":"Pick one?","options":["x","y"]}`,
 	}}}
-	if err := mw.After(context.Background(), state, resp); err != nil {
+	if err := mw.AfterModel(context.Background(), state, resp); err != nil {
 		t.Fatalf("after returned error: %v", err)
 	}
 	if state.Extra["interrupt"] != true {
@@ -95,7 +95,7 @@ func TestClarificationMiddleware_After_UsesMapInputWhenOutputMissing(t *testing.
 			"options":  []any{"yes", "no"},
 		},
 	}}}
-	if err := mw.After(context.Background(), state, resp); err != nil {
+	if err := mw.AfterModel(context.Background(), state, resp); err != nil {
 		t.Fatalf("after returned error: %v", err)
 	}
 	if state.Extra["interrupt"] != true {

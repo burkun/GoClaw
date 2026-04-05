@@ -138,15 +138,15 @@ type Middleware interface {
 	// Returning a non-nil error aborts the entire agent run.
 	BeforeAgent(ctx context.Context, state *State) error
 
-	// Before runs before each model invocation (per iteration).
+	// BeforeModel runs before each model invocation (per iteration).
 	// Implementors may modify State (e.g. inject facts into the system prompt)
 	// and return an error to abort the current iteration.
-	Before(ctx context.Context, state *State) error
+	BeforeModel(ctx context.Context, state *State) error
 
-	// After runs after each model invocation (per iteration, reverse order).
+	// AfterModel runs after each model invocation (per iteration, reverse order).
 	// Implementors may read Response (e.g. queue memory updates) but SHOULD NOT
 	// fail the turn for non-critical bookkeeping errors — log and continue instead.
-	After(ctx context.Context, state *State, response *Response) error
+	AfterModel(ctx context.Context, state *State, response *Response) error
 
 	// AfterAgent runs once at the end of an agent run (reverse order).
 	// Use for one-time cleanup like releasing resources, persisting state.
@@ -172,11 +172,11 @@ type MiddlewareWrapper struct{}
 // BeforeAgent does nothing and returns nil.
 func (MiddlewareWrapper) BeforeAgent(ctx context.Context, state *State) error { return nil }
 
-// Before does nothing and returns nil.
-func (MiddlewareWrapper) Before(ctx context.Context, state *State) error { return nil }
+// BeforeModel does nothing and returns nil.
+func (MiddlewareWrapper) BeforeModel(ctx context.Context, state *State) error { return nil }
 
-// After does nothing and returns nil.
-func (MiddlewareWrapper) After(ctx context.Context, state *State, response *Response) error {
+// AfterModel does nothing and returns nil.
+func (MiddlewareWrapper) AfterModel(ctx context.Context, state *State, response *Response) error {
 	return nil
 }
 

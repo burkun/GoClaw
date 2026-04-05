@@ -20,7 +20,7 @@ func TestLoopDetectionMiddleware_After_NoLoop(t *testing.T) {
 	}}
 	resp := &middleware.Response{ToolCalls: []map[string]any{{"name": "c"}}}
 
-	_ = mw.After(context.Background(), state, resp)
+	_ = mw.AfterModel(context.Background(), state, resp)
 	for _, m := range state.Messages {
 		if m["name"] == "loop_detection" {
 			t.Error("unexpected loop_detection reminder")
@@ -37,7 +37,7 @@ func TestLoopDetectionMiddleware_After_DetectsLoop(t *testing.T) {
 	}}
 	resp := &middleware.Response{ToolCalls: tc}
 
-	_ = mw.After(context.Background(), state, resp)
+	_ = mw.AfterModel(context.Background(), state, resp)
 
 	found := false
 	for _, m := range state.Messages {
@@ -62,7 +62,7 @@ func TestLoopDetectionMiddleware_After_DetectsAlternatingLoop(t *testing.T) {
 	}}
 	resp := &middleware.Response{ToolCalls: b}
 
-	_ = mw.After(context.Background(), state, resp)
+	_ = mw.AfterModel(context.Background(), state, resp)
 
 	foundAlternating := false
 	for _, m := range state.Messages {

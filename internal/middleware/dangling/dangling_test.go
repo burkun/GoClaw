@@ -10,7 +10,7 @@ import (
 func TestDanglingToolCallMiddleware_Before_NoMessages(t *testing.T) {
 	mw := New()
 	state := &middleware.State{Messages: nil}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 }
@@ -20,7 +20,7 @@ func TestDanglingToolCallMiddleware_Before_NoAssistant(t *testing.T) {
 	state := &middleware.State{Messages: []map[string]any{
 		{"role": "human", "content": "hi"},
 	}}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 	if len(state.Messages) != 1 {
@@ -35,7 +35,7 @@ func TestDanglingToolCallMiddleware_Before_NoDangling(t *testing.T) {
 		{"role": "assistant", "tool_calls": []map[string]any{{"id": "tc1"}}},
 		{"role": "tool", "tool_call_id": "tc1", "content": "ok"},
 	}}
-	_ = mw.Before(context.Background(), state)
+	_ = mw.BeforeModel(context.Background(), state)
 	if len(state.Messages) != 3 {
 		t.Errorf("expected 3 messages (no placeholder), got %d", len(state.Messages))
 	}
@@ -48,7 +48,7 @@ func TestDanglingToolCallMiddleware_Before_InsertsPlaceholder(t *testing.T) {
 		{"role": "assistant", "tool_calls": []map[string]any{{"id": "tc1"}, {"id": "tc2"}}},
 		{"role": "tool", "tool_call_id": "tc1", "content": "ok"},
 	}}
-	_ = mw.Before(context.Background(), state)
+	_ = mw.BeforeModel(context.Background(), state)
 	if len(state.Messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(state.Messages))
 	}

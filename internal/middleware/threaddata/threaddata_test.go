@@ -15,7 +15,7 @@ func TestThreadDataMiddleware_Before_CreatesDirectories(t *testing.T) {
 	mw := New(cfg)
 
 	state := &middleware.State{ThreadID: "thread-abc"}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Fatalf("Before failed: %v", err)
 	}
 
@@ -46,9 +46,9 @@ func TestThreadDataMiddleware_Before_Idempotent(t *testing.T) {
 	mw := New(cfg)
 
 	state := &middleware.State{ThreadID: "thread-xyz"}
-	_ = mw.Before(context.Background(), state)
+	_ = mw.BeforeModel(context.Background(), state)
 
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Fatalf("second Before failed: %v", err)
 	}
 }

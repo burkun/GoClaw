@@ -45,8 +45,8 @@ func (m *SubagentLimitMiddleware) Name() string {
 	return "SubagentLimitMiddleware"
 }
 
-// Before increments counter and rejects if limit exceeded.
-func (m *SubagentLimitMiddleware) Before(_ context.Context, state *middleware.State) error {
+// BeforeModel increments counter and rejects if limit exceeded.
+func (m *SubagentLimitMiddleware) BeforeModel(_ context.Context, state *middleware.State) error {
 	if state.Extra == nil {
 		state.Extra = map[string]any{}
 	}
@@ -67,8 +67,8 @@ func (m *SubagentLimitMiddleware) Before(_ context.Context, state *middleware.St
 	return nil
 }
 
-// After decrements counter for subagent runs.
-func (m *SubagentLimitMiddleware) After(_ context.Context, state *middleware.State, _ *middleware.Response) error {
+// AfterModel decrements counter for subagent runs.
+func (m *SubagentLimitMiddleware) AfterModel(_ context.Context, state *middleware.State, _ *middleware.Response) error {
 	isSubagent, _ := state.Extra["is_subagent"].(bool)
 	if isSubagent {
 		atomic.AddInt64(m.current, -1)

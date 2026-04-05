@@ -27,8 +27,8 @@ func NewDeferredToolFilterMiddleware(deferredNames []string) *DeferredToolFilter
 // Name implements middleware.Middleware.
 func (m *DeferredToolFilterMiddleware) Name() string { return "DeferredToolFilterMiddleware" }
 
-// Before filters deferred tools from available tools when tool_search is enabled.
-func (m *DeferredToolFilterMiddleware) Before(_ context.Context, state *middleware.State) error {
+// BeforeModel filters deferred tools from available tools when tool_search is enabled.
+func (m *DeferredToolFilterMiddleware) BeforeModel(_ context.Context, state *middleware.State) error {
 	if state == nil || state.Extra == nil {
 		return nil
 	}
@@ -64,8 +64,8 @@ func (m *DeferredToolFilterMiddleware) Before(_ context.Context, state *middlewa
 	return nil
 }
 
-// After is a no-op.
-func (m *DeferredToolFilterMiddleware) After(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
+// AfterModel is a no-op.
+func (m *DeferredToolFilterMiddleware) AfterModel(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
 	return nil
 }
 

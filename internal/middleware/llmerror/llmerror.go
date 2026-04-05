@@ -30,13 +30,13 @@ func NewLLMErrorHandlingMiddleware(maxRetries int) *LLMErrorHandlingMiddleware {
 // Name implements middleware.Middleware.
 func (m *LLMErrorHandlingMiddleware) Name() string { return "LLMErrorHandlingMiddleware" }
 
-// Before is a no-op.
-func (m *LLMErrorHandlingMiddleware) Before(_ context.Context, _ *middleware.State) error {
+// BeforeModel is a no-op.
+func (m *LLMErrorHandlingMiddleware) BeforeModel(_ context.Context, _ *middleware.State) error {
 	return nil
 }
 
-// After converts tool errors into structured error messages.
-func (m *LLMErrorHandlingMiddleware) After(_ context.Context, state *middleware.State, resp *middleware.Response) error {
+// AfterModel converts tool errors into structured error messages.
+func (m *LLMErrorHandlingMiddleware) AfterModel(_ context.Context, state *middleware.State, resp *middleware.Response) error {
 	if resp == nil || len(resp.ToolCalls) == 0 {
 		return nil
 	}

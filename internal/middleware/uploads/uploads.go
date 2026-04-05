@@ -29,9 +29,9 @@ func (m *UploadsMiddleware) Name() string {
 	return "UploadsMiddleware"
 }
 
-// Before scans uploads directory and populates state.Extra["uploads"],
+// BeforeModel scans uploads directory and populates state.Extra["uploads"],
 // and injects <uploaded_files> XML block into the last human message.
-func (m *UploadsMiddleware) Before(_ context.Context, state *middleware.State) error {
+func (m *UploadsMiddleware) BeforeModel(_ context.Context, state *middleware.State) error {
 	uploadsPath, ok := state.Extra["uploads_path"].(string)
 	if !ok || uploadsPath == "" {
 		return nil
@@ -95,8 +95,8 @@ func injectUploadedFilesToMessage(messages []map[string]any, files []string) {
 	msg["content"] = filesMsg + content
 }
 
-// After is a no-op.
-func (m *UploadsMiddleware) After(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
+// AfterModel is a no-op.
+func (m *UploadsMiddleware) AfterModel(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
 	return nil
 }
 

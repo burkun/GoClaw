@@ -26,8 +26,8 @@ func NewViewImageMiddleware() *ViewImageMiddleware {
 // Name implements middleware.Middleware.
 func (m *ViewImageMiddleware) Name() string { return "ViewImageMiddleware" }
 
-// Before injects viewed images into the message list.
-func (m *ViewImageMiddleware) Before(_ context.Context, state *middleware.State) error {
+// BeforeModel injects viewed images into the message list.
+func (m *ViewImageMiddleware) BeforeModel(_ context.Context, state *middleware.State) error {
 	if state == nil || len(state.ViewedImages) == 0 {
 		return nil
 	}
@@ -91,8 +91,8 @@ func (m *ViewImageMiddleware) Before(_ context.Context, state *middleware.State)
 	return nil
 }
 
-// After is a no-op.
-func (m *ViewImageMiddleware) After(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
+// AfterModel is a no-op.
+func (m *ViewImageMiddleware) AfterModel(_ context.Context, _ *middleware.State, _ *middleware.Response) error {
 	return nil
 }
 

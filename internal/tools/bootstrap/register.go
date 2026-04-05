@@ -60,8 +60,8 @@ func RegisterDefaultToolsWithModel(cfg *config.AppConfig, modelCfg *config.Model
 		&mediaPresentFileRuntimeTool{},
 		builtin.NewClarificationTool(),
 		builtin.NewToolSearchTool(builtin.DefaultDeferredToolRegistry()),
-		builtin.NewTaskToolWithDefaults(), // Subagent delegation tool
-		builtin.NewSetupAgentTool(cfg.Sandbox.WorkDir), // Agent Creator tool (P2 fix)
+		builtin.NewTaskToolWithDefaults(),  // Subagent delegation tool
+		builtin.NewSetupAgentTool(""),      // Agent Creator tool (P2 fix)
 	}
 
 	// Only register view_image if the model supports vision

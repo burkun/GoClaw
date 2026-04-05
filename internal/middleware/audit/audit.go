@@ -174,8 +174,8 @@ func (m *SandboxAuditMiddleware) getThreadID(state *middleware.State) string {
 	return state.ThreadID
 }
 
-// After audits completed tool calls.
-func (m *SandboxAuditMiddleware) After(_ context.Context, state *middleware.State, resp *middleware.Response) error {
+// AfterModel audits completed tool calls.
+func (m *SandboxAuditMiddleware) AfterModel(_ context.Context, state *middleware.State, resp *middleware.Response) error {
 	if resp == nil || len(resp.ToolCalls) == 0 {
 		return nil
 	}

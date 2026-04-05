@@ -1,0 +1,26 @@
+{
+  "name": "goclaw-book",
+  "version": "1.0.0",
+  "description": "GoClaw 源码解析 - Go 语言版 Super Agent Harness 深度解析",
+  "main": "index.js",
+  "scripts": {
+    "docs:dev": "vitepress dev",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bookerbai/goclaw.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/bookerbai/goclaw/issues"
+  },
+  "homepage": "https://github.com/bookerbai/goclaw#readme",
+  "devDependencies": {
+    "vitepress": "^1.6.4"
+  },
+  "type": "module"
+}

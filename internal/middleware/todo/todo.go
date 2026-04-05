@@ -90,7 +90,7 @@ func NewTodoMiddleware() *TodoMiddleware { return &TodoMiddleware{} }
 // Name implements middleware.Middleware.
 func (t *TodoMiddleware) Name() string { return "TodoMiddleware" }
 
-// Before runs before model invocation and handles two concerns:
+// BeforeModel runs before model invocation and handles two concerns:
 //
 // A. Tool injection (always when PlanMode is true):
 //  1. If state.PlanMode is false, return nil (no-op).
@@ -107,7 +107,7 @@ func (t *TodoMiddleware) Name() string { return "TodoMiddleware" }
 //  4. Format the current Todos as a bullet list.
 //  5. Inject a HumanMessage (role="human", name="todo_reminder") with the
 //     formatted reminderTemplate content.
-func (t *TodoMiddleware) Before(ctx context.Context, state *middleware.State) error {
+func (t *TodoMiddleware) BeforeModel(ctx context.Context, state *middleware.State) error {
 	// --- Part A: tool annotation ---
 	if state.PlanMode {
 		// TODO: find system message and append writeToolsAnnotation.
@@ -142,7 +142,7 @@ func (t *TodoMiddleware) Before(ctx context.Context, state *middleware.State) er
 	return nil
 }
 
-// After parses write_todos tool results from response.ToolCalls and updates
+// AfterModel parses write_todos tool results from response.ToolCalls and updates
 // state.Todos to reflect the new task list.
 //
 // Implementation steps:
@@ -152,7 +152,7 @@ func (t *TodoMiddleware) Before(ctx context.Context, state *middleware.State) er
 //     b. Convert each entry into a Todo.
 //     c. Replace state.Todos with the new list.
 //     d. Break (only the last write_todos call matters).
-func (t *TodoMiddleware) After(ctx context.Context, state *middleware.State, response *middleware.Response) error {
+func (t *TodoMiddleware) AfterModel(ctx context.Context, state *middleware.State, response *middleware.Response) error {
 	for _, call := range response.ToolCalls {
 		name, _ := call["name"].(string)
 		if name != WriteTodosToolName {

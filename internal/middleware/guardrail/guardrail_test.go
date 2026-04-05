@@ -10,7 +10,7 @@ import (
 func TestGuardrailMiddleware_Before_Disabled(t *testing.T) {
 	mw := NewGuardrailMiddleware(Config{Enabled: false})
 	state := &middleware.State{Extra: map[string]any{"pending_tool_calls": []map[string]any{{"name": "bash"}}}}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Fatalf("before returned error: %v", err)
 	}
 	tc := state.Extra["pending_tool_calls"].([]map[string]any)[0]
@@ -26,7 +26,7 @@ func TestGuardrailMiddleware_Before_Decisions(t *testing.T) {
 		DefaultDecision: DecisionPermit,
 	})
 	state := &middleware.State{Extra: map[string]any{"pending_tool_calls": []map[string]any{{"name": "bash"}, {"name": "web_search"}, {"name": "read_file"}}}}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Fatalf("before returned error: %v", err)
 	}
 	calls := state.Extra["pending_tool_calls"].([]map[string]any)

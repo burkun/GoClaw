@@ -27,10 +27,10 @@ func (m *TokenUsageMiddleware) Name() string {
 	return "TokenUsageMiddleware"
 }
 
-// After runs after the agent model invocation and logs token usage.
+// AfterModel runs after the agent model invocation and logs token usage.
 // It extracts usage_metadata from the last message (if it's an AI message)
 // and logs input_tokens, output_tokens, and total_tokens.
-func (m *TokenUsageMiddleware) After(ctx context.Context, state *middleware.State, resp *middleware.Response) error {
+func (m *TokenUsageMiddleware) AfterModel(ctx context.Context, state *middleware.State, resp *middleware.Response) error {
 	if len(state.Messages) == 0 {
 		return nil
 	}

@@ -135,7 +135,7 @@ func TestMemoryMiddleware_inject(t *testing.T) {
 		Messages: []map[string]any{{"role": "system", "content": "You are a helpful assistant."}},
 	}
 
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Fatalf("Before() returned error: %v", err)
 	}
 

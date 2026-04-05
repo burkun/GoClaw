@@ -11,7 +11,7 @@ import (
 func TestSubagentLimitMiddleware_Before_NotSubagent(t *testing.T) {
 	mw := New(Config{MaxConcurrent: 1})
 	state := &middleware.State{Extra: map[string]any{}}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Errorf("unexpected error for non-subagent: %v", err)
 	}
 	if mw.Current() != 0 {
@@ -22,7 +22,7 @@ func TestSubagentLimitMiddleware_Before_NotSubagent(t *testing.T) {
 func TestSubagentLimitMiddleware_Before_AllowsUnderLimit(t *testing.T) {
 	mw := New(Config{MaxConcurrent: 2})
 	state := &middleware.State{Extra: map[string]any{"is_subagent": true}}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
 	if mw.Current() != 1 {
@@ -34,10 +34,10 @@ func TestSubagentLimitMiddleware_Before_RejectsOverLimit(t *testing.T) {
 	mw := New(Config{MaxConcurrent: 1})
 
 	state1 := &middleware.State{Extra: map[string]any{"is_subagent": true}}
-	_ = mw.Before(context.Background(), state1)
+	_ = mw.BeforeModel(context.Background(), state1)
 
 	state2 := &middleware.State{Extra: map[string]any{"is_subagent": true}}
-	err := mw.Before(context.Background(), state2)
+	err := mw.BeforeModel(context.Background(), state2)
 	if !errors.Is(err, ErrSubagentLimitReached) {
 		t.Errorf("expected ErrSubagentLimitReached, got %v", err)
 	}
@@ -46,8 +46,8 @@ func TestSubagentLimitMiddleware_Before_RejectsOverLimit(t *testing.T) {
 func TestSubagentLimitMiddleware_After_Decrements(t *testing.T) {
 	mw := New(Config{MaxConcurrent: 2})
 	state := &middleware.State{Extra: map[string]any{"is_subagent": true}}
-	_ = mw.Before(context.Background(), state)
-	_ = mw.After(context.Background(), state, &middleware.Response{})
+	_ = mw.BeforeModel(context.Background(), state)
+	_ = mw.AfterModel(context.Background(), state, &middleware.Response{})
 	if mw.Current() != 0 {
 		t.Errorf("expected counter 0 after After, got %d", mw.Current())
 	}
@@ -56,7 +56,7 @@ func TestSubagentLimitMiddleware_After_Decrements(t *testing.T) {
 func TestSubagentLimitMiddleware_WrapToolCall_WithinLimit(t *testing.T) {
 	mw := New(Config{MaxConcurrent: 2})
 	state := &middleware.State{Extra: map[string]any{}}
-	_ = mw.Before(context.Background(), state)
+	_ = mw.BeforeModel(context.Background(), state)
 
 	called := false
 	res, err := mw.WrapToolCall(context.Background(), state, &middleware.ToolCall{ID: "1", Name: "task"}, func(ctx context.Context, toolCall *middleware.ToolCall) (*middleware.ToolResult, error) {
@@ -77,7 +77,7 @@ func TestSubagentLimitMiddleware_WrapToolCall_WithinLimit(t *testing.T) {
 func TestSubagentLimitMiddleware_WrapToolCall_TruncatesExcess(t *testing.T) {
 	mw := New(Config{MaxConcurrent: 1})
 	state := &middleware.State{Extra: map[string]any{}}
-	_ = mw.Before(context.Background(), state)
+	_ = mw.BeforeModel(context.Background(), state)
 
 	// First task call executes normally.
 	_, err := mw.WrapToolCall(context.Background(), state, &middleware.ToolCall{ID: "1", Name: "task"}, func(ctx context.Context, toolCall *middleware.ToolCall) (*middleware.ToolResult, error) {

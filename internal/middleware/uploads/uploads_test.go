@@ -27,7 +27,7 @@ func TestUploadsMiddleware_Before_ListsFiles(t *testing.T) {
 		ThreadID: "t1",
 		Extra:    map[string]any{"uploads_path": uploadsDir},
 	}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Fatalf("Before failed: %v", err)
 	}
 
@@ -50,7 +50,7 @@ func TestUploadsMiddleware_Before_EmptyDir(t *testing.T) {
 		ThreadID: "t2",
 		Extra:    map[string]any{"uploads_path": uploadsDir},
 	}
-	_ = mw.Before(context.Background(), state)
+	_ = mw.BeforeModel(context.Background(), state)
 
 	files := state.Extra["uploads"].([]string)
 	if len(files) != 0 {
@@ -61,7 +61,7 @@ func TestUploadsMiddleware_Before_EmptyDir(t *testing.T) {
 func TestUploadsMiddleware_Before_NoUploadsPath(t *testing.T) {
 	mw := New()
 	state := &middleware.State{ThreadID: "t3", Extra: map[string]any{}}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeModel(context.Background(), state); err != nil {
 		t.Errorf("expected no error when uploads_path missing, got %v", err)
 	}
 }

@@ -38,7 +38,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
@@ -790,7 +789,7 @@ func (m *MemoryMiddleware) Name() string { return "MemoryMiddleware" }
 //  3. Append them to state.MemoryFacts.
 //  4. Prepend a formatted "<memory_facts>…</memory_facts>" block to the
 //     first system message in state.Messages (insert one if absent).
-func (m *MemoryMiddleware) Before(ctx context.Context, state *middleware.State) error {
+func (m *MemoryMiddleware) BeforeModel(ctx context.Context, state *middleware.State) error {
 	// TODO:
 	// 1. mem, err := m.store.Load()
 	//    if err != nil { log.Printf("memory load error: %v", err); return nil }
@@ -1006,10 +1005,10 @@ func estimateTokenCount(text string) int {
 	return asciiTokens + nonAsciiTokens
 }
 
-// After filters the conversation and prepares for memory update.
+// AfterModel filters the conversation and prepares for memory update.
 // This is called after each model invocation, but the actual queue operation
 // is deferred to AfterAgent to ensure it runs only once per agent run.
-func (m *MemoryMiddleware) After(ctx context.Context, state *middleware.State, response *middleware.Response) error {
+func (m *MemoryMiddleware) AfterModel(ctx context.Context, state *middleware.State, response *middleware.Response) error {
 	_ = ctx
 	_ = response
 	// No-op: memory update is handled in AfterAgent.
