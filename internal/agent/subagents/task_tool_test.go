@@ -40,13 +40,13 @@ func TestTaskToolExecuteRunningSnapshot(t *testing.T) {
 	tool := NewTaskTool(TaskToolConfig{
 		Executor:    exec,
 		WaitTimeout: 5 * time.Millisecond,
-		Worker: func(ctx context.Context, req TaskRequest) (string, error) {
+		Worker: func(ctx context.Context, req TaskRequest) (WorkerResult, error) {
 			_ = req
 			select {
 			case <-time.After(120 * time.Millisecond):
-				return "done", nil
+				return WorkerResult{Output: "done"}, nil
 			case <-ctx.Done():
-				return "", ctx.Err()
+				return WorkerResult{}, ctx.Err()
 			}
 		},
 	})

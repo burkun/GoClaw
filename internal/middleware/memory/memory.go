@@ -8,9 +8,18 @@
 // Storage format (JSON):
 //
 //	{
-//	  "version":     "1.0",
+//	  "version": "1.0",
 //	  "lastUpdated": "<RFC3339>",
-//	  "facts":       ["fact1", "fact2", …]
+//	  "facts": [
+//	    {
+//	      "id": "fact_xxx",
+//	      "content": "...",
+//	      "category": "context",
+//	      "confidence": 0.9,
+//	      "createdAt": "<RFC3339>",
+//	      "source": "thread_id"
+//	    }
+//	  ]
 //	}
 //
 // The queue is a singleton goroutine that drains entries after a configurable
@@ -24,38 +33,61 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
+
+const DefaultMemoryPath = "memory.json"
 
 // ---------------------------------------------------------------------------
 // Data structures
 // ---------------------------------------------------------------------------
 
+// ContextSection holds one summary section with update timestamp.
+type ContextSection struct {
+	Summary   string `json:"summary"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+// UserContext groups user-related context sections.
+type UserContext struct {
+	WorkContext     ContextSection `json:"workContext"`
+	PersonalContext ContextSection `json:"personalContext"`
+	TopOfMind       ContextSection `json:"topOfMind"`
+}
+
+// HistoryContext groups history-related context sections.
+type HistoryContext struct {
+	RecentMonths       ContextSection `json:"recentMonths"`
+	EarlierContext     ContextSection `json:"earlierContext"`
+	LongTermBackground ContextSection `json:"longTermBackground"`
+}
+
+// MemoryFact is the persisted structured fact schema.
+type MemoryFact struct {
+	ID          string  `json:"id"`
+	Content     string  `json:"content"`
+	Category    string  `json:"category"`
+	Confidence  float64 `json:"confidence"`
+	CreatedAt   string  `json:"createdAt"`
+	Source      string  `json:"source"`
+	SourceError *string `json:"sourceError,omitempty"`
+}
+
 // Memory is the persisted memory document for a single agent scope.
-//
-// Facts is the primary store — a flat list of short factual statements
-// extracted from past conversations (e.g. "User prefers Go over Python").
-// UserContext holds a free-form narrative summary updated alongside Facts.
+// It matches the frontend/gateway memory schema.
 type Memory struct {
-	// Version is the document schema version for forward-compatibility checks.
-	Version string `json:"version"`
-
-	// LastUpdated is the RFC3339 timestamp of the most recent save.
-	LastUpdated string `json:"lastUpdated"`
-
-	// Facts is the deduplicated list of extracted factual statements.
-	// Length is bounded at runtime; the injector uses at most the last 15.
-	Facts []string `json:"facts"`
-
-	// UserContext is an optional free-form narrative that provides broader
-	// context than individual facts (e.g. a paragraph about the user's project).
-	UserContext string `json:"userContext,omitempty"`
+	Version     string         `json:"version"`
+	LastUpdated string         `json:"lastUpdated"`
+	User        UserContext    `json:"user"`
+	History     HistoryContext `json:"history"`
+	Facts       []MemoryFact   `json:"facts"`
 }
 
 // newEmptyMemory returns an initialised Memory document with current timestamp.
@@ -63,7 +95,7 @@ func newEmptyMemory() *Memory {
 	return &Memory{
 		Version:     "1.0",
 		LastUpdated: time.Now().UTC().Format(time.RFC3339),
-		Facts:       []string{},
+		Facts:       []MemoryFact{},
 	}
 }
 
@@ -72,7 +104,7 @@ func cloneMemory(m *Memory) *Memory {
 		return nil
 	}
 	out := *m
-	out.Facts = append([]string(nil), m.Facts...)
+	out.Facts = append([]MemoryFact(nil), m.Facts...)
 	return &out
 }
 
@@ -93,10 +125,10 @@ type MemoryStore interface {
 	// Implementations must update LastUpdated before writing.
 	Save(m *Memory) error
 
-	// AddFact appends a new factual statement if it is not already present
-	// (case-insensitive substring deduplication). Returns true if the fact
-	// was added, false if it was considered a duplicate.
-	AddFact(m *Memory, fact string) bool
+	// AddFact appends a new fact if it is not already present
+	// (case-insensitive substring deduplication on content). Returns true if
+	// the fact was added, false if it was considered a duplicate.
+	AddFact(m *Memory, fact MemoryFact) bool
 
 	// Deduplicate removes semantically duplicate facts from m.Facts in place.
 	// The default implementation uses case-insensitive substring matching;
@@ -217,55 +249,65 @@ func (s *JSONFileStore) Save(m *Memory) error {
 	return nil
 }
 
-// AddFact appends fact to m.Facts if no existing fact contains fact as a
-// case-insensitive substring. Returns true if fact was added.
-func (s *JSONFileStore) AddFact(m *Memory, fact string) bool {
-	// TODO:
-	// 1. Normalise fact: strings.TrimSpace(fact). Return false if empty.
-	// 2. lf := strings.ToLower(fact).
-	// 3. For each existing f in m.Facts: if strings.Contains(strings.ToLower(f), lf), return false.
-	// 4. m.Facts = append(m.Facts, fact); return true.
-
-	fact = strings.TrimSpace(fact)
-	if fact == "" {
+// AddFact appends fact to m.Facts if no existing fact contains the same
+// content as a case-insensitive substring. Returns true if fact was added.
+func (s *JSONFileStore) AddFact(m *Memory, fact MemoryFact) bool {
+	fact.Content = strings.TrimSpace(fact.Content)
+	if fact.Content == "" {
 		return false
 	}
-	lf := strings.ToLower(fact)
+	lf := strings.ToLower(fact.Content)
 	for _, f := range m.Facts {
-		if strings.Contains(strings.ToLower(f), lf) {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(f.Content)), lf) {
 			return false
 		}
 	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	if strings.TrimSpace(fact.ID) == "" {
+		fact.ID = newFactID()
+	}
+	if strings.TrimSpace(fact.Category) == "" {
+		fact.Category = "context"
+	}
+	if fact.Confidence <= 0 {
+		fact.Confidence = 0.8
+	}
+	if strings.TrimSpace(fact.CreatedAt) == "" {
+		fact.CreatedAt = now
+	}
+	if strings.TrimSpace(fact.Source) == "" {
+		fact.Source = "unknown"
+	}
+
 	m.Facts = append(m.Facts, fact)
 	return true
 }
 
 // Deduplicate removes redundant facts from m.Facts.
-//
-// The algorithm: for each pair (i, j), if facts[i] is a substring of facts[j]
-// (case-insensitive), facts[i] is considered dominated by facts[j] and removed.
-// This is O(n²) but n is bounded at ~100 in practice.
+// If one fact's content fully contains another fact's content (case-insensitive),
+// the shorter one is considered dominated and removed.
 func (s *JSONFileStore) Deduplicate(m *Memory) {
-	// TODO:
-	// 1. Build a dominated set: for each pair (i,j) where i≠j,
-	//    if strings.Contains(lower(facts[j]), lower(facts[i])), mark i as dominated.
-	// 2. Rebuild m.Facts keeping only non-dominated entries.
-
 	if len(m.Facts) <= 1 {
 		return
 	}
 
 	dominated := make([]bool, len(m.Facts))
 	for i := range m.Facts {
-		li := strings.ToLower(m.Facts[i])
+		li := strings.ToLower(strings.TrimSpace(m.Facts[i].Content))
+		if li == "" {
+			dominated[i] = true
+			continue
+		}
 		for j := range m.Facts {
 			if i == j || dominated[j] {
 				continue
 			}
-			lj := strings.ToLower(m.Facts[j])
-			// If facts[j] fully contains facts[i], facts[i] is more specific
-			// and is dominated by the broader facts[j] — keep facts[i] instead.
-			// If facts[i] fully contains facts[j], facts[j] is the substring/dominated.
+			lj := strings.ToLower(strings.TrimSpace(m.Facts[j].Content))
+			if lj == "" {
+				dominated[j] = true
+				continue
+			}
 			if strings.Contains(li, lj) && li != lj {
 				dominated[j] = true
 			}
@@ -401,6 +443,8 @@ type UpdateQueue struct {
 	timer     *time.Timer
 	store     MemoryStore
 	extractor FactExtractor
+	updater   *LLMMemoryUpdater // Full memory updater for User/History contexts + facts
+	maxFacts  int
 
 	// DebounceDelay is the wait after the last Add before processing begins.
 	// Default: 30 seconds, matching DeerFlow's debounce_seconds config.
@@ -410,18 +454,23 @@ type UpdateQueue struct {
 var (
 	globalQueue     *UpdateQueue
 	globalQueueOnce sync.Once
+	factIDSeq       uint64
 )
 
+func newFactID() string {
+	return fmt.Sprintf("fact_%d_%d", time.Now().UnixNano(), atomic.AddUint64(&factIDSeq, 1))
+}
+
 // GetGlobalQueue returns the process-wide UpdateQueue singleton.
-// The store is a JSONFileStore backed by dataDir/memory.json.
-func GetGlobalQueue(dataDir string) *UpdateQueue {
+// The queue is bound to the provided memoryPath on first initialization.
+func GetGlobalQueue(memoryPath string) *UpdateQueue {
 	globalQueueOnce.Do(func() {
-		path := filepath.Join(dataDir, "memory.json")
-		store := NewJSONFileStore(path)
+		store := NewJSONFileStore(memoryPath)
 		globalQueue = &UpdateQueue{
 			entries:       make(map[string]*updateEntry),
 			store:         store,
 			DebounceDelay: 30 * time.Second,
+			maxFacts:      100,
 		}
 	})
 	return globalQueue
@@ -435,6 +484,28 @@ func (q *UpdateQueue) SetExtractor(extractor FactExtractor) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.extractor = extractor
+}
+
+// SetUpdater sets or replaces the full memory updater used by the queue.
+// The updater handles User/History context summaries in addition to facts.
+func (q *UpdateQueue) SetUpdater(updater *LLMMemoryUpdater) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.updater = updater
+}
+
+// SetMaxFacts sets the max number of stored facts retained after each update.
+// Values <= 0 disable truncation.
+func (q *UpdateQueue) SetMaxFacts(limit int) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.maxFacts = limit
 }
 
 // Add enqueues or replaces the pending memory update for threadID.
@@ -495,32 +566,68 @@ func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
 		return err
 	}
 
-	var facts []string
+	// Try full LLM memory update (User/History contexts + facts) if updater is configured.
+	if q.updater != nil {
+		ctx := context.Background()
+		update, extractErr := q.updater.ExtractMemoryUpdate(ctx, mem, entry.messages, entry.correctionDetected)
+		if extractErr == nil && update != nil && update.HasUpdates() {
+			if ApplyUpdates(mem, update, entry.threadID) {
+				q.store.Deduplicate(mem)
+				if q.maxFacts > 0 && len(mem.Facts) > q.maxFacts {
+					// Sort by confidence and keep top N
+					mem.Facts = sortFactsByConfidence(mem.Facts)
+					mem.Facts = mem.Facts[:q.maxFacts]
+				}
+				if err := q.store.Save(mem); err != nil {
+					return err
+				}
+				log.Printf("[MemoryMiddleware] saved memory update for thread=%s (contexts + %d newFacts)",
+					entry.threadID, len(update.NewFacts))
+				return nil
+			}
+		}
+	}
+
+	// Fallback to legacy fact-only extraction.
+	var extractedFacts []Fact
 
 	// Try LLM extraction if extractor is configured.
 	if q.extractor != nil {
 		extracted, extractErr := q.extractor.Extract(entry.messages, entry.correctionDetected)
 		if extractErr == nil && len(extracted) > 0 {
-			for _, f := range extracted {
-				if f.Confidence >= 0.7 {
-					facts = append(facts, f.Content)
-				}
-			}
+			extractedFacts = extracted
 		}
 	}
 
 	// Fallback to rule-based extraction if LLM produced nothing.
-	if len(facts) == 0 {
-		facts = deriveFactsFromMessages(entry.messages, entry.correctionDetected)
+	if len(extractedFacts) == 0 {
+		extractedFacts = deriveFactsFromMessages(entry.messages, entry.correctionDetected)
 	}
 
-	if len(facts) == 0 {
+	if len(extractedFacts) == 0 {
 		return nil
 	}
 
 	addedAny := false
-	for _, f := range facts {
-		if q.store.AddFact(mem, f) {
+	for _, f := range extractedFacts {
+		content := strings.TrimSpace(f.Content)
+		if content == "" {
+			continue
+		}
+		confidence := f.Confidence
+		if confidence > 0 && confidence < 0.7 {
+			continue
+		}
+		if confidence <= 0 {
+			confidence = 0.8
+		}
+		persisted := MemoryFact{
+			Content:    content,
+			Category:   string(f.Category),
+			Confidence: confidence,
+			Source:     entry.threadID,
+		}
+		if q.store.AddFact(mem, persisted) {
 			addedAny = true
 		}
 	}
@@ -529,31 +636,56 @@ func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
 	}
 
 	q.store.Deduplicate(mem)
+	if q.maxFacts > 0 && len(mem.Facts) > q.maxFacts {
+		mem.Facts = sortFactsByConfidence(mem.Facts)
+		mem.Facts = mem.Facts[:q.maxFacts]
+	}
 	if err := q.store.Save(mem); err != nil {
 		return err
 	}
-	log.Printf("[MemoryMiddleware] saved %d fact(s) for thread=%s", len(facts), entry.threadID)
+	log.Printf("[MemoryMiddleware] saved %d fact(s) for thread=%s", len(extractedFacts), entry.threadID)
 	return nil
 }
 
-func deriveFactsFromMessages(messages []map[string]any, correctionDetected bool) []string {
-	facts := make([]string, 0, 8)
+// sortFactsByConfidence sorts facts by confidence (descending) for retention.
+func sortFactsByConfidence(facts []MemoryFact) []MemoryFact {
+	sorted := make([]MemoryFact, len(facts))
+	copy(sorted, facts)
+	// Simple bubble sort for stability
+	for i := 0; i < len(sorted)-1; i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j].Confidence > sorted[i].Confidence {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	return sorted
+}
+
+func deriveFactsFromMessages(messages []map[string]any, correctionDetected bool) []Fact {
+	facts := make([]Fact, 0, 8)
 	seen := make(map[string]struct{})
-	add := func(f string) {
-		f = strings.TrimSpace(f)
-		if f == "" {
+	add := func(content string, category FactCategory, confidence float64) {
+		content = strings.TrimSpace(content)
+		if content == "" {
 			return
 		}
-		key := strings.ToLower(f)
+		key := strings.ToLower(content)
 		if _, ok := seen[key]; ok {
 			return
 		}
 		seen[key] = struct{}{}
-		facts = append(facts, f)
+		if string(category) == "" {
+			category = CategoryContext
+		}
+		if confidence <= 0 {
+			confidence = 0.8
+		}
+		facts = append(facts, Fact{Content: content, Category: category, Confidence: confidence})
 	}
 
 	if correctionDetected {
-		add("User corrected a previous assistant response.")
+		add("User corrected a previous assistant response.", CategoryCorrection, 0.95)
 	}
 
 	for i := len(messages) - 1; i >= 0; i-- {
@@ -571,7 +703,7 @@ func deriveFactsFromMessages(messages []map[string]any, correctionDetected bool)
 			if strings.Contains(seg, "?") || strings.Contains(seg, "？") {
 				continue
 			}
-			add(seg)
+			add(seg, CategoryContext, 0.8)
 			if len(facts) >= 8 {
 				return facts
 			}
@@ -584,9 +716,46 @@ func deriveFactsFromMessages(messages []map[string]any, correctionDetected bool)
 // MemoryMiddleware — implements middleware.Middleware
 // ---------------------------------------------------------------------------
 
-// MaxFactsToInject is the maximum number of facts injected into the system
-// prompt per turn, matching DeerFlow's "previous 15 facts" behaviour.
+// MaxFactsToInject is the default maximum number of facts injected into the
+// system prompt per turn, matching DeerFlow's "previous 15 facts" behaviour.
 const MaxFactsToInject = 15
+
+// MemoryMiddlewareConfig controls runtime injection behavior.
+type MemoryMiddlewareConfig struct {
+	InjectionEnabled   bool
+	MaxFactsToInject   int
+	MaxInjectionTokens int
+}
+
+func defaultMemoryMiddlewareConfig() MemoryMiddlewareConfig {
+	return MemoryMiddlewareConfig{
+		InjectionEnabled:   true,
+		MaxFactsToInject:   MaxFactsToInject,
+		MaxInjectionTokens: 2000,
+	}
+}
+
+type MemoryMiddlewareOption func(*MemoryMiddlewareConfig)
+
+func WithInjectionEnabled(enabled bool) MemoryMiddlewareOption {
+	return func(cfg *MemoryMiddlewareConfig) { cfg.InjectionEnabled = enabled }
+}
+
+func WithMaxFactsToInject(maxFacts int) MemoryMiddlewareOption {
+	return func(cfg *MemoryMiddlewareConfig) {
+		if maxFacts > 0 {
+			cfg.MaxFactsToInject = maxFacts
+		}
+	}
+}
+
+func WithMaxInjectionTokens(maxTokens int) MemoryMiddlewareOption {
+	return func(cfg *MemoryMiddlewareConfig) {
+		if maxTokens > 0 {
+			cfg.MaxInjectionTokens = maxTokens
+		}
+	}
+}
 
 // MemoryMiddleware injects persisted facts before model invocation and queues
 // conversation updates for asynchronous extraction after model completion.
@@ -595,12 +764,19 @@ type MemoryMiddleware struct {
 	store     MemoryStore
 	queue     *UpdateQueue
 	agentName string // empty = global memory scope
+	cfg       MemoryMiddlewareConfig
 }
 
 // NewMemoryMiddleware constructs a MemoryMiddleware using the provided store
 // and update queue. agentName scopes the memory file (empty = shared/global).
-func NewMemoryMiddleware(store MemoryStore, queue *UpdateQueue, agentName string) *MemoryMiddleware {
-	return &MemoryMiddleware{store: store, queue: queue, agentName: agentName}
+func NewMemoryMiddleware(store MemoryStore, queue *UpdateQueue, agentName string, opts ...MemoryMiddlewareOption) *MemoryMiddleware {
+	cfg := defaultMemoryMiddlewareConfig()
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+	return &MemoryMiddleware{store: store, queue: queue, agentName: agentName, cfg: cfg}
 }
 
 // Name implements middleware.Middleware.
@@ -633,17 +809,24 @@ func (m *MemoryMiddleware) Before(ctx context.Context, state *middleware.State) 
 		return nil
 	}
 
-	facts := mem.Facts
-	if len(facts) > MaxFactsToInject {
-		facts = facts[len(facts)-MaxFactsToInject:]
-	}
-	state.MemoryFacts = facts
-
-	if len(facts) == 0 {
+	if !m.cfg.InjectionEnabled {
+		state.MemoryFacts = nil
 		return nil
 	}
 
-	block := "<memory_facts>\n" + strings.Join(facts, "\n") + "\n</memory_facts>"
+	facts := selectFactsForInjection(mem.Facts, m.cfg.MaxFactsToInject, m.cfg.MaxInjectionTokens)
+	state.MemoryFacts = make([]string, 0, len(facts))
+	for _, f := range facts {
+		if c := strings.TrimSpace(f.Content); c != "" {
+			state.MemoryFacts = append(state.MemoryFacts, c)
+		}
+	}
+
+	// Format complete memory injection with User Context, History, and Facts
+	block := formatMemoryForInjection(mem, state.MemoryFacts)
+	if block == "" {
+		return nil
+	}
 
 	// Find or create the system message.
 	for i, msg := range state.Messages {
@@ -659,17 +842,183 @@ func (m *MemoryMiddleware) Before(ctx context.Context, state *middleware.State) 
 	return nil
 }
 
-// After filters the conversation and enqueues it for asynchronous memory update.
-//
-// Implementation:
-//  1. filtered := filterMessagesForMemory(state.Messages)
-//  2. Ensure there is at least one human and one assistant message; skip if not.
-//  3. correction := detectCorrection(filtered)
-//  4. m.queue.Add(state.ThreadID, filtered, m.agentName, correction)
+func selectFactsForInjection(allFacts []MemoryFact, maxFacts, maxTokens int) []MemoryFact {
+	if len(allFacts) == 0 {
+		return nil
+	}
+	if maxFacts <= 0 {
+		maxFacts = len(allFacts)
+	}
+	facts := allFacts
+	if len(facts) > maxFacts {
+		facts = facts[len(facts)-maxFacts:]
+	}
+	if maxTokens <= 0 {
+		return append([]MemoryFact(nil), facts...)
+	}
+
+	selectedRev := make([]MemoryFact, 0, len(facts))
+	used := 0
+	for i := len(facts) - 1; i >= 0; i-- {
+		c := strings.TrimSpace(facts[i].Content)
+		if c == "" {
+			continue
+		}
+		tokens := estimateTokenCount(c)
+		if tokens <= 0 {
+			continue
+		}
+		if used+tokens > maxTokens {
+			if len(selectedRev) == 0 {
+				selectedRev = append(selectedRev, facts[i])
+			}
+			break
+		}
+		selectedRev = append(selectedRev, facts[i])
+		used += tokens
+	}
+
+	out := make([]MemoryFact, 0, len(selectedRev))
+	for i := len(selectedRev) - 1; i >= 0; i-- {
+		out = append(out, selectedRev[i])
+	}
+	return out
+}
+
+// formatMemoryForInjection formats the complete memory structure for injection.
+// It includes User Context, History, and Facts in a structured XML format.
+// This mirrors DeerFlow's format_memory_for_injection() from prompt.py.
+func formatMemoryForInjection(mem *Memory, factContents []string) string {
+	if mem == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<memory>\n")
+
+	hasContent := false
+
+	// User Context section
+	userHasContent := mem.User.WorkContext.Summary != "" ||
+		mem.User.PersonalContext.Summary != "" ||
+		mem.User.TopOfMind.Summary != ""
+
+	if userHasContent {
+		hasContent = true
+		sb.WriteString("User Context:\n")
+		if mem.User.WorkContext.Summary != "" {
+			sb.WriteString("- Work: ")
+			sb.WriteString(mem.User.WorkContext.Summary)
+			sb.WriteString("\n")
+		}
+		if mem.User.PersonalContext.Summary != "" {
+			sb.WriteString("- Personal: ")
+			sb.WriteString(mem.User.PersonalContext.Summary)
+			sb.WriteString("\n")
+		}
+		if mem.User.TopOfMind.Summary != "" {
+			sb.WriteString("- Current Focus: ")
+			sb.WriteString(mem.User.TopOfMind.Summary)
+			sb.WriteString("\n")
+		}
+	}
+
+	// History section
+	historyHasContent := mem.History.RecentMonths.Summary != "" ||
+		mem.History.EarlierContext.Summary != "" ||
+		mem.History.LongTermBackground.Summary != ""
+
+	if historyHasContent {
+		hasContent = true
+		if userHasContent {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("History:\n")
+		if mem.History.RecentMonths.Summary != "" {
+			sb.WriteString("- Recent: ")
+			sb.WriteString(mem.History.RecentMonths.Summary)
+			sb.WriteString("\n")
+		}
+		if mem.History.EarlierContext.Summary != "" {
+			sb.WriteString("- Earlier: ")
+			sb.WriteString(mem.History.EarlierContext.Summary)
+			sb.WriteString("\n")
+		}
+		if mem.History.LongTermBackground.Summary != "" {
+			sb.WriteString("- Long-term: ")
+			sb.WriteString(mem.History.LongTermBackground.Summary)
+			sb.WriteString("\n")
+		}
+	}
+
+	// Facts section
+	if len(factContents) > 0 {
+		hasContent = true
+		if userHasContent || historyHasContent {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("Facts:\n")
+		for _, fact := range factContents {
+			if fact = strings.TrimSpace(fact); fact != "" {
+				sb.WriteString("- ")
+				sb.WriteString(fact)
+				sb.WriteString("\n")
+			}
+		}
+	}
+
+	sb.WriteString("</memory>")
+
+	if !hasContent {
+		return ""
+	}
+
+	return sb.String()
+}
+
+// estimateTokenCount estimates the token count for a given text.
+// This uses an improved algorithm that considers both ASCII and non-ASCII characters:
+// - ASCII characters (English, numbers, symbols): ~4 chars per token
+// - Non-ASCII characters (Chinese, Japanese, etc.): ~1.5 chars per token
+// This provides better accuracy for mixed-language content without requiring tiktoken.
+func estimateTokenCount(text string) int {
+	text = strings.TrimSpace(text)
+	if len(text) == 0 {
+		return 0
+	}
+
+	asciiCount := 0
+	nonAsciiCount := 0
+
+	for _, r := range text {
+		if r < 128 {
+			asciiCount++
+		} else {
+			nonAsciiCount++
+		}
+	}
+
+	// ASCII: ~4 chars per token (GPT tokenizer behavior)
+	// Non-ASCII: ~1.5 chars per token (CJK characters typically use more tokens)
+	asciiTokens := (asciiCount + 3) / 4
+	nonAsciiTokens := (nonAsciiCount*2 + 2) / 3 // *2/3 ≈ /1.5
+
+	return asciiTokens + nonAsciiTokens
+}
+
+// After filters the conversation and prepares for memory update.
+// This is called after each model invocation, but the actual queue operation
+// is deferred to AfterAgent to ensure it runs only once per agent run.
 func (m *MemoryMiddleware) After(ctx context.Context, state *middleware.State, response *middleware.Response) error {
 	_ = ctx
 	_ = response
+	// No-op: memory update is handled in AfterAgent.
+	return nil
+}
 
+// AfterAgent queues the conversation for asynchronous memory update at the end
+// of the agent run. This mirrors DeerFlow's MemoryMiddleware which uses after_agent.
+func (m *MemoryMiddleware) AfterAgent(_ context.Context, state *middleware.State, _ *middleware.Response) error {
 	filtered := filterMessagesForMemory(state.Messages)
 
 	hasHuman := false

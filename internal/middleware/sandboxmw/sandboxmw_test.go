@@ -69,8 +69,8 @@ func TestSandboxMiddleware_Before_AcquiresAndStores(t *testing.T) {
 	mw := New(provider)
 
 	state := &middleware.State{ThreadID: "thread1"}
-	if err := mw.Before(context.Background(), state); err != nil {
-		t.Fatalf("Before failed: %v", err)
+	if err := mw.BeforeAgent(context.Background(), state); err != nil {
+		t.Fatalf("BeforeAgent failed: %v", err)
 	}
 
 	got, ok := state.Extra["sandbox"].(*stubSandbox)
@@ -84,7 +84,7 @@ func TestSandboxMiddleware_Before_AcquireError(t *testing.T) {
 	mw := New(provider)
 
 	state := &middleware.State{ThreadID: "thread2"}
-	err := mw.Before(context.Background(), state)
+	err := mw.BeforeAgent(context.Background(), state)
 	if err == nil || !errors.Is(err, provider.acqErr) {
 		t.Errorf("expected acquire error, got %v", err)
 	}
@@ -93,7 +93,7 @@ func TestSandboxMiddleware_Before_AcquireError(t *testing.T) {
 func TestSandboxMiddleware_Before_NilProvider(t *testing.T) {
 	mw := New(nil)
 	state := &middleware.State{ThreadID: "thread3"}
-	if err := mw.Before(context.Background(), state); err != nil {
+	if err := mw.BeforeAgent(context.Background(), state); err != nil {
 		t.Errorf("expected no error with nil provider, got %v", err)
 	}
 }

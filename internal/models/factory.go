@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -10,6 +11,15 @@ import (
 
 	"github.com/bookerbai/goclaw/internal/config"
 )
+
+var logger = slog.Default()
+
+// SetLogger allows external code to inject a custom logger.
+func SetLogger(l *slog.Logger) {
+	if l != nil {
+		logger = l
+	}
+}
 
 // CreateRequest 描述一次模型创建请求。
 type CreateRequest struct {
@@ -77,10 +87,25 @@ func CreateChatModel(ctx context.Context, appCfg *config.AppConfig, req CreateRe
 		return nil, fmt.Errorf("models: model %q not found", req.ModelName)
 	}
 
+	// Thinking mode compatibility check (mirrors DeerFlow factory.py).
+	// Warn and disable thinking mode if model doesn't support it, rather than failing.
+	if req.ThinkingEnabled && !modelCfg.SupportsThinking {
+		logger.Warn("thinking mode enabled but model does not support it; disabling",
+			"model", modelCfg.Name)
+		req.ThinkingEnabled = false
+	}
+
 	provider := strings.ToLower(strings.TrimSpace(modelCfg.Use))
 	builder, ok := getProviderBuilder(provider)
 	if !ok {
 		return nil, fmt.Errorf("models: provider %q is not registered", provider)
+	}
+
+	// Warn if reasoning_effort is requested but not supported.
+	if req.ReasoningEffort != "" && !modelCfg.SupportsReasoningEffort {
+		logger.Warn("reasoning_effort requested but model does not support it; ignoring",
+			"model", modelCfg.Name,
+			"reasoning_effort", req.ReasoningEffort)
 	}
 
 	return builder(ctx, *modelCfg, BuildOptions{

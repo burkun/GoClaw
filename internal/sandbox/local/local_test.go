@@ -78,7 +78,7 @@ func TestLocalSandbox_pathEscape(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			// ReadFile must reject the path.
-			_, err := sb.ReadFile(ctx, tc.path)
+			_, err := sb.ReadFile(ctx, tc.path, 0, 0)
 			if err == nil {
 				t.Errorf("ReadFile(%q): expected error for path traversal, got nil", tc.path)
 			}
@@ -178,7 +178,7 @@ func TestLocalSandbox_readWrite(t *testing.T) {
 		if err := sb.WriteFile(ctx, virtualPath, content, false); err != nil {
 			t.Fatalf("WriteFile: %v", err)
 		}
-		got, err := sb.ReadFile(ctx, virtualPath)
+		got, err := sb.ReadFile(ctx, virtualPath, 0, 0)
 		if err != nil {
 			t.Fatalf("ReadFile: %v", err)
 		}
@@ -196,7 +196,7 @@ func TestLocalSandbox_readWrite(t *testing.T) {
 		if err := sb.WriteFile(ctx, virtualPath, second, true); err != nil {
 			t.Fatalf("WriteFile (append): %v", err)
 		}
-		got, err := sb.ReadFile(ctx, virtualPath)
+		got, err := sb.ReadFile(ctx, virtualPath, 0, 0)
 		if err != nil {
 			t.Fatalf("ReadFile after append: %v", err)
 		}
@@ -212,7 +212,7 @@ func TestLocalSandbox_readWrite(t *testing.T) {
 		if err := sb.WriteFile(ctx, virtualPath, "new content\n", false); err != nil {
 			t.Fatalf("WriteFile (new): %v", err)
 		}
-		got, err := sb.ReadFile(ctx, virtualPath)
+		got, err := sb.ReadFile(ctx, virtualPath, 0, 0)
 		if err != nil {
 			t.Fatalf("ReadFile: %v", err)
 		}
@@ -231,7 +231,7 @@ func TestLocalSandbox_readWrite(t *testing.T) {
 		if err := sb.StrReplace(ctx, virtualPath, "bar", "qux", false); err != nil {
 			t.Fatalf("StrReplace: %v", err)
 		}
-		got, err := sb.ReadFile(ctx, virtualPath)
+		got, err := sb.ReadFile(ctx, virtualPath, 0, 0)
 		if err != nil {
 			t.Fatalf("ReadFile: %v", err)
 		}

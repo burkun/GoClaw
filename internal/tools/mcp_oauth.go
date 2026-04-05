@@ -35,6 +35,8 @@ func NewOAuthTokenManager(httpClient *http.Client) *OAuthTokenManager {
 }
 
 // GetToken returns a cached token or fetches a new one.
+// The refreshSkewSeconds parameter controls how many seconds before expiration to refresh.
+// If refreshSkewSeconds <= 0, defaults to 60 seconds (aligned with DeerFlow).
 func (m *OAuthTokenManager) GetToken(ctx context.Context, serverName string, cfg *config.MCPOAuthConfig) (string, error) {
 	if m == nil || cfg == nil {
 		return "", nil
@@ -43,9 +45,15 @@ func (m *OAuthTokenManager) GetToken(ctx context.Context, serverName string, cfg
 		return "", nil
 	}
 
+	// Determine refresh skew from config or use default (60s aligned with DeerFlow)
+	refreshSkew := 60 * time.Second
+	if cfg.RefreshSkewSeconds > 0 {
+		refreshSkew = time.Duration(cfg.RefreshSkewSeconds) * time.Second
+	}
+
 	m.mu.Lock()
 	if entry, ok := m.cache[serverName]; ok {
-		if entry.accessToken != "" && time.Until(entry.expiresAt) > 30*time.Second {
+		if entry.accessToken != "" && time.Until(entry.expiresAt) > refreshSkew {
 			tok := entry.accessToken
 			typeHint := entry.tokenType
 			m.mu.Unlock()
@@ -74,6 +82,12 @@ func (m *OAuthTokenManager) GetToken(ctx context.Context, serverName string, cfg
 	if grant == "refresh_token" && strings.TrimSpace(cfg.RefreshToken) != "" {
 		form.Set("refresh_token", strings.TrimSpace(cfg.RefreshToken))
 	}
+	// Add extra token params if configured
+	if cfg.ExtraTokenParams != nil {
+		for k, v := range cfg.ExtraTokenParams {
+			form.Set(k, v)
+		}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -88,38 +102,76 @@ func (m *OAuthTokenManager) GetToken(ctx context.Context, serverName string, cfg
 	}
 	defer resp.Body.Close()
 
-	var payload struct {
-		AccessToken string `json:"access_token"`
-		TokenType   string `json:"token_type"`
-		ExpiresIn   int64  `json:"expires_in"`
+	// Determine field names from config or use defaults
+	tokenField := "access_token"
+	if cfg.TokenField != "" {
+		tokenField = cfg.TokenField
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	tokenTypeField := "token_type"
+	if cfg.TokenTypeField != "" {
+		tokenTypeField = cfg.TokenTypeField
+	}
+	expiresInField := "expires_in"
+	if cfg.ExpiresInField != "" {
+		expiresInField = cfg.ExpiresInField
+	}
+
+	var rawPayload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&rawPayload); err != nil {
 		return "", fmt.Errorf("oauth decode token response: %w", err)
 	}
 	if resp.StatusCode >= 300 {
 		return "", fmt.Errorf("oauth token endpoint status=%d", resp.StatusCode)
 	}
-	if strings.TrimSpace(payload.AccessToken) == "" {
-		return "", fmt.Errorf("oauth token response missing access_token")
+
+	var accessToken, tokenType string
+	var expiresIn int64
+	if v, ok := rawPayload[tokenField]; ok {
+		if s, ok := v.(string); ok {
+			accessToken = s
+		}
 	}
-	if payload.TokenType == "" {
-		payload.TokenType = "Bearer"
+	if v, ok := rawPayload[tokenTypeField]; ok {
+		if s, ok := v.(string); ok {
+			tokenType = s
+		}
 	}
-	if payload.ExpiresIn <= 0 {
-		payload.ExpiresIn = 3600
+	if v, ok := rawPayload[expiresInField]; ok {
+		switch n := v.(type) {
+		case float64:
+			expiresIn = int64(n)
+		case int64:
+			expiresIn = n
+		case int:
+			expiresIn = int64(n)
+		}
+	}
+
+	if strings.TrimSpace(accessToken) == "" {
+		return "", fmt.Errorf("oauth token response missing %s", tokenField)
+	}
+	if tokenType == "" {
+		if cfg.DefaultTokenType != "" {
+			tokenType = cfg.DefaultTokenType
+		} else {
+			tokenType = "Bearer"
+		}
+	}
+	if expiresIn <= 0 {
+		expiresIn = 3600
 	}
 
 	entry := oauthTokenEntry{
-		accessToken: payload.AccessToken,
-		tokenType:   payload.TokenType,
-		expiresAt:   time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second),
+		accessToken: accessToken,
+		tokenType:   tokenType,
+		expiresAt:   time.Now().Add(time.Duration(expiresIn) * time.Second),
 	}
 
 	m.mu.Lock()
 	m.cache[serverName] = entry
 	m.mu.Unlock()
 
-	return payload.TokenType + " " + payload.AccessToken, nil
+	return tokenType + " " + accessToken, nil
 }
 
 var globalOAuthTokenManager = NewOAuthTokenManager(nil)

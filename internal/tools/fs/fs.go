@@ -1,6 +1,6 @@
 // Package fs implements file-system tools for the GoClaw agent harness.
 //
-// Virtual path system
+// # Virtual path system
 //
 // Agent-visible paths always use the /mnt/user-data/ prefix, which is
 // translated to the actual per-thread host directory at runtime. This mirrors
@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // VirtualPathPrefix is the root of all virtual paths that the agent uses.
@@ -36,12 +37,40 @@ const VirtualPathPrefix = "/mnt/user-data"
 // tool via Execute's input JSON or by constructing the tool with PathMapping
 // directly (the tools embed it via ThreadPaths).
 type PathMapping struct {
+	// ThreadID is the logical thread identifier owning these paths.
+	ThreadID string
 	// WorkspacePath is the host path that corresponds to /mnt/user-data/workspace.
 	WorkspacePath string
 	// UploadsPath is the host path that corresponds to /mnt/user-data/uploads.
 	UploadsPath string
 	// OutputsPath is the host path that corresponds to /mnt/user-data/outputs.
 	OutputsPath string
+}
+
+type fileOpLockKey struct {
+	threadID string
+	hostPath string
+}
+
+var (
+	fileOperationLocks      = map[fileOpLockKey]*sync.Mutex{}
+	fileOperationLocksGuard sync.Mutex
+)
+
+func getFileOperationLock(threadID string, hostPath string) *sync.Mutex {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		threadID = "default"
+	}
+	key := fileOpLockKey{threadID: threadID, hostPath: filepath.Clean(hostPath)}
+	fileOperationLocksGuard.Lock()
+	defer fileOperationLocksGuard.Unlock()
+	if l, ok := fileOperationLocks[key]; ok {
+		return l
+	}
+	l := &sync.Mutex{}
+	fileOperationLocks[key] = l
+	return l
 }
 
 // ResolveVirtualPath translates a virtual /mnt/user-data/* path to its host
@@ -166,6 +195,8 @@ func ensureDir(dir string) error {
 // ReadFileTool
 // ---------------------------------------------------------------------------
 
+const DefaultReadFileMaxChars = 50000
+
 // ReadFileTool reads a text file at a virtual path and returns its content.
 // Optionally restricts output to a line range [StartLine, EndLine] (1-indexed,
 // inclusive) to avoid flooding the model's context with very large files.
@@ -174,6 +205,9 @@ func ensureDir(dir string) error {
 type ReadFileTool struct {
 	// Paths holds the per-thread path mapping injected by the sandbox layer.
 	Paths *PathMapping
+	// MaxChars is the maximum number of characters returned.
+	// Values <= 0 use DefaultReadFileMaxChars.
+	MaxChars int
 }
 
 // readFileInput is the JSON-decoded input for ReadFileTool.
@@ -267,8 +301,11 @@ func (t *ReadFileTool) Execute(_ context.Context, input string) (string, error) 
 		content = strings.Join(lines[start:end], "\n")
 	}
 
-	// Apply max-chars truncation guard (50,000 chars).
-	const maxChars = 50000
+	// Apply max-chars truncation guard.
+	maxChars := t.MaxChars
+	if maxChars <= 0 {
+		maxChars = DefaultReadFileMaxChars
+	}
 	if len(content) > maxChars {
 		content = content[:maxChars] + "\n... (truncated)"
 	}
@@ -338,6 +375,10 @@ func (t *WriteFileTool) Execute(_ context.Context, input string) (string, error)
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), nil
 	}
+
+	lock := getFileOperationLock(pathThreadID(t.Paths), hostPath)
+	lock.Lock()
+	defer lock.Unlock()
 
 	// Ensure parent directory exists.
 	if err := ensureDir(filepath.Dir(hostPath)); err != nil {
@@ -438,6 +479,10 @@ func (t *EditFileTool) Execute(_ context.Context, input string) (string, error) 
 		return fmt.Sprintf("Error: %v", err), nil
 	}
 
+	lock := getFileOperationLock(pathThreadID(t.Paths), hostPath)
+	lock.Lock()
+	defer lock.Unlock()
+
 	// Read current file content.
 	data, err := os.ReadFile(hostPath)
 	if err != nil {
@@ -480,6 +525,16 @@ func (t *EditFileTool) Execute(_ context.Context, input string) (string, error) 
 	}
 
 	return "OK", nil
+}
+
+func pathThreadID(paths *PathMapping) string {
+	if paths == nil {
+		return "default"
+	}
+	if strings.TrimSpace(paths.ThreadID) == "" {
+		return "default"
+	}
+	return strings.TrimSpace(paths.ThreadID)
 }
 
 // ---------------------------------------------------------------------------

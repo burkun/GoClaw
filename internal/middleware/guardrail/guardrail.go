@@ -2,16 +2,19 @@
 //
 // GuardrailMiddleware provides authorization checks before tool execution,
 // implementing permit/deny/ask decision logic based on configurable policies.
+// This implementation aligns with DeerFlow's GuardrailMiddleware and OAP standard.
 package guardrail
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
 
-// Decision represents a guardrail authorization decision.
+// Decision represents a guardrail authorization decision (legacy, kept for compatibility).
 type Decision string
 
 const (
@@ -20,7 +23,7 @@ const (
 	DecisionAsk    Decision = "ask"
 )
 
-// Policy defines a guardrail policy rule.
+// Policy defines a guardrail policy rule (legacy, kept for compatibility).
 type Policy struct {
 	// ToolPattern is a glob pattern for matching tool names.
 	ToolPattern string
@@ -37,10 +40,20 @@ type Config struct {
 	// Enabled controls whether guardrail checks run.
 	Enabled bool
 
-	// Policies is the ordered list of policy rules.
+	// FailClosed controls behavior when provider errors.
+	// If true (default), deny on error. If false, allow on error.
+	FailClosed bool
+
+	// Passport is passed to provider as request.agent_id.
+	Passport string
+
+	// Provider is the GuardrailProvider implementation.
+	Provider GuardrailProvider
+
+	// Policies is the ordered list of policy rules (legacy, for backward compatibility).
 	Policies []Policy
 
-	// DefaultDecision is used when no policy matches.
+	// DefaultDecision is used when no policy matches (legacy).
 	DefaultDecision Decision
 }
 
@@ -48,12 +61,14 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		Enabled:         false,
+		FailClosed:      true,
 		DefaultDecision: DecisionPermit,
 		Policies:        nil,
 	}
 }
 
 // GuardrailMiddleware enforces authorization policies.
+// It implements the Middleware interface with full WrapToolCall support.
 type GuardrailMiddleware struct {
 	middleware.MiddlewareWrapper
 	cfg Config
@@ -61,13 +76,18 @@ type GuardrailMiddleware struct {
 
 // NewGuardrailMiddleware constructs a GuardrailMiddleware.
 func NewGuardrailMiddleware(cfg Config) *GuardrailMiddleware {
+	// Ensure FailClosed defaults to true for safety.
+	if cfg.Enabled && !cfg.FailClosed {
+		slog.Warn("guardrail: fail_closed is false, provider errors will allow tool calls")
+	}
 	return &GuardrailMiddleware{cfg: cfg}
 }
 
 // Name implements middleware.Middleware.
 func (m *GuardrailMiddleware) Name() string { return "GuardrailMiddleware" }
 
-// Before checks authorization for pending tool calls.
+// Before checks authorization for pending tool calls (legacy support).
+// This is kept for backward compatibility with code that uses pending_tool_calls.
 func (m *GuardrailMiddleware) Before(_ context.Context, state *middleware.State) error {
 	if !m.cfg.Enabled || state == nil || state.Extra == nil {
 		return nil
@@ -81,7 +101,7 @@ func (m *GuardrailMiddleware) Before(_ context.Context, state *middleware.State)
 	return nil
 }
 
-// After applies authorization checks to current response tool calls.
+// After applies authorization checks to current response tool calls (legacy support).
 func (m *GuardrailMiddleware) After(_ context.Context, state *middleware.State, resp *middleware.Response) error {
 	if !m.cfg.Enabled || resp == nil || len(resp.ToolCalls) == 0 {
 		return nil
@@ -96,6 +116,137 @@ func (m *GuardrailMiddleware) After(_ context.Context, state *middleware.State, 
 	return nil
 }
 
+// WrapToolCall intercepts tool calls and evaluates them against the guardrail provider.
+// This is the primary interception point for OAP-compliant authorization.
+// If the tool is denied, it returns a ToolResult with an error message instead of executing the tool.
+func (m *GuardrailMiddleware) WrapToolCall(ctx context.Context, state *middleware.State, toolCall *middleware.ToolCall, handler middleware.ToolHandler) (*middleware.ToolResult, error) {
+	// If guardrail is disabled, pass through to the actual tool handler.
+	if !m.cfg.Enabled {
+		return handler(ctx, toolCall)
+	}
+
+	// Build the guardrail request.
+	req := m.buildRequest(state, toolCall)
+
+	// Evaluate against the provider.
+	decision, err := m.evaluateWithProvider(ctx, req)
+	if err != nil {
+		// Provider error - handle based on fail_closed setting.
+		slog.Error("guardrail: provider evaluation error", "tool", toolCall.Name, "error", err)
+		if m.cfg.FailClosed {
+			// Fail closed: deny the call.
+			return m.buildDeniedResult(toolCall, GuardrailDecision{
+				Allow: false,
+				Reasons: []GuardrailReason{{
+					Code:    ReasonEvaluatorError,
+					Message: "guardrail provider error (fail-closed)",
+				}},
+			}), nil
+		}
+		// Fail open: allow the call with a warning.
+		slog.Warn("guardrail: fail_open is set, allowing tool call despite provider error", "tool", toolCall.Name)
+		return handler(ctx, toolCall)
+	}
+
+	// If allowed, execute the actual tool handler.
+	if decision.Allow {
+		slog.Debug("guardrail: tool call allowed", "tool", toolCall.Name, "policy", decision.PolicyID)
+		return handler(ctx, toolCall)
+	}
+
+	// Denied: return an error ToolResult without executing the tool.
+	slog.Warn("guardrail: tool call denied",
+		"tool", toolCall.Name,
+		"policy", decision.PolicyID,
+		"code", m.firstReasonCode(decision),
+	)
+	return m.buildDeniedResult(toolCall, decision), nil
+}
+
+// buildRequest creates a GuardrailRequest from the tool call and state.
+func (m *GuardrailMiddleware) buildRequest(state *middleware.State, toolCall *middleware.ToolCall) GuardrailRequest {
+	threadID := ""
+	isSubagent := false
+	if state != nil {
+		threadID = state.ThreadID
+		if state.Extra != nil {
+			if sub, ok := state.Extra["is_subagent"].(bool); ok {
+				isSubagent = sub
+			}
+		}
+	}
+
+	return GuardrailRequest{
+		ToolName:   toolCall.Name,
+		ToolInput:  toolCall.Input,
+		AgentID:    m.cfg.Passport,
+		ThreadID:   threadID,
+		IsSubagent: isSubagent,
+		Timestamp:  strings.ReplaceAll(strings.ReplaceAll(
+			strings.Split(fmt.Sprintf("%v", toolCall), " ")[0], "[", ""), "]", ""),
+	}
+}
+
+// evaluateWithProvider evaluates the request against the configured provider.
+func (m *GuardrailMiddleware) evaluateWithProvider(ctx context.Context, req GuardrailRequest) (GuardrailDecision, error) {
+	// If a modern provider is configured, use it.
+	if m.cfg.Provider != nil {
+		return m.cfg.Provider.Evaluate(ctx, req)
+	}
+
+	// Fall back to legacy policy evaluation for backward compatibility.
+	return m.evaluateLegacy(req.ToolName), nil
+}
+
+// evaluateLegacy evaluates using the legacy policy list.
+func (m *GuardrailMiddleware) evaluateLegacy(toolName string) GuardrailDecision {
+	for _, policy := range m.cfg.Policies {
+		if matchPattern(policy.ToolPattern, toolName) {
+			if policy.Decision == DecisionDeny {
+				return DecisionDenied(ReasonToolNotAllowed, policy.Reason)
+			}
+			return DecisionAllowed()
+		}
+	}
+
+	// Use default decision.
+	if m.cfg.DefaultDecision == DecisionDeny {
+		return DecisionDenied(ReasonToolNotAllowed, "blocked by default guardrail policy")
+	}
+	return DecisionAllowed()
+}
+
+// buildDeniedResult creates a ToolResult that contains the denial message.
+// The agent sees this as if the tool returned an error, allowing it to adapt.
+func (m *GuardrailMiddleware) buildDeniedResult(toolCall *middleware.ToolCall, decision GuardrailDecision) *middleware.ToolResult {
+	reasonText := "blocked by guardrail policy"
+	reasonCode := ReasonToolNotAllowed
+	if len(decision.Reasons) > 0 {
+		reasonText = decision.Reasons[0].Message
+		reasonCode = decision.Reasons[0].Code
+	}
+
+	// Build a user-friendly error message that the agent can understand.
+	// This mirrors DeerFlow's _build_denied_message pattern.
+	message := fmt.Sprintf("Guardrail denied: tool '%s' was blocked (%s). Reason: %s. Choose an alternative approach.",
+		toolCall.Name, reasonCode, reasonText)
+
+	return &middleware.ToolResult{
+		ID:     toolCall.ID,
+		Output: message,
+		Error:  fmt.Errorf("guardrail: %s: %s", reasonCode, reasonText),
+	}
+}
+
+// firstReasonCode returns the code of the first reason, or a default.
+func (m *GuardrailMiddleware) firstReasonCode(decision GuardrailDecision) string {
+	if len(decision.Reasons) > 0 {
+		return decision.Reasons[0].Code
+	}
+	return "unknown"
+}
+
+// applyDecisions applies legacy decisions to tool calls (for backward compatibility).
 func (m *GuardrailMiddleware) applyDecisions(toolCalls []map[string]any) {
 	for i, tc := range toolCalls {
 		toolName, _ := tc["name"].(string)
@@ -115,6 +266,7 @@ func (m *GuardrailMiddleware) applyDecisions(toolCalls []map[string]any) {
 	}
 }
 
+// evaluate is the legacy evaluation function for backward compatibility.
 func (m *GuardrailMiddleware) evaluate(toolName string) (Decision, string) {
 	for _, policy := range m.cfg.Policies {
 		if matchPattern(policy.ToolPattern, toolName) {

@@ -22,7 +22,7 @@ func NewPresentFileTool(threadID, outputsPath string) *PresentFileTool {
 }
 
 // Name returns the tool name.
-func (t *PresentFileTool) Name() string { return "present_file" }
+func (t *PresentFileTool) Name() string { return "present_files" }
 
 // Description returns the tool description.
 func (t *PresentFileTool) Description() string {

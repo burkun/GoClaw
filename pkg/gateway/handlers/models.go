@@ -2,11 +2,13 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/models"
 )
 
 // ModelsHandler serves the /api/models endpoint.
@@ -29,6 +31,14 @@ type ModelResponse struct {
 	DisplayName string `json:"display_name,omitempty"`
 	// Description is an optional prose description of the model.
 	Description string `json:"description,omitempty"`
+	// UseResponsesAPI indicates whether this model opts into Responses API.
+	UseResponsesAPI *bool `json:"use_responses_api,omitempty"`
+	// OutputVersion is the configured structured output version.
+	OutputVersion string `json:"output_version,omitempty"`
+	// HasAPIBase indicates whether api_base/base_url override is configured.
+	HasAPIBase bool `json:"has_api_base"`
+	// HasGeminiAPIKey indicates whether gemini_api_key is configured.
+	HasGeminiAPIKey bool `json:"has_gemini_api_key"`
 	// Capabilities holds feature flags for this model.
 	Capabilities ModelCapabilities `json:"capabilities"`
 }
@@ -48,6 +58,13 @@ type ModelsListResponse struct {
 	Models []ModelResponse `json:"models"`
 }
 
+// ModelValidateResponse is the response for POST /api/models/:id/validate.
+type ModelValidateResponse struct {
+	Valid   bool   `json:"valid"`
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
 // ListModels handles GET /api/models.
 // It reads the model configuration list and returns each model's public metadata.
 // Sensitive fields (API keys, base URLs, internal routing config) are excluded.
@@ -57,10 +74,14 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 		models = make([]ModelResponse, 0, len(h.cfg.Models))
 		for _, model := range h.cfg.Models {
 			models = append(models, ModelResponse{
-				ID:          model.Name,
-				Model:       model.Model,
-				DisplayName: model.DisplayName,
-				Description: model.Description,
+				ID:              model.Name,
+				Model:           model.Model,
+				DisplayName:     model.DisplayName,
+				Description:     model.Description,
+				UseResponsesAPI: model.UseResponsesAPI,
+				OutputVersion:   model.OutputVersion,
+				HasAPIBase:      model.APIBase != "" || model.BaseURL != "",
+				HasGeminiAPIKey: model.GeminiAPIKey != "",
 				Capabilities: ModelCapabilities{
 					SupportsThinking:        model.SupportsThinking,
 					SupportsReasoningEffort: model.SupportsReasoningEffort,
@@ -71,4 +92,83 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, ModelsListResponse{Models: models})
+}
+
+// GetModel handles GET /api/models/:id.
+// Returns detailed configuration for a specific model.
+func (h *ModelsHandler) GetModel(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model id required"})
+		return
+	}
+
+	if h.cfg == nil {
+		NewServiceUnavailableError("config unavailable").Render(c, http.StatusServiceUnavailable)
+		return
+	}
+
+	modelCfg := h.cfg.GetModelConfig(id)
+	if modelCfg == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "model not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, ModelResponse{
+		ID:              modelCfg.Name,
+		Model:           modelCfg.Model,
+		DisplayName:     modelCfg.DisplayName,
+		Description:     modelCfg.Description,
+		UseResponsesAPI: modelCfg.UseResponsesAPI,
+		OutputVersion:   modelCfg.OutputVersion,
+		HasAPIBase:      modelCfg.APIBase != "" || modelCfg.BaseURL != "",
+		HasGeminiAPIKey: modelCfg.GeminiAPIKey != "",
+		Capabilities: ModelCapabilities{
+			SupportsThinking:        modelCfg.SupportsThinking,
+			SupportsReasoningEffort: modelCfg.SupportsReasoningEffort,
+			SupportsVision:          modelCfg.SupportsVision,
+		},
+	})
+}
+
+// ValidateModel handles POST /api/models/:id/validate.
+// Tests whether the model can be instantiated successfully.
+func (h *ModelsHandler) ValidateModel(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model id required"})
+		return
+	}
+
+	if h.cfg == nil {
+		NewServiceUnavailableError("config unavailable").Render(c, http.StatusServiceUnavailable)
+		return
+	}
+
+	modelCfg := h.cfg.GetModelConfig(id)
+	if modelCfg == nil {
+		c.JSON(http.StatusNotFound, ModelValidateResponse{
+			Valid:   false,
+			Message: "model not found",
+		})
+		return
+	}
+
+	// Attempt to create the model to validate configuration
+	_, err := models.CreateChatModel(context.Background(), h.cfg, models.CreateRequest{
+		ModelName: id,
+	})
+	if err != nil {
+		c.JSON(http.StatusOK, ModelValidateResponse{
+			Valid:   false,
+			Message: "model validation failed",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, ModelValidateResponse{
+		Valid:   true,
+		Message: "model validated successfully",
+	})
 }

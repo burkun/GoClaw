@@ -35,32 +35,51 @@ type EventCallback func(ctx context.Context, taskID string, event TaskEvent)
 
 // TaskRequest is the input for a subagent task.
 type TaskRequest struct {
-	Description  string
-	Prompt       string
-	SubagentType string
-	MaxTurns     int
-	Timeout      time.Duration
-	ModelName    string
-	SystemPrompt string
-	AllowedTools []string
+	Description     string
+	Prompt          string
+	SubagentType    string
+	MaxTurns        int
+	Timeout         time.Duration
+	ModelName       string
+	SystemPrompt    string
+	AllowedTools    []string
+	DisallowedTools []string
+	TraceID         string // Trace ID for logging correlation
+	// State passed from parent agent
+	ThreadID      string
+	WorkspacePath string
+	UploadsPath   string
+	OutputsPath   string
 }
 
 // TaskResult is the observable result/state of a task.
 type TaskResult struct {
-	TaskID       string    `json:"task_id"`
-	Description  string    `json:"description,omitempty"`
-	Prompt       string    `json:"prompt"`
-	SubagentType string    `json:"subagent_type"`
-	Status       Status    `json:"status"`
-	Output       string    `json:"output,omitempty"`
-	Error        string    `json:"error,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
-	FinishedAt   time.Time `json:"finished_at,omitempty"`
+	TaskID       string                   `json:"task_id"`
+	TraceID      string                   `json:"trace_id,omitempty"`
+	Description  string                   `json:"description,omitempty"`
+	Prompt       string                   `json:"prompt"`
+	SubagentType string                   `json:"subagent_type"`
+	Status       Status                   `json:"status"`
+	Output       string                   `json:"output,omitempty"`
+	Error        string                   `json:"error,omitempty"`
+	AIMessages   []map[string]interface{} `json:"ai_messages,omitempty"`
+	CreatedAt    time.Time                `json:"created_at"`
+	StartedAt    time.Time                `json:"started_at,omitempty"`
+	FinishedAt   time.Time                `json:"finished_at,omitempty"`
+}
+
+// WorkerResult is the result returned by a worker function.
+type WorkerResult struct {
+	Output     string
+	Error      error
+	AIMessages []map[string]interface{}
 }
 
 // WorkerFunc executes a subagent task.
 type WorkerFunc func(ctx context.Context, req TaskRequest) (string, error)
+
+// WorkerFuncWithMessages executes a subagent task and returns messages.
+type WorkerFuncWithMessages func(ctx context.Context, req TaskRequest) (WorkerResult, error)
 
 // ExecutorConfig controls concurrency and timeout behaviour.
 type ExecutorConfig struct {
@@ -70,12 +89,12 @@ type ExecutorConfig struct {
 
 // Executor runs subagent tasks with bounded concurrency.
 type Executor struct {
-	cfg          ExecutorConfig
-	sem          chan struct{}
-	mu           sync.RWMutex
-	tasks        map[string]*taskRecord
-	callbacks    map[string]map[int]EventCallback
-	callbackSeq  int
+	cfg         ExecutorConfig
+	sem         chan struct{}
+	mu          sync.RWMutex
+	tasks       map[string]*taskRecord
+	callbacks   map[string]map[int]EventCallback
+	callbackSeq int
 }
 
 type taskRecord struct {
@@ -97,9 +116,19 @@ func DefaultExecutor() *Executor {
 }
 
 // NewExecutor creates an executor with sane defaults.
+// MaxConcurrent is clamped to [2, 4] range.
 func NewExecutor(cfg ExecutorConfig) *Executor {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 3
+	}
+	// Clamp max_concurrent to [2, 4] range.
+	const minConcurrent = 2
+	const maxConcurrent = 4
+	if cfg.MaxConcurrent < minConcurrent {
+		cfg.MaxConcurrent = minConcurrent
+	}
+	if cfg.MaxConcurrent > maxConcurrent {
+		cfg.MaxConcurrent = maxConcurrent
 	}
 	if cfg.DefaultTimeout <= 0 {
 		cfg.DefaultTimeout = 15 * time.Minute
@@ -128,10 +157,12 @@ func (e *Executor) Submit(ctx context.Context, req TaskRequest, worker WorkerFun
 	}
 
 	taskID := uuid.NewString()
+	traceID := generateTraceID()
 	now := time.Now()
 	rec := &taskRecord{
 		result: TaskResult{
 			TaskID:       taskID,
+			TraceID:      traceID,
 			Description:  req.Description,
 			Prompt:       req.Prompt,
 			SubagentType: req.SubagentType,
@@ -148,6 +179,47 @@ func (e *Executor) Submit(ctx context.Context, req TaskRequest, worker WorkerFun
 	e.setStatus(taskID, StatusQueued, "", "")
 
 	go e.runTask(ctx, taskID, req, worker)
+	return taskID, nil
+}
+
+// SubmitWithMessages enqueues a task with a worker that returns AI messages.
+func (e *Executor) SubmitWithMessages(ctx context.Context, req TaskRequest, worker WorkerFuncWithMessages) (string, error) {
+	if worker == nil {
+		return "", fmt.Errorf("subagents: worker is required")
+	}
+	if req.Prompt == "" {
+		return "", fmt.Errorf("subagents: prompt is required")
+	}
+	if req.SubagentType == "" {
+		req.SubagentType = "general-purpose"
+	}
+	if req.Timeout <= 0 {
+		req.Timeout = e.cfg.DefaultTimeout
+	}
+
+	taskID := uuid.NewString()
+	traceID := generateTraceID()
+	now := time.Now()
+	rec := &taskRecord{
+		result: TaskResult{
+			TaskID:       taskID,
+			TraceID:      traceID,
+			Description:  req.Description,
+			Prompt:       req.Prompt,
+			SubagentType: req.SubagentType,
+			Status:       StatusPending,
+			CreatedAt:    now,
+		},
+		done: make(chan struct{}),
+	}
+
+	e.mu.Lock()
+	e.tasks[taskID] = rec
+	e.mu.Unlock()
+
+	e.setStatus(taskID, StatusQueued, "", "")
+
+	go e.runTaskWithMessages(ctx, taskID, req, worker)
 	return taskID, nil
 }
 
@@ -182,6 +254,47 @@ func (e *Executor) runTask(ctx context.Context, taskID string, req TaskRequest, 
 	}
 
 	e.finishTask(taskID, StatusCompleted, output, "")
+}
+
+func (e *Executor) runTaskWithMessages(ctx context.Context, taskID string, req TaskRequest, worker WorkerFuncWithMessages) {
+	// Acquire concurrency slot.
+	select {
+	case e.sem <- struct{}{}:
+		defer func() { <-e.sem }()
+	case <-ctx.Done():
+		e.finishTaskWithMessages(taskID, StatusFailed, "", ctx.Err().Error(), nil)
+		return
+	}
+
+	// Get trace ID from task record
+	e.mu.RLock()
+	rec, ok := e.tasks[taskID]
+	if ok && rec.result.TraceID != "" {
+		req.TraceID = rec.result.TraceID
+	}
+	e.mu.RUnlock()
+
+	e.markStarted(taskID)
+
+	runCtx, cancel := context.WithTimeout(ctx, req.Timeout)
+	defer cancel()
+
+	result, err := worker(runCtx, req)
+	if err != nil {
+		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+			e.finishTaskWithMessages(taskID, StatusTimedOut, result.Output, runCtx.Err().Error(), result.AIMessages)
+			return
+		}
+		e.finishTaskWithMessages(taskID, StatusFailed, result.Output, err.Error(), result.AIMessages)
+		return
+	}
+
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		e.finishTaskWithMessages(taskID, StatusTimedOut, result.Output, runCtx.Err().Error(), result.AIMessages)
+		return
+	}
+
+	e.finishTaskWithMessages(taskID, StatusCompleted, result.Output, "", result.AIMessages)
 }
 
 // Get returns a snapshot of a task result.
@@ -275,6 +388,10 @@ func (e *Executor) markStarted(taskID string) {
 }
 
 func (e *Executor) finishTask(taskID string, st Status, output, errMsg string) {
+	e.finishTaskWithMessages(taskID, st, output, errMsg, nil)
+}
+
+func (e *Executor) finishTaskWithMessages(taskID string, st Status, output, errMsg string, aiMessages []map[string]interface{}) {
 	e.mu.Lock()
 	rec, ok := e.tasks[taskID]
 	if !ok {
@@ -285,6 +402,9 @@ func (e *Executor) finishTask(taskID string, st Status, output, errMsg string) {
 	rec.result.Output = output
 	rec.result.Error = errMsg
 	rec.result.FinishedAt = time.Now()
+	if len(aiMessages) > 0 {
+		rec.result.AIMessages = aiMessages
+	}
 	select {
 	case <-rec.done:
 		// already closed
@@ -335,4 +455,9 @@ func (e *Executor) dispatchEventLocked(taskID string, event TaskEvent) {
 	for _, cb := range callbacks {
 		go cb(context.Background(), taskID, event)
 	}
+}
+
+// generateTraceID creates an 8-character trace ID for logging correlation.
+func generateTraceID() string {
+	return uuid.NewString()[:8]
 }

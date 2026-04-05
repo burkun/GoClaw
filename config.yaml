@@ -1,0 +1,39 @@
+# GoClaw测试配置
+config_version: 1
+log_level: info
+
+# 服务器配置
+server:
+  address: ":8001"
+
+# 模型配置（使用mock或不需要API key的配置）
+# 注意：需要在代码中注册provider才能使用
+# models:
+#   - name: test-model
+#     display_name: Test Model
+#     use: openai
+#     model: gpt-3.5-turbo
+#     api_key: test-key
+#     max_tokens: 100
+
+# Agents配置（现在通过API动态创建）
+# agents:
+#   researcher:
+#     enabled: true
+#     description: "Research agent for testing"
+#   coder:
+#     enabled: true
+#     description: "Code agent for testing"
+
+# 禁用不需要的功能
+sandbox:
+  use: local
+
+memory:
+  enabled: false
+
+title:
+  enabled: false
+
+summarization:
+  enabled: false

@@ -3,8 +3,11 @@ package fs_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/bookerbai/goclaw/internal/tools/fs"
@@ -29,6 +32,7 @@ func newTestPaths(t *testing.T) (*fs.PathMapping, func()) {
 	}
 
 	m := &fs.PathMapping{
+		ThreadID:      "test-thread",
 		WorkspacePath: workspace,
 		UploadsPath:   uploads,
 		OutputsPath:   outputs,
@@ -147,6 +151,30 @@ func TestReadFile_LineRange(t *testing.T) {
 		t.Fatalf("Execute: unexpected error: %v", err)
 	}
 	want := "line2\nline3\nline4"
+	if got != want {
+		t.Errorf("Execute: got %q, want %q", got, want)
+	}
+}
+
+func TestReadFile_MaxChars_Configurable(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.ReadFileTool{Paths: paths, MaxChars: 5}
+
+	hostFile := filepath.Join(paths.WorkspacePath, "long.txt")
+	writeHostFile(t, hostFile, "1234567890")
+
+	input := makeInput(t, map[string]any{
+		"description": "read long.txt",
+		"path":        "/mnt/user-data/workspace/long.txt",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	want := "12345\n... (truncated)"
 	if got != want {
 		t.Errorf("Execute: got %q, want %q", got, want)
 	}
@@ -317,5 +345,44 @@ func TestResolveVirtualPath_Mapping(t *testing.T) {
 		if !filepath.HasPrefix(got, tc.wantDir) {
 			t.Errorf("ResolveVirtualPath(%q): got %q, expected path under %q", tc.virtual, got, tc.wantDir)
 		}
+	}
+}
+
+func TestWriteFile_ConcurrentAppend_NoDataLoss(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.WriteFileTool{Paths: paths}
+	hostFile := filepath.Join(paths.WorkspacePath, "concurrent.log")
+
+	const workers = 20
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			input := makeInput(t, map[string]any{
+				"description": "append concurrent line",
+				"path":        "/mnt/user-data/workspace/concurrent.log",
+				"content":     fmt.Sprintf("line-%02d\n", i),
+				"append":      true,
+			})
+			got, err := tool.Execute(context.Background(), input)
+			if err != nil {
+				t.Errorf("Execute: unexpected Go error: %v", err)
+				return
+			}
+			if got != "OK" {
+				t.Errorf("Execute: got %q, want OK", got)
+			}
+		}()
+	}
+	wg.Wait()
+
+	content := readHostFile(t, hostFile)
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	if len(lines) != workers {
+		t.Fatalf("expected %d lines, got %d; content=%q", workers, len(lines), content)
 	}
 }

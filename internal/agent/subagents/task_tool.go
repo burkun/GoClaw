@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/bookerbai/goclaw/internal/agent/subagents/builtins"
 	"github.com/bookerbai/goclaw/internal/config"
 	"github.com/bookerbai/goclaw/internal/models"
 	toolruntime "github.com/bookerbai/goclaw/internal/tools"
@@ -20,8 +22,12 @@ const TaskToolName = "task"
 // TaskToolConfig controls runtime behaviour for task tool.
 type TaskToolConfig struct {
 	Executor    *Executor
-	Worker      WorkerFunc
+	Worker      WorkerFuncWithMessages
 	WaitTimeout time.Duration
+	// PollInterval is the interval between status polls during backend polling.
+	PollInterval time.Duration
+	// BackendPolling enables long-polling in the tool (DeerFlow style).
+	BackendPolling bool
 }
 
 // TaskTool delegates a sub-task to the subagent executor.
@@ -59,8 +65,12 @@ func NewTaskTool(cfg TaskToolConfig) *TaskTool {
 	if cfg.WaitTimeout <= 0 {
 		cfg.WaitTimeout = 2 * time.Second
 	}
+	if cfg.PollInterval <= 0 {
+		cfg.PollInterval = 5 * time.Second
+	}
 	if cfg.Worker == nil {
-		cfg.Worker = defaultWorker
+		// Use the full agent worker with AI message collection
+		cfg.Worker = AgentWorkerFuncWithMessages()
 	}
 	return &TaskTool{cfg: cfg}
 }
@@ -89,7 +99,7 @@ func (t *TaskTool) InputSchema() json.RawMessage {
 }`)
 }
 
-// Execute submits a task and waits briefly for completion.
+// Execute submits a task and either waits briefly (legacy) or polls until completion (DeerFlow style).
 func (t *TaskTool) Execute(ctx context.Context, input string) (string, error) {
 	var in taskToolInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
@@ -109,16 +119,157 @@ func (t *TaskTool) Execute(ctx context.Context, input string) (string, error) {
 		req.Timeout = time.Duration(in.TimeoutSeconds) * time.Second
 	}
 
+	// Extract state from context (passed by parent agent)
+	if vals := adk.GetSessionValues(ctx); vals != nil {
+		if v, ok := vals["thread_id"].(string); ok {
+			req.ThreadID = v
+		}
+		if v, ok := vals["workspace_path"].(string); ok {
+			req.WorkspacePath = v
+		}
+		if v, ok := vals["uploads_path"].(string); ok {
+			req.UploadsPath = v
+		}
+		if v, ok := vals["outputs_path"].(string); ok {
+			req.OutputsPath = v
+		}
+	}
+
 	// Validate and apply type config if available.
 	if err := ValidateAndApplySubagentType(req.SubagentType, &req); err != nil {
 		return "", fmt.Errorf("task tool: subagent type validation failed: %w", err)
 	}
 
-	taskID, err := t.cfg.Executor.Submit(ctx, req, t.cfg.Worker)
+	// Submit task with AI message collection
+	taskID, err := t.cfg.Executor.SubmitWithMessages(ctx, req, t.cfg.Worker)
 	if err != nil {
 		return "", fmt.Errorf("task tool: submit failed: %w", err)
 	}
 
+	subject := taskSubject(req)
+
+	// Send task_started event
+	SendTaskStarted(ctx, taskID, subject)
+
+	// Choose polling mode
+	if t.cfg.BackendPolling {
+		// DeerFlow style: backend polls until completion and sends task_running events
+		return t.executeWithBackendPolling(ctx, taskID, subject, req.Timeout)
+	}
+
+	// Legacy mode: brief wait then return current status
+	return t.executeWithBriefWait(ctx, taskID, subject, req)
+}
+
+// executeWithBackendPolling polls until task completion, sending task_running events.
+// Includes max_poll_count safety net to prevent infinite polling.
+func (t *TaskTool) executeWithBackendPolling(ctx context.Context, taskID, subject string, timeout time.Duration) (string, error) {
+	lastMessageCount := 0
+	lastStatus := StatusPending
+	pollCount := 0
+
+	// Calculate max poll count based on timeout and poll interval.
+	// Add buffer of 60 seconds for safety.
+	maxPollCount := int((timeout + 60*time.Second) / t.cfg.PollInterval)
+	if maxPollCount < 10 {
+		maxPollCount = 10 // Minimum safety net
+	}
+
+	for {
+		pollCount++
+
+		// Safety net: prevent infinite polling
+		if pollCount > maxPollCount {
+			SendTaskFailed(ctx, taskID, fmt.Sprintf("polling exceeded max_poll_count (%d)", maxPollCount))
+			return mustJSON(taskToolOutput{
+				TaskID:  taskID,
+				Subject: subject,
+				Status:  StatusFailed,
+				Error:   fmt.Sprintf("task polling exceeded maximum allowed polls (%d), possible deadlock", maxPollCount),
+			}), nil
+		}
+
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			return mustJSON(taskToolOutput{
+				TaskID:  taskID,
+				Subject: subject,
+				Status:  StatusFailed,
+				Error:   ctx.Err().Error(),
+			}), nil
+		default:
+		}
+
+		// Get current result
+		result, ok := t.cfg.Executor.Get(taskID)
+		if !ok {
+			SendTaskFailed(ctx, taskID, "task disappeared")
+			return mustJSON(taskToolOutput{
+				TaskID:  taskID,
+				Subject: subject,
+				Status:  StatusFailed,
+				Error:   "task disappeared from executor",
+			}), nil
+		}
+
+		// Send task_running events for new AI messages
+		if len(result.AIMessages) > lastMessageCount {
+			for i := lastMessageCount; i < len(result.AIMessages); i++ {
+				SendTaskRunning(ctx, taskID, result.AIMessages[i], i+1, len(result.AIMessages))
+			}
+			lastMessageCount = len(result.AIMessages)
+		}
+
+		// Check for terminal status
+		switch result.Status {
+		case StatusCompleted:
+			SendTaskCompleted(ctx, taskID, result.Output)
+			return mustJSON(taskToolOutput{
+				TaskID:  taskID,
+				Subject: subject,
+				Status:  StatusCompleted,
+				Output:  result.Output,
+			}), nil
+		case StatusFailed:
+			SendTaskFailed(ctx, taskID, result.Error)
+			return mustJSON(taskToolOutput{
+				TaskID:  taskID,
+				Subject: subject,
+				Status:  StatusFailed,
+				Error:   result.Error,
+			}), nil
+		case StatusTimedOut:
+			SendTaskTimedOut(ctx, taskID)
+			return mustJSON(taskToolOutput{
+				TaskID:  taskID,
+				Subject: subject,
+				Status:  StatusTimedOut,
+				Error:   result.Error,
+			}), nil
+		}
+
+		// Log status changes
+		if result.Status != lastStatus {
+			lastStatus = result.Status
+		}
+
+		// Wait before next poll
+		select {
+		case <-ctx.Done():
+			return mustJSON(taskToolOutput{
+				TaskID:  taskID,
+				Subject: subject,
+				Status:  StatusFailed,
+				Error:   ctx.Err().Error(),
+			}), nil
+		case <-time.After(t.cfg.PollInterval):
+		}
+	}
+}
+
+// executeWithBriefWait waits briefly then returns current status (legacy mode).
+func (t *TaskTool) executeWithBriefWait(ctx context.Context, taskID, subject string, req TaskRequest) (string, error) {
 	eventCh := make(chan TaskEvent, 4)
 	unsubscribe := t.cfg.Executor.Subscribe(taskID, func(_ context.Context, _ string, ev TaskEvent) {
 		select {
@@ -152,7 +303,7 @@ func (t *TaskTool) Execute(ctx context.Context, input string) (string, error) {
 			}
 			return mustJSON(taskToolOutput{
 				TaskID:  snapshot.TaskID,
-				Subject: taskSubject(req),
+				Subject: subject,
 				Status:  status,
 				Output:  snapshot.Output,
 				Error:   snapshot.Error,
@@ -161,15 +312,25 @@ func (t *TaskTool) Execute(ctx context.Context, input string) (string, error) {
 		}
 		return mustJSON(taskToolOutput{
 			TaskID:  taskID,
-			Subject: taskSubject(req),
+			Subject: subject,
 			Status:  StatusQueued,
 			Message: "task submitted",
 		}), nil
 	}
 
+	// Determine event type and send
+	switch res.Status {
+	case StatusCompleted:
+		SendTaskCompleted(ctx, taskID, res.Output)
+	case StatusFailed:
+		SendTaskFailed(ctx, taskID, res.Error)
+	case StatusTimedOut:
+		SendTaskTimedOut(ctx, taskID)
+	}
+
 	return mustJSON(taskToolOutput{
 		TaskID:  res.TaskID,
-		Subject: taskSubject(req),
+		Subject: subject,
 		Status:  res.Status,
 		Output:  res.Output,
 		Error:   res.Error,
@@ -266,6 +427,7 @@ func fallbackSubagentOutput(req TaskRequest) string {
 }
 
 // ValidateAndApplySubagentType checks if the type is registered and applies its config.
+// It merges builtin defaults with config.yaml overrides.
 func ValidateAndApplySubagentType(subagentType string, req *TaskRequest) error {
 	if subagentType == "" {
 		subagentType = "general-purpose"
@@ -273,21 +435,12 @@ func ValidateAndApplySubagentType(subagentType string, req *TaskRequest) error {
 	req.SubagentType = subagentType
 
 	cfg, err := loadAppConfig()
-	if err != nil || cfg == nil {
-		// No config; allow any type.
-		return nil
+	if err != nil {
+		cfg = nil
 	}
 
-	if cfg.Subagents.Types == nil || len(cfg.Subagents.Types) == 0 {
-		// No subagents config; allow any type.
-		return nil
-	}
-
-	typeCfg, ok := cfg.Subagents.Types[subagentType]
-	if !ok {
-		// Type not explicitly defined; allow by default.
-		return nil
-	}
+	// Get effective config (builtin + config.yaml overrides)
+	typeCfg := builtins.GetEffectiveConfig(subagentType, cfg)
 
 	if !typeCfg.Enabled {
 		return fmt.Errorf("subagent type %q is disabled", subagentType)
@@ -297,6 +450,9 @@ func ValidateAndApplySubagentType(subagentType string, req *TaskRequest) error {
 	if typeCfg.TimeoutSecs > 0 && req.Timeout <= 0 {
 		req.Timeout = time.Duration(typeCfg.TimeoutSecs) * time.Second
 	}
+	if typeCfg.MaxTurns > 0 && req.MaxTurns <= 0 {
+		req.MaxTurns = typeCfg.MaxTurns
+	}
 	if strings.TrimSpace(typeCfg.Model) != "" && !strings.EqualFold(strings.TrimSpace(typeCfg.Model), "inherit") && strings.TrimSpace(req.ModelName) == "" {
 		req.ModelName = strings.TrimSpace(typeCfg.Model)
 	}
@@ -305,6 +461,9 @@ func ValidateAndApplySubagentType(subagentType string, req *TaskRequest) error {
 	}
 	if len(typeCfg.AllowedTools) > 0 && len(req.AllowedTools) == 0 {
 		req.AllowedTools = append([]string{}, typeCfg.AllowedTools...)
+	}
+	if len(typeCfg.DisallowedTools) > 0 && len(req.DisallowedTools) == 0 {
+		req.DisallowedTools = append([]string{}, typeCfg.DisallowedTools...)
 	}
 
 	return nil

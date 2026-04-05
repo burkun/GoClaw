@@ -52,3 +52,56 @@ func TestSubagentLimitMiddleware_After_Decrements(t *testing.T) {
 		t.Errorf("expected counter 0 after After, got %d", mw.Current())
 	}
 }
+
+func TestSubagentLimitMiddleware_WrapToolCall_WithinLimit(t *testing.T) {
+	mw := New(Config{MaxConcurrent: 2})
+	state := &middleware.State{Extra: map[string]any{}}
+	_ = mw.Before(context.Background(), state)
+
+	called := false
+	res, err := mw.WrapToolCall(context.Background(), state, &middleware.ToolCall{ID: "1", Name: "task"}, func(ctx context.Context, toolCall *middleware.ToolCall) (*middleware.ToolResult, error) {
+		called = true
+		return &middleware.ToolResult{ID: toolCall.ID, Output: "ok"}, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected handler to be called")
+	}
+	if res == nil || res.Output != "ok" {
+		t.Fatalf("unexpected result: %#v", res)
+	}
+}
+
+func TestSubagentLimitMiddleware_WrapToolCall_TruncatesExcess(t *testing.T) {
+	mw := New(Config{MaxConcurrent: 1})
+	state := &middleware.State{Extra: map[string]any{}}
+	_ = mw.Before(context.Background(), state)
+
+	// First task call executes normally.
+	_, err := mw.WrapToolCall(context.Background(), state, &middleware.ToolCall{ID: "1", Name: "task"}, func(ctx context.Context, toolCall *middleware.ToolCall) (*middleware.ToolResult, error) {
+		return &middleware.ToolResult{ID: toolCall.ID, Output: "ok"}, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	called := false
+	res, err := mw.WrapToolCall(context.Background(), state, &middleware.ToolCall{ID: "2", Name: "task"}, func(ctx context.Context, toolCall *middleware.ToolCall) (*middleware.ToolResult, error) {
+		called = true
+		return &middleware.ToolResult{ID: toolCall.ID, Output: "should-not-run"}, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if called {
+		t.Fatalf("expected second handler not to be called")
+	}
+	if res == nil {
+		t.Fatalf("expected synthetic result")
+	}
+	if _, ok := res.Output.(string); !ok {
+		t.Fatalf("expected string output, got %#v", res.Output)
+	}
+}

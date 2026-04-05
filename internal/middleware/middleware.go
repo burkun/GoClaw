@@ -1,19 +1,15 @@
-// Package middleware defines the Middleware interface and Chain used by the GoClaw lead agent.
+// Package middleware defines the Middleware interface used by the GoClaw lead agent.
 //
 // Each middleware wraps around a single agent turn, providing Before/After hooks
 // analogous to DeerFlow's AgentMiddleware.before_model / after_model hooks.
 //
-// Usage:
-//
-//	chain := middleware.NewChain(
-//	    memoryMW,
-//	    titleMW,
-//	    todoMW,
-//	)
-//	err := chain.Run(ctx, state, agentFunc)
+// Middlewares are adapted to Eino's ChatModelAgentMiddleware interface via AdaptMiddlewares
+// and passed to adk.ChatModelAgentConfig.Handlers for execution.
 package middleware
 
-import "context"
+import (
+	"context"
+)
 
 // State is the mutable conversation state passed through every middleware.
 // It mirrors DeerFlow's ThreadState and carries the message history, metadata,
@@ -52,6 +48,11 @@ type State struct {
 	// ViewedImages holds base64-encoded images for multimodal injection.
 	// Key is the image path, value contains Base64 and MIMEType.
 	ViewedImages map[string]ViewedImage
+
+	// Artifacts holds the list of presented file paths (virtual paths).
+	// Each middleware or tool can add new artifacts, and they will be
+	// merged and deduplicated by the reducer mechanism.
+	Artifacts []string
 
 	// Extra is an open-ended bag for middleware-specific metadata that does
 	// not deserve a dedicated field on State.
@@ -107,17 +108,24 @@ type Response struct {
 	// Error holds the error if the agent function returned a non-nil error.
 	// Middlewares can inspect this in After and decide how to handle it.
 	Error error
+
+	// StateUpdates holds pending state updates from tools or middlewares.
+	// These updates should be applied via reducers after the After hooks.
+	// Keys are state field names (e.g., "artifacts", "viewed_images").
+	StateUpdates map[string]any
 }
 
 // Middleware is the hook interface implemented by every lead-agent middleware.
 //
-// Before is called before the agent's model invocation. Implementors may
-// modify State (e.g. inject facts into the system prompt) and return an error
-// to abort the turn.
+// Lifecycle hooks (in execution order):
+//  1. BeforeAgent - called once at agent start (per agent run)
+//  2. Before - called before each model invocation (per iteration)
+//  3. (model invocation + tool execution)
+//  4. After - called after each model invocation (per iteration, reverse order)
+//  5. AfterAgent - called once at agent end (per agent run, reverse order)
 //
-// After is called after the agent's model invocation completes (or errors out).
-// Implementors may read Response (e.g. queue memory updates) but SHOULD NOT
-// fail the turn for non-critical bookkeeping errors — log and continue instead.
+// BeforeAgent/AfterAgent mirror DeerFlow's before_agent/after_agent hooks.
+// Before/After mirror DeerFlow's before_model/after_model hooks.
 //
 // WrapToolCall is called for each tool invocation during the agent turn.
 // It allows middlewares to intercept, audit, or retry individual tool calls.
@@ -125,15 +133,25 @@ type Response struct {
 //
 // Name returns a stable identifier used for logging and metrics.
 type Middleware interface {
-	// Before runs before the agent model invocation.
-	// ctx may carry per-request values (deadlines, trace IDs).
-	// Returning a non-nil error aborts the turn; the Chain stops and propagates it.
+	// BeforeAgent runs once at the start of an agent run.
+	// Use for one-time setup like creating directories, acquiring resources.
+	// Returning a non-nil error aborts the entire agent run.
+	BeforeAgent(ctx context.Context, state *State) error
+
+	// Before runs before each model invocation (per iteration).
+	// Implementors may modify State (e.g. inject facts into the system prompt)
+	// and return an error to abort the current iteration.
 	Before(ctx context.Context, state *State) error
 
-	// After runs after the agent model invocation regardless of success/failure.
-	// Returning a non-nil error is logged but does NOT prevent the Response
-	// from being delivered to the caller — it only signals a bookkeeping issue.
+	// After runs after each model invocation (per iteration, reverse order).
+	// Implementors may read Response (e.g. queue memory updates) but SHOULD NOT
+	// fail the turn for non-critical bookkeeping errors — log and continue instead.
 	After(ctx context.Context, state *State, response *Response) error
+
+	// AfterAgent runs once at the end of an agent run (reverse order).
+	// Use for one-time cleanup like releasing resources, persisting state.
+	// Errors are logged but do not affect the response.
+	AfterAgent(ctx context.Context, state *State, response *Response) error
 
 	// WrapToolCall wraps a single tool call execution.
 	// Middlewares can intercept tool calls for auditing, error handling, or retry.
@@ -146,98 +164,24 @@ type Middleware interface {
 	Name() string
 }
 
-// Chain executes a slice of Middlewares in order, wrapping a core agent function.
-//
-// Execution order:
-//
-//	Before[0] → Before[1] → … → Before[N-1] → next() → After[N-1] → … → After[0]
-//
-// If any Before returns an error, the chain stops immediately; no subsequent
-// Befores or the core function are called, and all already-called After hooks
-// are still invoked (in reverse) to allow cleanup.
-type Chain struct {
-	middlewares []Middleware
-}
-
-// NewChain constructs a Chain from the provided middlewares.
-// Middlewares execute in the given order for Before, and in reverse for After.
-func NewChain(middlewares ...Middleware) *Chain {
-	return &Chain{middlewares: middlewares}
-}
-
-// Run executes the middleware chain around the provided next function.
-//
-// The next function represents the core agent work (model invocation + tool
-// execution). It receives the (possibly mutated) State and returns a Response.
-//
-// Run guarantees that every middleware whose Before was called will also have
-// its After called, even if next returns an error.
-func (c *Chain) Run(ctx context.Context, state *State, next func(ctx context.Context, state *State) (*Response, error)) error {
-	// TODO: Track which middlewares have run their Before, so After can be
-	//       called in reverse order even when Before fails mid-chain.
-	//
-	// Step 1: Run Before hooks in forward order.
-	//         If middleware[i].Before returns an error, skip remaining Befores
-	//         and jump to step 3 (After for middlewares 0..i-1 in reverse).
-	//
-	// Step 2: Call next(ctx, state) to invoke the core agent logic.
-	//         Capture the Response and any error.
-	//
-	// Step 3: Run After hooks in REVERSE order for all middlewares that
-	//         successfully ran their Before.
-	//         Collect After errors but do not abort; log them and continue.
-	//
-	// Step 4: Return the error from step 2 (next's error) if non-nil,
-	//         otherwise return nil. After errors are logged but not returned.
-
-	resp := &Response{}
-	var runErr error
-
-	// --- Step 1: Before hooks ---
-	ranUpTo := -1
-	for i, mw := range c.middlewares {
-		if err := mw.Before(ctx, state); err != nil {
-			// TODO: log "middleware %s Before failed: %v", mw.Name(), err
-			runErr = err
-			ranUpTo = i - 1
-			goto afterHooks
-		}
-		ranUpTo = i
-	}
-
-	// --- Step 2: Core agent invocation ---
-	{
-		var err error
-		resp, err = next(ctx, state)
-		if err != nil {
-			runErr = err
-			resp = &Response{Error: err}
-		}
-	}
-
-afterHooks:
-	// --- Step 3: After hooks (reverse order, up to ranUpTo) ---
-	for i := ranUpTo; i >= 0; i-- {
-		mw := c.middlewares[i]
-		if err := mw.After(ctx, state, resp); err != nil {
-			// TODO: log "middleware %s After failed (non-fatal): %v", mw.Name(), err
-			_ = err // After errors are non-fatal
-		}
-	}
-
-	return runErr
-}
-
 // MiddlewareWrapper provides a default implementation of Middleware
-// that does nothing in Before/After and passes through in WrapToolCall.
+// that does nothing in BeforeAgent/Before/After/AfterAgent and passes through in WrapToolCall.
 // Embed this in your middleware struct to avoid implementing all methods.
 type MiddlewareWrapper struct{}
+
+// BeforeAgent does nothing and returns nil.
+func (MiddlewareWrapper) BeforeAgent(ctx context.Context, state *State) error { return nil }
 
 // Before does nothing and returns nil.
 func (MiddlewareWrapper) Before(ctx context.Context, state *State) error { return nil }
 
 // After does nothing and returns nil.
 func (MiddlewareWrapper) After(ctx context.Context, state *State, response *Response) error {
+	return nil
+}
+
+// AfterAgent does nothing and returns nil.
+func (MiddlewareWrapper) AfterAgent(ctx context.Context, state *State, response *Response) error {
 	return nil
 }
 
@@ -249,3 +193,127 @@ func (MiddlewareWrapper) WrapToolCall(ctx context.Context, state *State, toolCal
 // Name returns "wrapper" as a placeholder. Override in your middleware.
 func (MiddlewareWrapper) Name() string { return "wrapper" }
 
+// Reducer is a function that merges a new value into an existing state field.
+// It's used to handle state updates from multiple sources (middlewares, tools)
+// in a controlled way, similar to LangGraph's reducer pattern.
+//
+// For example, Artifacts and ViewedImages use reducers to merge and deduplicate
+// values from multiple tool calls in a single turn.
+type Reducer func(existing, new any) any
+
+// MergeArtifacts is a reducer that merges and deduplicates artifact paths.
+// It preserves the order of first occurrence and removes duplicates.
+//
+// This is the Go equivalent of DeerFlow's merge_artifacts reducer.
+func MergeArtifacts(existing, new any) any {
+	var existingList []string
+	var newList []string
+
+	if existing != nil {
+		if e, ok := existing.([]string); ok {
+			existingList = e
+		}
+	}
+	if new != nil {
+		if n, ok := new.([]string); ok {
+			newList = n
+		}
+	}
+
+	if existingList == nil {
+		return newList
+	}
+	if newList == nil {
+		return existingList
+	}
+
+	// Use map to deduplicate while preserving order
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(existingList)+len(newList))
+
+	for _, item := range existingList {
+		if !seen[item] {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	for _, item := range newList {
+		if !seen[item] {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+
+	return result
+}
+
+// MergeViewedImages is a reducer that merges viewed images dictionaries.
+// Special case: if new is an empty map, it clears all viewed images.
+//
+// This is the Go equivalent of DeerFlow's merge_viewed_images reducer.
+func MergeViewedImages(existing, new any) any {
+	var existingMap map[string]ViewedImage
+	var newMap map[string]ViewedImage
+
+	if existing != nil {
+		if e, ok := existing.(map[string]ViewedImage); ok {
+			existingMap = e
+		}
+	}
+	if new != nil {
+		if n, ok := new.(map[string]ViewedImage); ok {
+			newMap = n
+		}
+	}
+
+	if existingMap == nil {
+		return newMap
+	}
+	if newMap == nil {
+		return existingMap
+	}
+
+	// Special case: empty map means clear all
+	if len(newMap) == 0 {
+		return make(map[string]ViewedImage)
+	}
+
+	// Merge: new values override existing for same keys
+	result := make(map[string]ViewedImage, len(existingMap)+len(newMap))
+	for k, v := range existingMap {
+		result[k] = v
+	}
+	for k, v := range newMap {
+		result[k] = v
+	}
+
+	return result
+}
+
+// ApplyReducers applies all registered reducers to merge pending updates into state.
+// This should be called after each middleware's After hook to ensure state consistency.
+//
+// The current implementation handles:
+// - Artifacts: merge and deduplication
+// - ViewedImages: merge with special clear semantics
+func ApplyReducers(state *State, pendingUpdates map[string]any) {
+	if state == nil || pendingUpdates == nil {
+		return
+	}
+
+	// Apply Artifacts reducer
+	if artifacts, ok := pendingUpdates["artifacts"]; ok {
+		merged := MergeArtifacts(state.Artifacts, artifacts)
+		if m, ok := merged.([]string); ok {
+			state.Artifacts = m
+		}
+	}
+
+	// Apply ViewedImages reducer
+	if viewedImages, ok := pendingUpdates["viewed_images"]; ok {
+		merged := MergeViewedImages(state.ViewedImages, viewedImages)
+		if m, ok := merged.(map[string]ViewedImage); ok {
+			state.ViewedImages = m
+		}
+	}
+}

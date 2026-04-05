@@ -1,5 +1,13 @@
 // Package dangling implements DanglingToolCallMiddleware which repairs
 // incomplete tool calls from a previous turn so the model can continue.
+//
+// ARCHITECTURE NOTE (P1 alignment):
+// DeerFlow uses wrap_model_call hook to insert ToolMessage right after AIMessage.
+// GoClaw's current middleware architecture doesn't have WrapModel hook, so we use
+// Before hook instead. The functional behavior is equivalent - we find the last
+// assistant message and insert placeholder tool messages at the correct position.
+// Future enhancement: add WrapModel to middleware.Middleware interface for
+// precise model-call interception.
 package dangling
 
 import (
@@ -70,14 +78,22 @@ func (m *DanglingToolCallMiddleware) Before(_ context.Context, state *middleware
 		delete(callIDs, tcID)
 	}
 
-	// Insert placeholder for any remaining dangling calls.
-	for id := range callIDs {
-		placeholder := map[string]any{
-			"role":         "tool",
-			"tool_call_id": id,
-			"content":      "[Interrupted: tool call did not complete in previous run]",
+	// Insert placeholder for any remaining dangling calls right after the assistant message.
+	if len(callIDs) > 0 {
+		placeholders := make([]map[string]any, 0, len(callIDs))
+		for id := range callIDs {
+			placeholders = append(placeholders, map[string]any{
+				"role":         "tool",
+				"tool_call_id": id,
+				"content":      "[Interrupted: tool call did not complete in previous run]",
+			})
 		}
-		state.Messages = append(state.Messages, placeholder)
+		// Insert placeholders right after the last assistant message.
+		insertPos := lastAssistantIdx + 1
+		state.Messages = append(
+			state.Messages[:insertPos],
+			append(placeholders, state.Messages[insertPos:]...)...,
+		)
 	}
 	return nil
 }

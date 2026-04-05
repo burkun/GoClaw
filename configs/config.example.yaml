@@ -118,6 +118,7 @@ tools:
   - name: read_file
     group: file:read
     use: goclaw/internal/tools/fs:ReadFileTool
+    max_chars: 50000
 
   - name: glob
     group: file:read
@@ -153,6 +154,7 @@ tools:
 sandbox:
   use: local
   # allow_host_bash: false  # Set to true only for fully trusted local workflows
+  # strict_docker: false    # only applies when use=docker; true=init failure aborts startup
   bash_output_max_chars: 20000       # 0 = no truncation
   read_file_output_max_chars: 50000  # 0 = no truncation
 
@@ -163,6 +165,7 @@ sandbox:
 #   port: 8080
 #   replicas: 3
 #   container_prefix: goclaw-sandbox
+#   strict_docker: true  # fail startup if docker provider init fails
 #   idle_timeout: 600  # seconds; 0 = never evict idle containers
 #   bash_output_max_chars: 20000
 #   read_file_output_max_chars: 50000
@@ -183,7 +186,7 @@ sandbox:
 
 memory:
   enabled: true
-  storage_path: memory.json   # relative to goclaw data directory
+  storage_path: memory.json   # default path; relative paths resolve from current working directory
   debounce_seconds: 30        # delay before processing queued updates (1–300)
   model_name:                 # null = use default model
   max_facts: 100

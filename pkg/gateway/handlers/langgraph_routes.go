@@ -21,8 +21,9 @@ import (
 // These endpoints are mounted under /api/langgraph/* and follow the
 // LangGraph Platform API contract for compatibility with the @langchain/langgraph-sdk.
 type LangGraphHandler struct {
-	cfg   *config.AppConfig
-	agent agent.LeadAgent
+	cfg    *config.AppConfig
+	agent  agent.LeadAgent
+	agents map[string]agent.LeadAgent // P1 fix: 支持多agent
 
 	runsMu sync.RWMutex
 	runs   map[string]lgRunHandle
@@ -32,6 +33,7 @@ type lgRunHandle struct {
 	ThreadID     string
 	RunID        string
 	CheckpointID string
+	AgentName    string // P1 fix: 记录使用的agent
 	Cancel       context.CancelFunc
 }
 
@@ -42,6 +44,29 @@ func NewLangGraphHandler(cfg *config.AppConfig, a agent.LeadAgent) *LangGraphHan
 		agent: a,
 		runs:  make(map[string]lgRunHandle),
 	}
+}
+
+// NewLangGraphHandlerWithAgents creates a handler with multiple agents (P1 fix).
+func NewLangGraphHandlerWithAgents(cfg *config.AppConfig, a agent.LeadAgent, agents map[string]agent.LeadAgent) *LangGraphHandler {
+	return &LangGraphHandler{
+		cfg:    cfg,
+		agent:  a,
+		agents: agents,
+		runs:   make(map[string]lgRunHandle),
+	}
+}
+
+// GetAgent returns the agent by name (P1 fix).
+func (h *LangGraphHandler) GetAgent(name string) agent.LeadAgent {
+	if name == "" || h.agents == nil {
+		return h.agent
+	}
+
+	if a, ok := h.agents[name]; ok {
+		return a
+	}
+
+	return h.agent
 }
 
 // ---------------------------------------------------------------------------
@@ -262,11 +287,28 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 	}
 	w.Flush()
 
-	// Check agent is initialized.
-	if h.agent == nil {
+	// Check agent is initialized and select based on request.
+	// Priority: query param > header > config.context > default "lead_agent"
+	agentName := c.Query("agent")
+	if agentName == "" {
+		agentName = c.GetHeader("X-Agent-Name")
+	}
+	if agentName == "" {
+		if ctx, ok := req.Config["context"].(map[string]any); ok {
+			if v, ok := ctx["agent_name"].(string); ok && v != "" {
+				agentName = v
+			}
+		}
+	}
+	if agentName == "" {
+		agentName = "lead_agent"
+	}
+
+	selectedAgent := h.GetAgent(agentName)
+	if selectedAgent == nil {
 		_ = WriteLangGraphSSE(w, LangGraphSSEEvent{
 			Event: "error",
-			Data:  LangGraphErrorEvent{Message: "agent not initialized"},
+			Data:  LangGraphErrorEvent{Message: fmt.Sprintf("agent %q not found", agentName)},
 		})
 		w.Flush()
 		return
@@ -319,7 +361,7 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 		IsPlanMode:      planMode,
 		SubagentEnabled: subagentEnabled,
 		CheckpointID:    req.CheckpointID,
-		AgentName:       "lead_agent",
+		AgentName:       agentName,
 		RunID:           runID,
 	}
 
@@ -329,6 +371,7 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 		ThreadID:     threadID,
 		RunID:        runID,
 		CheckpointID: req.CheckpointID,
+		AgentName:    agentName,
 		Cancel:       cancel,
 	})
 	defer h.unregisterRun(runID)
@@ -337,9 +380,9 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 	var err error
 
 	if strings.TrimSpace(req.CheckpointID) != "" {
-		eventChan, err = h.agent.Resume(runCtx, state, cfg, req.CheckpointID)
+		eventChan, err = selectedAgent.Resume(runCtx, state, cfg, req.CheckpointID)
 	} else {
-		eventChan, err = h.agent.Run(runCtx, state, cfg)
+		eventChan, err = selectedAgent.Run(runCtx, state, cfg)
 	}
 
 	if err != nil {

@@ -23,6 +23,7 @@ type Server struct {
 	router *gin.Engine
 	cfg    *config.AppConfig
 	agent  agent.LeadAgent
+	agents map[string]agent.LeadAgent // P1 fix: 支持多agent
 }
 
 // New creates a new Server with the given config and agent.
@@ -34,12 +35,43 @@ func New(cfg *config.AppConfig, leadAgent agent.LeadAgent) *Server {
 		router: router,
 		cfg:    cfg,
 		agent:  leadAgent,
+		agents: map[string]agent.LeadAgent{"default": leadAgent}, // 向后兼容
 	}
 
 	s.registerMiddleware()
 	s.registerRoutes()
 
 	return s
+}
+
+// NewWithAgents creates a new Server with multiple agents (P1 fix).
+func NewWithAgents(cfg *config.AppConfig, defaultAgent agent.LeadAgent, agents map[string]agent.LeadAgent) *Server {
+	router := gin.New()
+
+	s := &Server{
+		router: router,
+		cfg:    cfg,
+		agent:  defaultAgent,
+		agents: agents,
+	}
+
+	s.registerMiddleware()
+	s.registerRoutes()
+
+	return s
+}
+
+// GetAgent returns the agent by name, or default agent if not found.
+func (s *Server) GetAgent(name string) agent.LeadAgent {
+	if name == "" {
+		return s.agent
+	}
+	
+	if a, ok := s.agents[name]; ok {
+		return a
+	}
+	
+	return s.agent
 }
 
 // Run starts the HTTP server on the given address (e.g. ":8001").
@@ -89,15 +121,21 @@ func (s *Server) registerRoutes() {
 	suggestionsH := handlers.NewSuggestionsHandler(s.cfg)
 	agentsH := handlers.NewAgentsHandler(s.cfg)
 	channelsH := handlers.NewChannelsHandler(buildChannelsManager(s.cfg))
-	langgraphH := handlers.NewLangGraphHandler(s.cfg, s.agent)
+	
+	// P1 fix: 支持多agent
+	langgraphH := handlers.NewLangGraphHandlerWithAgents(s.cfg, s.agent, s.agents)
 
 	api := s.router.Group("/api")
 	{
 		// GET /api/models — list all configured models.
 		api.GET("/models", modelsH.ListModels)
+		// GET /api/models/:id — get model details.
+		api.GET("/models/:id", modelsH.GetModel)
+		// POST /api/models/:id/validate — validate model configuration.
+		api.POST("/models/:id/validate", modelsH.ValidateModel)
 
-		// GET /api/memory — return the persisted memory snapshot.
-		api.GET("/memory", memoryH.GetMemory)
+		// Memory routes — all 10 endpoints for full CRUD operations.
+		handlers.RegisterMemoryRoutes(api, memoryH)
 
 		// MCP configuration routes.
 		api.GET("/mcp/config", mcpH.GetConfig)
@@ -201,13 +239,13 @@ func buildChannelsManager(cfg *config.AppConfig) *channels.Manager {
 	}
 	if cfg.Channels != nil {
 		if cfg.Channels.Feishu != nil && cfg.Channels.Feishu.Enabled {
-			_ = mgr.RegisterChannel(feishuch.New())
+			_ = mgr.RegisterChannel(feishuch.New(*cfg.Channels.Feishu))
 		}
 		if cfg.Channels.Slack != nil && cfg.Channels.Slack.Enabled {
-			_ = mgr.RegisterChannel(slackch.New())
+			_ = mgr.RegisterChannel(slackch.New(*cfg.Channels.Slack))
 		}
 		if cfg.Channels.Telegram != nil && cfg.Channels.Telegram.Enabled {
-			_ = mgr.RegisterChannel(telegramch.New())
+			_ = mgr.RegisterChannel(telegramch.New(*cfg.Channels.Telegram))
 		}
 	}
 	return mgr

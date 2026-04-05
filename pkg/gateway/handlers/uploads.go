@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/tools/conversion"
 )
 
 // UploadsHandler serves POST /api/threads/:thread_id/uploads.
@@ -36,6 +38,10 @@ type UploadedFileInfo struct {
 	// HostPath is the real filesystem path on the host
 	// (e.g. .goclaw/threads/<thread_id>/user-data/uploads/<filename>).
 	HostPath string `json:"host_path"`
+	// ConvertedToMarkdown indicates if the file was converted to Markdown.
+	ConvertedToMarkdown bool `json:"converted_to_markdown,omitempty"`
+	// MarkdownPath is the virtual path to the converted Markdown file.
+	MarkdownPath string `json:"markdown_path,omitempty"`
 }
 
 // UploadResponse is returned on a successful upload request.
@@ -112,6 +118,8 @@ func (h *UploadsHandler) UploadFiles(c *gin.Context) {
 	}
 
 	var uploaded []UploadedFileInfo
+	converter := conversion.DefaultConverter()
+	ctx := context.Background()
 
 	for _, fh := range files {
 		safeName, err := sanitiseFilename(fh.Filename)
@@ -142,12 +150,28 @@ func (h *UploadsHandler) UploadFiles(c *gin.Context) {
 		_ = os.Chmod(hostPath, 0o666)
 		virtualPath := "/mnt/user-data/uploads/" + safeName
 
-		uploaded = append(uploaded, UploadedFileInfo{
+		info := UploadedFileInfo{
 			Filename:    safeName,
 			Size:        written,
 			VirtualPath: virtualPath,
 			HostPath:    hostPath,
-		})
+		}
+
+		// Try to convert document to Markdown
+		if converter.NeedsConversion(safeName) {
+			mdContent, convErr := converter.ConvertToMarkdown(ctx, hostPath)
+			if convErr == nil && strings.TrimSpace(mdContent) != "" {
+				// Save converted Markdown file
+				mdFilename := safeName + ".md"
+				mdHostPath := filepath.Join(uploadsDir, mdFilename)
+				if writeErr := os.WriteFile(mdHostPath, []byte(mdContent), 0o644); writeErr == nil {
+					info.ConvertedToMarkdown = true
+					info.MarkdownPath = virtualPath + ".md"
+				}
+			}
+		}
+
+		uploaded = append(uploaded, info)
 	}
 
 	c.JSON(http.StatusOK, UploadResponse{

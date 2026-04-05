@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/sandbox"
+	localsandbox "github.com/bookerbai/goclaw/internal/sandbox/local"
 	"github.com/bookerbai/goclaw/internal/tools"
 )
 
@@ -37,6 +39,14 @@ func TestRegisterDefaultTools_GlobAndGrepExecute(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "a.txt"), []byte("hello\nworld\nhello\n"), 0o644); err != nil {
 		t.Fatalf("write fixture failed: %v", err)
 	}
+
+	provider := localsandbox.NewLocalSandboxProvider(
+		sandbox.SandboxConfig{Type: sandbox.SandboxTypeLocal, WorkDir: ".goclaw"},
+		".goclaw",
+		"",
+	)
+	sandbox.SetDefaultProvider(provider)
+	t.Cleanup(func() { sandbox.SetDefaultProvider(nil) })
 
 	if err := RegisterDefaultTools(&config.AppConfig{}); err != nil {
 		t.Fatalf("register default tools failed: %v", err)

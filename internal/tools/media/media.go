@@ -120,77 +120,154 @@ var _ tools.Tool = (*ViewImageTool)(nil)
 // PresentFileTool
 // ---------------------------------------------------------------------------
 
-// PresentFileTool returns an artifact reference for a file to be displayed to the user.
+// PresentFileTool returns artifact references for files to be displayed to the user.
 // Implements tools.Tool.
 type PresentFileTool struct {
 	Resolver PathResolver
 }
 
 type presentFileInput struct {
-	Description string `json:"description"`
-	Path        string `json:"path"`
-	Title       string `json:"title,omitempty"`
+	Description string   `json:"description"`
+	Filepaths   []string `json:"filepaths,omitempty"` // DeerFlow-compatible input
+	Path        string   `json:"path,omitempty"`      // Legacy single-file input
+	Paths       []string `json:"paths,omitempty"`     // Legacy multi-file input
 }
 
-func (t *PresentFileTool) Name() string { return "present_file" }
+func (t *PresentFileTool) Name() string { return "present_files" }
 
 func (t *PresentFileTool) Description() string {
-	return `Present a file to the user as a downloadable artifact.
-Path must be an absolute virtual path under /mnt/user-data/.
-This does NOT read the file contents; it only returns a reference for frontend rendering.`
+	return `Make files visible to the user via artifacts state updates.
+Only files under /mnt/user-data/outputs are allowed.
+Use "filepaths" (preferred), or legacy "paths"/"path" for compatibility.`
 }
 
 func (t *PresentFileTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{
   "type": "object",
-  "required": ["description", "path"],
+  "required": ["description", "filepaths"],
   "properties": {
-    "description": {"type": "string", "description": "Explain what this file is."},
-    "path":        {"type": "string", "description": "Absolute virtual path to the file."},
-    "title":       {"type": "string", "description": "Optional display title for the artifact."}
+    "description": {"type": "string", "description": "Explain what files are being presented."},
+    "filepaths":   {"type": "array", "items": {"type": "string"}, "description": "Absolute paths of files to present. Only /mnt/user-data/outputs is allowed."},
+    "paths":       {"type": "array", "items": {"type": "string"}, "description": "Legacy alias for filepaths."},
+    "path":        {"type": "string", "description": "Legacy single-file alias for filepaths."}
   }
 }`)
 }
 
-// Execute returns an artifact reference JSON.
+// Execute returns a DeerFlow-style command payload.
+// The middleware adapter consumes this payload and applies state updates via reducers.
 func (t *PresentFileTool) Execute(_ context.Context, input string) (string, error) {
 	var in presentFileInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
-		return "", fmt.Errorf("present_file: invalid input JSON: %w", err)
-	}
-	if strings.TrimSpace(in.Path) == "" {
-		return "", fmt.Errorf("present_file: path is required")
+		return "", fmt.Errorf("present_files: invalid input JSON: %w", err)
 	}
 	if t.Resolver == nil {
-		return "", fmt.Errorf("present_file: resolver is required")
+		return "", fmt.Errorf("present_files: resolver is required")
 	}
 
-	hostPath, err := t.Resolver.Resolve(in.Path)
+	filepaths := make([]string, 0, len(in.Filepaths)+len(in.Paths)+1)
+	filepaths = append(filepaths, in.Filepaths...)
+	if len(filepaths) == 0 {
+		filepaths = append(filepaths, in.Paths...)
+	}
+	if len(filepaths) == 0 && strings.TrimSpace(in.Path) != "" {
+		filepaths = append(filepaths, strings.TrimSpace(in.Path))
+	}
+	if len(filepaths) == 0 {
+		return "", fmt.Errorf("present_files: at least one filepath is required")
+	}
+
+	outputsRootHost, err := t.Resolver.Resolve("/mnt/user-data/outputs")
 	if err != nil {
-		return fmt.Sprintf("Error: %v", err), nil
+		return buildPresentFilesCommand("Error: thread outputs path is not available", nil), nil
+	}
+	outputsRootHost, err = filepath.Abs(outputsRootHost)
+	if err != nil {
+		return buildPresentFilesCommand("Error: failed to resolve outputs root", nil), nil
+	}
+
+	normalized := make([]string, 0, len(filepaths))
+	seen := make(map[string]bool)
+	for _, raw := range filepaths {
+		path, normalizeErr := t.normalizePresentedPath(raw, outputsRootHost)
+		if normalizeErr != nil {
+			return buildPresentFilesCommand("Error: "+normalizeErr.Error(), nil), nil
+		}
+		if !seen[path] {
+			seen[path] = true
+			normalized = append(normalized, path)
+		}
+	}
+
+	if len(normalized) == 0 {
+		return buildPresentFilesCommand("Error: no valid files to present", nil), nil
+	}
+
+	return buildPresentFilesCommand("Successfully presented files", normalized), nil
+}
+
+func (t *PresentFileTool) normalizePresentedPath(inputPath, outputsRootHost string) (string, error) {
+	inputPath = strings.TrimSpace(inputPath)
+	if inputPath == "" {
+		return "", fmt.Errorf("empty filepath")
+	}
+
+	var hostPath string
+	if strings.HasPrefix(inputPath, "/mnt/user-data/") {
+		resolved, err := t.Resolver.Resolve(inputPath)
+		if err != nil {
+			return "", fmt.Errorf("invalid virtual path: %s", inputPath)
+		}
+		hostPath = resolved
+	} else {
+		hostPath = inputPath
+	}
+
+	hostPath, err := filepath.Abs(hostPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid path: %s", inputPath)
 	}
 
 	info, err := os.Stat(hostPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Sprintf("Error: file not found: %s", in.Path), nil
+			return "", fmt.Errorf("file not found: %s", inputPath)
 		}
-		return fmt.Sprintf("Error: %v", err), nil
+		return "", fmt.Errorf("cannot access file: %s", inputPath)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("only files can be presented: %s", inputPath)
 	}
 
-	title := in.Title
-	if title == "" {
-		title = filepath.Base(in.Path)
+	rel, err := filepath.Rel(outputsRootHost, hostPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to normalize path: %s", inputPath)
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("only files in /mnt/user-data/outputs can be presented: %s", inputPath)
+	}
+
+	return "/mnt/user-data/outputs/" + filepath.ToSlash(rel), nil
+}
+
+func buildPresentFilesCommand(message string, artifacts []string) string {
+	update := map[string]any{
+		"messages": []map[string]any{{
+			"type":    "tool",
+			"content": message,
+		}},
+	}
+	if len(artifacts) > 0 {
+		update["artifacts"] = artifacts
 	}
 
 	result := map[string]any{
-		"type":  "artifact",
-		"path":  in.Path,
-		"title": title,
-		"size":  info.Size(),
+		"type":   "command",
+		"update": update,
 	}
 	b, _ := json.Marshal(result)
-	return string(b), nil
+	return string(b)
 }
 
 var _ tools.Tool = (*PresentFileTool)(nil)

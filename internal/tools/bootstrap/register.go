@@ -13,6 +13,7 @@ import (
 	"github.com/cloudwego/eino/adk"
 
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/sandbox"
 	"github.com/bookerbai/goclaw/internal/tools"
 	"github.com/bookerbai/goclaw/internal/tools/builtin"
 	fstools "github.com/bookerbai/goclaw/internal/tools/fs"
@@ -23,11 +24,19 @@ import (
 )
 
 // RegisterDefaultTools rebuilds the default tools registry using runtime-aware wrappers.
+// For backward compatibility, it registers all tools including view_image.
+// Use RegisterDefaultToolsWithModel for conditional registration based on model capabilities.
 func RegisterDefaultTools(cfg *config.AppConfig) error {
+	return RegisterDefaultToolsWithModel(cfg, nil)
+}
+
+// RegisterDefaultToolsWithModel rebuilds the default tools registry with model-aware tool selection.
+// modelCfg is optional; if provided, tools like view_image are only registered when the model supports them.
+func RegisterDefaultToolsWithModel(cfg *config.AppConfig, modelCfg *config.ModelConfig) error {
 	tools.ResetDefaultRegistry()
 
 	entries := []tools.Tool{
-		&readFileRuntimeTool{},
+		&readFileRuntimeTool{cfg: cfg},
 		&writeFileRuntimeTool{},
 		&editFileRuntimeTool{},
 		&listDirRuntimeTool{},
@@ -40,14 +49,24 @@ func RegisterDefaultTools(cfg *config.AppConfig) error {
 			MaxSearchResults: toolIntExtra(cfg, "web_search", "max_results", 5),
 		}),
 		web.NewWebFetchTool(web.WebToolConfig{
-			JinaAPIKey:   strings.TrimSpace(os.Getenv("JINA_API_KEY")),
-			Timeout:      10 * time.Second,
+			JinaAPIKey:    strings.TrimSpace(os.Getenv("JINA_API_KEY")),
+			Timeout:       10 * time.Second,
 			MaxFetchChars: 4096,
 		}),
-		&mediaViewImageRuntimeTool{},
+		web.NewImageSearchTool(web.WebToolConfig{
+			Timeout:          10 * time.Second,
+			MaxSearchResults: toolIntExtra(cfg, "image_search", "max_results", 5),
+		}),
 		&mediaPresentFileRuntimeTool{},
 		builtin.NewClarificationTool(),
 		builtin.NewToolSearchTool(builtin.DefaultDeferredToolRegistry()),
+		builtin.NewTaskToolWithDefaults(), // Subagent delegation tool
+		builtin.NewSetupAgentTool(cfg.Sandbox.WorkDir), // Agent Creator tool (P2 fix)
+	}
+
+	// Only register view_image if the model supports vision
+	if modelCfg == nil || modelCfg.SupportsVision {
+		entries = append(entries, &mediaViewImageRuntimeTool{})
 	}
 
 	for _, t := range entries {
@@ -96,21 +115,99 @@ func threadPathsFromContext(ctx context.Context) *fstools.PathMapping {
 	}
 	base := filepath.Join(".goclaw", "threads", threadID, "user-data")
 	return &fstools.PathMapping{
+		ThreadID:      threadID,
 		WorkspacePath: filepath.Join(base, "workspace"),
 		UploadsPath:   filepath.Join(base, "uploads"),
 		OutputsPath:   filepath.Join(base, "outputs"),
 	}
 }
 
+type sandboxSearchAdapter struct {
+	sb sandbox.Sandbox
+}
+
+func (a sandboxSearchAdapter) Glob(ctx context.Context, path string, pattern string, includeDirs bool, maxResults int) ([]string, bool, error) {
+	if a.sb == nil {
+		return nil, false, fmt.Errorf("sandbox is not available")
+	}
+	return a.sb.Glob(ctx, path, pattern, includeDirs, maxResults)
+}
+
+func (a sandboxSearchAdapter) Grep(ctx context.Context, path string, pattern string, glob string, literal bool, caseSensitive bool, maxResults int) ([]search.GrepMatch, bool, error) {
+	if a.sb == nil {
+		return nil, false, fmt.Errorf("sandbox is not available")
+	}
+	matches, truncated, err := a.sb.Grep(ctx, path, pattern, glob, literal, caseSensitive, maxResults)
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]search.GrepMatch, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, search.GrepMatch{Path: m.Path, LineNumber: m.LineNumber, Line: m.Line})
+	}
+	return out, truncated, nil
+}
+
+func sandboxSearcherFromContext(ctx context.Context) (search.SandboxSearcher, error) {
+	threadID := "default"
+	if vals := adk.GetSessionValues(ctx); vals != nil {
+		if v, ok := vals["thread_id"].(string); ok && strings.TrimSpace(v) != "" {
+			threadID = strings.TrimSpace(v)
+		}
+	}
+	provider := sandbox.DefaultProvider()
+	if provider == nil {
+		return nil, fmt.Errorf("sandbox provider not configured")
+	}
+	sandboxID, err := provider.Acquire(ctx, threadID)
+	if err != nil {
+		return nil, fmt.Errorf("acquire sandbox failed: %w", err)
+	}
+	sb := provider.Get(sandboxID)
+	if sb == nil {
+		return nil, fmt.Errorf("sandbox not found: %s", sandboxID)
+	}
+	return sandboxSearchAdapter{sb: sb}, nil
+}
+
 // read/write/edit/list wrappers
 
-type readFileRuntimeTool struct{}
+type readFileRuntimeTool struct {
+	cfg *config.AppConfig
+}
 
-func (t *readFileRuntimeTool) Name() string                { return (&fstools.ReadFileTool{}).Name() }
-func (t *readFileRuntimeTool) Description() string         { return (&fstools.ReadFileTool{}).Description() }
-func (t *readFileRuntimeTool) InputSchema() json.RawMessage { return (&fstools.ReadFileTool{}).InputSchema() }
+func (t *readFileRuntimeTool) Name() string        { return (&fstools.ReadFileTool{}).Name() }
+func (t *readFileRuntimeTool) Description() string { return (&fstools.ReadFileTool{}).Description() }
+func (t *readFileRuntimeTool) InputSchema() json.RawMessage {
+	return (&fstools.ReadFileTool{}).InputSchema()
+}
 func (t *readFileRuntimeTool) Execute(ctx context.Context, input string) (string, error) {
-	inner := &fstools.ReadFileTool{Paths: threadPathsFromContext(ctx)}
+	maxChars := fstools.DefaultReadFileMaxChars
+	// Priority: tool config > sandbox config > default
+	if tc := t.cfg.GetToolConfig("read_file"); tc != nil && tc.Extra != nil {
+		if v, ok := tc.Extra["max_chars"]; ok {
+			switch vv := v.(type) {
+			case int:
+				maxChars = vv
+			case int64:
+				maxChars = int(vv)
+			case float64:
+				maxChars = int(vv)
+			case string:
+				if n, err := strconv.Atoi(strings.TrimSpace(vv)); err == nil {
+					maxChars = n
+				}
+			}
+		}
+	}
+	// Fallback to sandbox config if tool config not set
+	if maxChars == fstools.DefaultReadFileMaxChars && t.cfg.Sandbox.ReadFileOutputMaxChars > 0 {
+		maxChars = t.cfg.Sandbox.ReadFileOutputMaxChars
+	}
+	inner := &fstools.ReadFileTool{
+		Paths:    threadPathsFromContext(ctx),
+		MaxChars: maxChars,
+	}
 	return inner.Execute(ctx, input)
 }
 
@@ -118,7 +215,9 @@ type writeFileRuntimeTool struct{}
 
 func (t *writeFileRuntimeTool) Name() string        { return (&fstools.WriteFileTool{}).Name() }
 func (t *writeFileRuntimeTool) Description() string { return (&fstools.WriteFileTool{}).Description() }
-func (t *writeFileRuntimeTool) InputSchema() json.RawMessage { return (&fstools.WriteFileTool{}).InputSchema() }
+func (t *writeFileRuntimeTool) InputSchema() json.RawMessage {
+	return (&fstools.WriteFileTool{}).InputSchema()
+}
 func (t *writeFileRuntimeTool) Execute(ctx context.Context, input string) (string, error) {
 	inner := &fstools.WriteFileTool{Paths: threadPathsFromContext(ctx)}
 	return inner.Execute(ctx, input)
@@ -128,7 +227,9 @@ type editFileRuntimeTool struct{}
 
 func (t *editFileRuntimeTool) Name() string        { return (&fstools.EditFileTool{}).Name() }
 func (t *editFileRuntimeTool) Description() string { return (&fstools.EditFileTool{}).Description() }
-func (t *editFileRuntimeTool) InputSchema() json.RawMessage { return (&fstools.EditFileTool{}).InputSchema() }
+func (t *editFileRuntimeTool) InputSchema() json.RawMessage {
+	return (&fstools.EditFileTool{}).InputSchema()
+}
 func (t *editFileRuntimeTool) Execute(ctx context.Context, input string) (string, error) {
 	inner := &fstools.EditFileTool{Paths: threadPathsFromContext(ctx)}
 	return inner.Execute(ctx, input)
@@ -138,7 +239,9 @@ type listDirRuntimeTool struct{}
 
 func (t *listDirRuntimeTool) Name() string        { return (&fstools.ListDirTool{}).Name() }
 func (t *listDirRuntimeTool) Description() string { return (&fstools.ListDirTool{}).Description() }
-func (t *listDirRuntimeTool) InputSchema() json.RawMessage { return (&fstools.ListDirTool{}).InputSchema() }
+func (t *listDirRuntimeTool) InputSchema() json.RawMessage {
+	return (&fstools.ListDirTool{}).InputSchema()
+}
 func (t *listDirRuntimeTool) Execute(ctx context.Context, input string) (string, error) {
 	inner := &fstools.ListDirTool{Paths: threadPathsFromContext(ctx)}
 	return inner.Execute(ctx, input)
@@ -150,13 +253,14 @@ type globRuntimeTool struct {
 	cfg *config.AppConfig
 }
 
-func (t *globRuntimeTool) Name() string        { return (&search.GlobTool{}).Name() }
-func (t *globRuntimeTool) Description() string { return (&search.GlobTool{}).Description() }
+func (t *globRuntimeTool) Name() string                 { return (&search.GlobTool{}).Name() }
+func (t *globRuntimeTool) Description() string          { return (&search.GlobTool{}).Description() }
 func (t *globRuntimeTool) InputSchema() json.RawMessage { return (&search.GlobTool{}).InputSchema() }
 func (t *globRuntimeTool) Execute(ctx context.Context, input string) (string, error) {
 	inner := &search.GlobTool{
-		Resolver:   &runtimePathResolver{paths: threadPathsFromContext(ctx)},
-		MaxResults: toolIntExtra(t.cfg, "glob", "max_results", 200),
+		Resolver:      &runtimePathResolver{paths: threadPathsFromContext(ctx)},
+		SandboxGetter: sandboxSearcherFromContext,
+		MaxResults:    toolIntExtra(t.cfg, "glob", "max_results", 200),
 	}
 	return inner.Execute(ctx, input)
 }
@@ -165,13 +269,14 @@ type grepRuntimeTool struct {
 	cfg *config.AppConfig
 }
 
-func (t *grepRuntimeTool) Name() string        { return (&search.GrepTool{}).Name() }
-func (t *grepRuntimeTool) Description() string { return (&search.GrepTool{}).Description() }
+func (t *grepRuntimeTool) Name() string                 { return (&search.GrepTool{}).Name() }
+func (t *grepRuntimeTool) Description() string          { return (&search.GrepTool{}).Description() }
 func (t *grepRuntimeTool) InputSchema() json.RawMessage { return (&search.GrepTool{}).InputSchema() }
 func (t *grepRuntimeTool) Execute(ctx context.Context, input string) (string, error) {
 	inner := &search.GrepTool{
-		Resolver:   &runtimePathResolver{paths: threadPathsFromContext(ctx)},
-		MaxResults: toolIntExtra(t.cfg, "grep", "max_results", 100),
+		Resolver:      &runtimePathResolver{paths: threadPathsFromContext(ctx)},
+		SandboxGetter: sandboxSearcherFromContext,
+		MaxResults:    toolIntExtra(t.cfg, "grep", "max_results", 100),
 	}
 	return inner.Execute(ctx, input)
 }
@@ -180,9 +285,13 @@ func (t *grepRuntimeTool) Execute(ctx context.Context, input string) (string, er
 
 type mediaViewImageRuntimeTool struct{}
 
-func (t *mediaViewImageRuntimeTool) Name() string        { return (&media.ViewImageTool{}).Name() }
-func (t *mediaViewImageRuntimeTool) Description() string { return (&media.ViewImageTool{}).Description() }
-func (t *mediaViewImageRuntimeTool) InputSchema() json.RawMessage { return (&media.ViewImageTool{}).InputSchema() }
+func (t *mediaViewImageRuntimeTool) Name() string { return (&media.ViewImageTool{}).Name() }
+func (t *mediaViewImageRuntimeTool) Description() string {
+	return (&media.ViewImageTool{}).Description()
+}
+func (t *mediaViewImageRuntimeTool) InputSchema() json.RawMessage {
+	return (&media.ViewImageTool{}).InputSchema()
+}
 func (t *mediaViewImageRuntimeTool) Execute(ctx context.Context, input string) (string, error) {
 	inner := &media.ViewImageTool{Resolver: &runtimePathResolver{paths: threadPathsFromContext(ctx)}}
 	return inner.Execute(ctx, input)
@@ -190,9 +299,13 @@ func (t *mediaViewImageRuntimeTool) Execute(ctx context.Context, input string) (
 
 type mediaPresentFileRuntimeTool struct{}
 
-func (t *mediaPresentFileRuntimeTool) Name() string        { return (&media.PresentFileTool{}).Name() }
-func (t *mediaPresentFileRuntimeTool) Description() string { return (&media.PresentFileTool{}).Description() }
-func (t *mediaPresentFileRuntimeTool) InputSchema() json.RawMessage { return (&media.PresentFileTool{}).InputSchema() }
+func (t *mediaPresentFileRuntimeTool) Name() string { return (&media.PresentFileTool{}).Name() }
+func (t *mediaPresentFileRuntimeTool) Description() string {
+	return (&media.PresentFileTool{}).Description()
+}
+func (t *mediaPresentFileRuntimeTool) InputSchema() json.RawMessage {
+	return (&media.PresentFileTool{}).InputSchema()
+}
 func (t *mediaPresentFileRuntimeTool) Execute(ctx context.Context, input string) (string, error) {
 	inner := &media.PresentFileTool{Resolver: &runtimePathResolver{paths: threadPathsFromContext(ctx)}}
 	return inner.Execute(ctx, input)
@@ -204,9 +317,13 @@ type bashRuntimeTool struct {
 	cfg *config.AppConfig
 }
 
-func (t *bashRuntimeTool) Name() string        { return shell.NewBashTool(shell.Config{}).Name() }
-func (t *bashRuntimeTool) Description() string { return shell.NewBashTool(shell.Config{}).Description() }
-func (t *bashRuntimeTool) InputSchema() json.RawMessage { return shell.NewBashTool(shell.Config{}).InputSchema() }
+func (t *bashRuntimeTool) Name() string { return shell.NewBashTool(shell.Config{}).Name() }
+func (t *bashRuntimeTool) Description() string {
+	return shell.NewBashTool(shell.Config{}).Description()
+}
+func (t *bashRuntimeTool) InputSchema() json.RawMessage {
+	return shell.NewBashTool(shell.Config{}).InputSchema()
+}
 func (t *bashRuntimeTool) Execute(ctx context.Context, input string) (string, error) {
 	paths := threadPathsFromContext(ctx)
 	enabled := false

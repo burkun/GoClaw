@@ -66,11 +66,28 @@ func (l *Loader) Load(rootPath string, ext config.ExtensionsConfig) ([]*Skill, e
 				return nil
 			}
 
+			// Compute relative path from skills root
+			skillDir := filepath.Dir(path)
+			relPath, err := filepath.Rel(absBase, skillDir)
+			if err != nil {
+				relPath = "" // fallback to empty if relative path cannot be computed
+			}
+
+			// Determine category from scan root
+			category := "public"
+			if strings.HasPrefix(skillDir, filepath.Join(absBase, "custom")) {
+				category = "custom"
+			}
+			if meta.Category == "" {
+				meta.Category = category
+			}
+
 			out = append(out, &Skill{
-				Metadata: meta,
-				Dir:      filepath.Dir(path),
-				FilePath: path,
-				Plugin:   NewNoopPlugin(meta.Name),
+				Metadata:     meta,
+				Dir:          skillDir,
+				FilePath:     path,
+				RelativePath: relPath,
+				Plugin:       NewNoopPlugin(meta.Name),
 			})
 			return nil
 		})

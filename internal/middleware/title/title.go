@@ -23,8 +23,8 @@ import (
 )
 
 // MaxTitleChars is the maximum byte length of a generated title.
-// Matches DeerFlow's TitleConfig.max_chars default.
-const MaxTitleChars = 100
+// Matches DeerFlow's TitleConfig.max_chars default (P2 alignment).
+const MaxTitleChars = 60
 
 // MaxFallbackChars is the maximum length of the fallback title derived from
 // the first user message when LLM generation fails.
@@ -57,10 +57,11 @@ type Config struct {
 }
 
 // DefaultConfig returns a Config with sensible defaults.
+// Aligned with DeerFlow's default values (P2 alignment).
 func DefaultConfig() Config {
 	return Config{
 		Enabled:  true,
-		MaxWords: 8,
+		MaxWords: 6, // Aligned with DeerFlow's default
 		PromptTemplate: `Generate a concise title for the following conversation in at most {max_words} words.
 Reply with only the title, no quotes, no punctuation at the end.
 

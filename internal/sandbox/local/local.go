@@ -47,15 +47,47 @@ var defaultDeniedCommands = []string{
 }
 
 // defaultExecTimeout is used when SandboxConfig.ExecTimeout is zero.
-const defaultExecTimeout = 30 * time.Second
+// Aligned with DeerFlow's 600s default (P2 alignment).
+const defaultExecTimeout = 600 * time.Second
+
+// detectedShell caches the auto-detected shell path.
+var detectedShell string
+var detectedShellOnce sync.Once
+
+// detectShell auto-detects the best available shell (P2 fix).
+// Priority: zsh > bash > sh
+// This mirrors DeerFlow's shell selection logic.
+func detectShell() string {
+	detectedShellOnce.Do(func() {
+		// Try zsh first (common on macOS)
+		if path, err := exec.LookPath("zsh"); err == nil {
+			detectedShell = path
+			return
+		}
+		// Try bash (common on Linux)
+		if path, err := exec.LookPath("bash"); err == nil {
+			detectedShell = path
+			return
+		}
+		// Fallback to sh (always available)
+		if path, err := exec.LookPath("sh"); err == nil {
+			detectedShell = path
+			return
+		}
+		// Ultimate fallback
+		detectedShell = "/bin/sh"
+	})
+	return detectedShell
+}
 
 // LocalSandbox implements sandbox.Sandbox by running operations directly on
 // the host filesystem inside a per-thread directory tree.
 type LocalSandbox struct {
-	id       string
-	threadID string
-	baseDir  string // absolute host path of .goclaw/threads/{threadID}/user-data
-	cfg      sandbox.SandboxConfig
+	id         string
+	threadID   string
+	baseDir    string // absolute host path of .goclaw/threads/{threadID}/user-data
+	skillsPath string // absolute host path of skills directory (optional, may be empty)
+	cfg        sandbox.SandboxConfig
 }
 
 // ID returns the unique identifier for this sandbox instance.
@@ -63,22 +95,40 @@ func (s *LocalSandbox) ID() string {
 	return s.id
 }
 
-// virtualToReal translates a virtual /mnt/user-data/... path to its real host path.
-// Returns an error if the path does not start with VirtualPathPrefix.
+// virtualToReal translates a virtual /mnt/user-data/... or /mnt/skills/... path to its real host path.
+// Returns an error if the path does not start with a valid virtual prefix.
+// Also checks for symlink escape attempts.
 func (s *LocalSandbox) virtualToReal(virtualPath string) (string, error) {
-	// TODO:
-	//  1. Check the path starts with sandbox.VirtualPathPrefix; return error if not.
-	//  2. Strip the prefix, join with s.baseDir.
-	//  3. Call rejectPathTraversal on the virtual path first.
-	//  4. filepath.Clean the result and re-check it stays inside s.baseDir via
-	//     strings.HasPrefix after filepath.Clean(s.baseDir)+string(os.PathSeparator).
-	//  5. Return cleaned real path.
+	// Check for skills path first
+	skillsPrefix := sandbox.VirtualSkillsPathPrefix
+	if virtualPath == skillsPrefix || strings.HasPrefix(virtualPath, skillsPrefix+"/") {
+		if s.skillsPath == "" {
+			return "", fmt.Errorf("path %q: skills directory not configured", virtualPath)
+		}
+		if virtualPath == skillsPrefix {
+			realPath := filepath.Clean(s.skillsPath)
+			return s.checkSymlinkEscape(realPath)
+		}
+		if err := rejectPathTraversal(virtualPath); err != nil {
+			return "", err
+		}
+		rel := strings.TrimPrefix(virtualPath, skillsPrefix+"/")
+		realPath := filepath.Join(s.skillsPath, rel)
+		realPath = filepath.Clean(realPath)
+		if !isInsideDir(realPath, s.skillsPath) {
+			return "", fmt.Errorf("access denied: path traversal detected")
+		}
+		return s.checkSymlinkEscape(realPath)
+	}
+
+	// Check for user-data path
 	prefix := sandbox.VirtualPathPrefix
 	if virtualPath == prefix {
-		return filepath.Clean(s.baseDir), nil
+		realPath := filepath.Clean(s.baseDir)
+		return s.checkSymlinkEscape(realPath)
 	}
 	if !strings.HasPrefix(virtualPath, prefix+"/") {
-		return "", fmt.Errorf("path %q is outside allowed virtual prefix %s", virtualPath, prefix)
+		return "", fmt.Errorf("path %q is outside allowed virtual prefixes (%s or %s)", virtualPath, prefix, skillsPrefix)
 	}
 	if err := rejectPathTraversal(virtualPath); err != nil {
 		return "", err
@@ -89,17 +139,85 @@ func (s *LocalSandbox) virtualToReal(virtualPath string) (string, error) {
 	if !isInsideDir(real, s.baseDir) {
 		return "", fmt.Errorf("access denied: path traversal detected")
 	}
-	return real, nil
+	return s.checkSymlinkEscape(real)
 }
 
-// realToVirtual translates a real host path back to its /mnt/user-data/... virtual form.
+// checkSymlinkEscape verifies that the real path does not escape via symlinks.
+// It resolves symlinks and checks if the resolved path is still inside allowed directories.
+func (s *LocalSandbox) checkSymlinkEscape(realPath string) (string, error) {
+	allowedBase := canonicalAllowedRoot(s.baseDir)
+	allowedSkills := ""
+	if s.skillsPath != "" {
+		allowedSkills = canonicalAllowedRoot(s.skillsPath)
+	}
+
+	isAllowed := func(candidate string) bool {
+		candidate = filepath.Clean(candidate)
+		if isInsideDir(candidate, allowedBase) {
+			return true
+		}
+		if allowedSkills != "" && isInsideDir(candidate, allowedSkills) {
+			return true
+		}
+		return false
+	}
+
+	evaluated, err := filepath.EvalSymlinks(realPath)
+	if err == nil {
+		if isAllowed(evaluated) {
+			return realPath, nil
+		}
+		return "", fmt.Errorf("access denied: symlink escapes sandbox boundary")
+	}
+	if !os.IsNotExist(err) {
+		return "", fmt.Errorf("access denied: cannot evaluate path: %w", err)
+	}
+
+	// Path may not exist yet (write path). Walk up to the nearest existing ancestor
+	// and ensure that ancestor resolves inside allowed roots.
+	for parent := filepath.Clean(realPath); parent != "/" && parent != "."; parent = filepath.Dir(parent) {
+		evalParent, parentErr := filepath.EvalSymlinks(parent)
+		if parentErr != nil {
+			if os.IsNotExist(parentErr) {
+				continue
+			}
+			return "", fmt.Errorf("access denied: cannot evaluate ancestor: %w", parentErr)
+		}
+		if !isAllowed(evalParent) {
+			return "", fmt.Errorf("access denied: symlink escape detected in parent directory")
+		}
+		return realPath, nil
+	}
+
+	return realPath, nil
+}
+
+func canonicalAllowedRoot(path string) string {
+	path = filepath.Clean(path)
+	evaluated, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return path
+	}
+	return filepath.Clean(evaluated)
+}
+
+// realToVirtual translates a real host path back to its /mnt/user-data/... or /mnt/skills/... virtual form.
 // Used for masking host paths in output returned to agents.
 func (s *LocalSandbox) realToVirtual(realPath string) string {
-	// TODO:
-	//  1. filepath.Clean both realPath and s.baseDir.
-	//  2. If realPath == s.baseDir return sandbox.VirtualPathPrefix.
-	//  3. If realPath has s.baseDir+"/" prefix, replace it with sandbox.VirtualPathPrefix+"/".
-	//  4. Otherwise return realPath unchanged (it is not a user-data path).
+	// Check skills path first (higher priority for masking)
+	if s.skillsPath != "" {
+		skillsBase := filepath.Clean(s.skillsPath)
+		clean := filepath.Clean(realPath)
+		if clean == skillsBase {
+			return sandbox.VirtualSkillsPathPrefix
+		}
+		if strings.HasPrefix(clean, skillsBase+string(os.PathSeparator)) {
+			rel := strings.TrimPrefix(clean, skillsBase+string(os.PathSeparator))
+			return sandbox.VirtualSkillsPathPrefix + "/" + rel
+		}
+	}
+
+	// Check user-data path
 	base := filepath.Clean(s.baseDir)
 	clean := filepath.Clean(realPath)
 	if clean == base {
@@ -133,9 +251,16 @@ func isInsideDir(candidate, dir string) bool {
 	// TODO:
 	//  1. Ensure dir ends without trailing slash, append os.PathSeparator.
 	//  2. Return candidate == dir || strings.HasPrefix(candidate, dir+sep).
+	cleanCandidate := filepath.Clean(candidate)
 	cleanDir := filepath.Clean(dir)
-	return candidate == cleanDir ||
-		strings.HasPrefix(candidate, cleanDir+string(os.PathSeparator))
+	return cleanCandidate == cleanDir ||
+		strings.HasPrefix(cleanCandidate, cleanDir+string(os.PathSeparator))
+}
+
+func isSkillsVirtualPath(virtualPath string) bool {
+	p := filepath.ToSlash(strings.TrimSpace(virtualPath))
+	prefix := sandbox.VirtualSkillsPathPrefix
+	return p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
 // isDeniedCommand checks whether the given command matches a denylist entry.
@@ -221,7 +346,7 @@ func (s *LocalSandbox) Execute(ctx context.Context, command string) (sandbox.Exe
 		return sandbox.ExecuteResult{Error: fmt.Errorf("failed to create workspace dir: %w", err)}, nil
 	}
 
-	cmd := exec.CommandContext(execCtx, "bash", "-c", command)
+	cmd := exec.CommandContext(execCtx, detectShell(), "-c", command)
 	cmd.Dir = workspaceDir
 	// Provide a restricted environment to avoid leaking host secrets.
 	cmd.Env = []string{
@@ -235,9 +360,14 @@ func (s *LocalSandbox) Execute(ctx context.Context, command string) (sandbox.Exe
 	cmd.Stderr = &stderrBuf
 
 	runErr := cmd.Run()
+
+	// Mask host paths in stdout and stderr before returning
+	maskedStdout := s.maskHostPaths(stdoutBuf.String())
+	maskedStderr := s.maskHostPaths(stderrBuf.String())
+
 	result := sandbox.ExecuteResult{
-		Stdout: stdoutBuf.String(),
-		Stderr: stderrBuf.String(),
+		Stdout: maskedStdout,
+		Stderr: maskedStderr,
 	}
 	if runErr != nil {
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
@@ -250,12 +380,24 @@ func (s *LocalSandbox) Execute(ctx context.Context, command string) (sandbox.Exe
 	return result, nil
 }
 
+// maskHostPaths replaces all occurrences of host paths with virtual paths in text.
+// This prevents leaking host filesystem details to agents.
+func (s *LocalSandbox) maskHostPaths(text string) string {
+	// Replace baseDir paths first (longer paths take priority)
+	if s.baseDir != "" {
+		text = strings.ReplaceAll(text, s.baseDir, sandbox.VirtualPathPrefix)
+		text = strings.ReplaceAll(text, filepath.Clean(s.baseDir), sandbox.VirtualPathPrefix)
+	}
+	// Replace skillsPath paths
+	if s.skillsPath != "" {
+		text = strings.ReplaceAll(text, s.skillsPath, sandbox.VirtualSkillsPathPrefix)
+		text = strings.ReplaceAll(text, filepath.Clean(s.skillsPath), sandbox.VirtualSkillsPathPrefix)
+	}
+	return text
+}
+
 // ReadFile reads the full text content of the file at virtualPath.
-func (s *LocalSandbox) ReadFile(ctx context.Context, virtualPath string) (string, error) {
-	// TODO:
-	//  1. Translate virtualPath to real path via virtualToReal.
-	//  2. os.ReadFile the real path.
-	//  3. Return string(content), nil or wrap the error.
+func (s *LocalSandbox) ReadFile(ctx context.Context, virtualPath string, startLine, endLine int) (string, error) {
 	realPath, err := s.virtualToReal(virtualPath)
 	if err != nil {
 		return "", err
@@ -264,7 +406,25 @@ func (s *LocalSandbox) ReadFile(ctx context.Context, virtualPath string) (string
 	if err != nil {
 		return "", fmt.Errorf("read file %q: %w", virtualPath, err)
 	}
-	return string(data), nil
+
+	content := string(data)
+
+	// Apply line range filtering if specified (P0 fix)
+	if startLine > 0 || endLine > 0 {
+		lines := strings.Split(content, "\n")
+		if startLine < 0 {
+			startLine = 0
+		}
+		if endLine <= 0 || endLine > len(lines) {
+			endLine = len(lines)
+		}
+		if startLine > len(lines) {
+			startLine = len(lines)
+		}
+		content = strings.Join(lines[startLine:endLine], "\n")
+	}
+
+	return content, nil
 }
 
 // WriteFile writes content to the file at virtualPath.
@@ -272,6 +432,9 @@ func (s *LocalSandbox) ReadFile(ctx context.Context, virtualPath string) (string
 // Parent directories are created automatically.
 // This method uses file locking to prevent concurrent write conflicts.
 func (s *LocalSandbox) WriteFile(ctx context.Context, virtualPath string, content string, appendMode bool) error {
+	if isSkillsVirtualPath(virtualPath) {
+		return fmt.Errorf("access denied: write access to skills path is not allowed: %s", virtualPath)
+	}
 	return sandbox.WithFileLock(s.id, virtualPath, func() error {
 		return s.writeFileLocked(ctx, virtualPath, content, appendMode)
 	})
@@ -469,6 +632,9 @@ func (s *LocalSandbox) Grep(ctx context.Context, virtualPath string, pattern str
 // Returns an error if oldStr is not found.
 // This method uses file locking to prevent concurrent write conflicts.
 func (s *LocalSandbox) StrReplace(ctx context.Context, virtualPath string, oldStr string, newStr string, replaceAll bool) error {
+	if isSkillsVirtualPath(virtualPath) {
+		return fmt.Errorf("access denied: write access to skills path is not allowed: %s", virtualPath)
+	}
 	return sandbox.WithFileLock(s.id, virtualPath, func() error {
 		return s.strReplaceLocked(ctx, virtualPath, oldStr, newStr, replaceAll)
 	})
@@ -501,6 +667,9 @@ func (s *LocalSandbox) strReplaceLocked(ctx context.Context, virtualPath string,
 // Parent directories are created automatically.
 // This method uses file locking to prevent concurrent write conflicts.
 func (s *LocalSandbox) UpdateFile(ctx context.Context, virtualPath string, content []byte) error {
+	if isSkillsVirtualPath(virtualPath) {
+		return fmt.Errorf("access denied: write access to skills path is not allowed: %s", virtualPath)
+	}
 	return sandbox.WithFileLock(s.id, virtualPath, func() error {
 		return s.updateFileLocked(ctx, virtualPath, content)
 	})
@@ -606,47 +775,47 @@ func minInt(a, b int) int {
 // singleton LocalSandbox instance. The same sandbox is reused across all threads
 // because access is already scoped by the per-thread baseDir within the sandbox.
 type LocalSandboxProvider struct {
-	mu      sync.Mutex
-	cfg     sandbox.SandboxConfig
-	baseDir string // root directory for all thread data (e.g. /path/to/.goclaw)
-	sandbox *LocalSandbox
+	mu         sync.Mutex
+	cfg        sandbox.SandboxConfig
+	baseDir    string // root directory for all thread data (e.g. /path/to/.goclaw)
+	skillsPath string // optional path to skills directory for /mnt/skills mounting
+	sandbox    *LocalSandbox
 }
 
 // NewLocalSandboxProvider creates a new provider. baseDir is the root directory
 // under which .goclaw/threads/{threadID}/user-data/ subdirectories will be created.
-func NewLocalSandboxProvider(cfg sandbox.SandboxConfig, baseDir string) *LocalSandboxProvider {
+// skillsPath is optional; if provided, /mnt/skills virtual path will be mapped to it.
+func NewLocalSandboxProvider(cfg sandbox.SandboxConfig, baseDir string, skillsPath string) *LocalSandboxProvider {
 	return &LocalSandboxProvider{
-		cfg:     cfg,
-		baseDir: filepath.Clean(baseDir),
+		cfg:        cfg,
+		baseDir:    filepath.Clean(baseDir),
+		skillsPath: filepath.Clean(skillsPath),
 	}
 }
 
 // Acquire returns the singleton sandbox ID "local", creating the sandbox if needed.
 // threadID is used to set up the per-thread filesystem paths on first call.
 func (p *LocalSandboxProvider) Acquire(ctx context.Context, threadID string) (string, error) {
-	// TODO:
-	//  1. Lock p.mu.
-	//  2. If p.sandbox == nil, construct threadBaseDir = filepath.Join(p.baseDir,
-	//     "threads", threadID, "user-data"), os.MkdirAll the subdirs
-	//     (workspace, uploads, outputs).
-	//  3. Create a new LocalSandbox with id="local", threadID, and baseDir set to threadBaseDir.
-	//  4. Assign to p.sandbox.
-	//  5. Unlock and return "local", nil.
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
 	if p.sandbox == nil {
 		threadBaseDir := filepath.Join(p.baseDir, "threads", threadID, "user-data")
 		for _, sub := range []string{"workspace", "uploads", "outputs"} {
-			if err := os.MkdirAll(filepath.Join(threadBaseDir, sub), 0o755); err != nil {
+			dir := filepath.Join(threadBaseDir, sub)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
 				return "", fmt.Errorf("create sandbox dir %s: %w", sub, err)
+			}
+			if err := os.Chmod(dir, 0o777); err != nil {
+				return "", fmt.Errorf("chmod sandbox dir %s: %w", sub, err)
 			}
 		}
 		p.sandbox = &LocalSandbox{
-			id:       "local",
-			threadID: threadID,
-			baseDir:  threadBaseDir,
-			cfg:      p.cfg,
+			id:         "local",
+			threadID:   threadID,
+			baseDir:    threadBaseDir,
+			skillsPath: p.skillsPath,
+			cfg:        p.cfg,
 		}
 	}
 	return "local", nil
@@ -654,10 +823,6 @@ func (p *LocalSandboxProvider) Acquire(ctx context.Context, threadID string) (st
 
 // Get retrieves the singleton sandbox by ID. Returns nil if not yet created.
 func (p *LocalSandboxProvider) Get(sandboxID string) sandbox.Sandbox {
-	// TODO:
-	//  1. Lock p.mu, read p.sandbox, unlock.
-	//  2. If sandboxID == "local" and p.sandbox != nil, return p.sandbox.
-	//  3. Otherwise return nil.
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if sandboxID == "local" && p.sandbox != nil {
@@ -668,18 +833,12 @@ func (p *LocalSandboxProvider) Get(sandboxID string) sandbox.Sandbox {
 
 // Release is a no-op for the local singleton; the sandbox is kept alive for reuse.
 func (p *LocalSandboxProvider) Release(ctx context.Context, sandboxID string) error {
-	// TODO: No-op – local sandbox is intentionally not torn down between turns.
-	// Cleanup happens only in Shutdown.
 	return nil
 }
 
 // Shutdown releases the singleton sandbox and allows it to be garbage collected.
 // After Shutdown, Acquire can create a new sandbox on the next call.
 func (p *LocalSandboxProvider) Shutdown(ctx context.Context) error {
-	// TODO:
-	//  1. Lock p.mu.
-	//  2. Set p.sandbox = nil.
-	//  3. Unlock and return nil.
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.sandbox = nil

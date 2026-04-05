@@ -13,6 +13,10 @@ import (
 // All agent-facing paths should start with this prefix.
 const VirtualPathPrefix = "/mnt/user-data"
 
+// VirtualSkillsPathPrefix is the virtual mount point for skills directory.
+// Skills are mounted read-only and shared across all threads.
+const VirtualSkillsPathPrefix = "/mnt/skills"
+
 var (
 	defaultProviderMu sync.RWMutex
 	defaultProvider   SandboxProvider
@@ -100,6 +104,11 @@ type DockerConfig struct {
 	// Defaults to 10 minutes if zero.
 	ContainerTTL time.Duration `yaml:"container_ttl" json:"container_ttl"`
 
+	// Replicas is the maximum number of concurrent sandbox containers.
+	// When exceeded, oldest warm-pool containers are evicted (LRU).
+	// Defaults to 3 if zero.
+	Replicas int `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+
 	// SkillsMountPath is the host path for the skills directory to mount read-only.
 	// Empty means skills volume is not mounted.
 	SkillsMountPath string `yaml:"skills_mount_path" json:"skills_mount_path"`
@@ -168,8 +177,12 @@ type Sandbox interface {
 	// error in the ExecuteResult.Error field for system-level failures.
 	Execute(ctx context.Context, command string) (ExecuteResult, error)
 
-	// ReadFile reads the full contents of a file at the given virtual path.
-	ReadFile(ctx context.Context, path string) (string, error)
+	// ReadFile reads the contents of a file at the given virtual path.
+	// startLine and endLine are 0-based line range (0 means read all lines).
+	// If startLine > 0, lines before startLine are skipped.
+	// If endLine > 0, lines after endLine are skipped.
+	// If both are 0, the entire file is read.
+	ReadFile(ctx context.Context, path string, startLine, endLine int) (string, error)
 
 	// WriteFile writes content to the file at the given virtual path.
 	// If append is true, content is appended instead of overwriting.

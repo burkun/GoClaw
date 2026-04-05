@@ -18,13 +18,11 @@
 package docker
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -118,16 +116,6 @@ func rejectPathTraversal(path string) error {
 // Execute runs a shell command inside the Docker container via docker exec.
 // The container is started lazily if it exists but is not running.
 func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.ExecuteResult, error) {
-	// TODO:
-	//  1. Lock s.mu, update s.lastUsed, unlock.
-	//  2. Ensure container is running: call ensureContainerRunning(ctx).
-	//  3. Create an exec configuration:
-	//       ExecConfig{ Cmd: []string{"bash", "-c", command}, AttachStdout: true, AttachStderr: true,
-	//                   WorkingDir: sandbox.VirtualPathPrefix+"/workspace" }
-	//  4. client.ContainerExecCreate → execID.
-	//  5. client.ContainerExecAttach → hijackedResponse, read combined output.
-	//  6. client.ContainerExecInspect → get ExitCode.
-	//  7. Return ExecuteResult{Stdout, Stderr, ExitCode}.
 	s.mu.Lock()
 	s.lastUsed = time.Now()
 	s.mu.Unlock()
@@ -136,18 +124,26 @@ func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.Ex
 		return sandbox.ExecuteResult{Error: err}, nil
 	}
 
+	// Apply execution timeout (P2 alignment with DeerFlow's 600s default)
+	timeout := s.cfg.ExecTimeout
+	if timeout == 0 {
+		timeout = 600 * time.Second // defaultExecTimeout aligned with DeerFlow
+	}
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	execCfg := types.ExecConfig{
 		Cmd:          []string{"bash", "-c", command},
 		AttachStdout: true,
 		AttachStderr: true,
 		WorkingDir:   sandbox.VirtualPathPrefix + "/workspace",
 	}
-	execID, err := s.client.ContainerExecCreate(ctx, s.containerID, execCfg)
+	execID, err := s.client.ContainerExecCreate(execCtx, s.containerID, execCfg)
 	if err != nil {
 		return sandbox.ExecuteResult{Error: fmt.Errorf("exec create: %w", err)}, nil
 	}
 
-	resp, err := s.client.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
+	resp, err := s.client.ContainerExecAttach(execCtx, execID.ID, types.ExecStartCheck{})
 	if err != nil {
 		return sandbox.ExecuteResult{Error: fmt.Errorf("exec attach: %w", err)}, nil
 	}
@@ -160,10 +156,19 @@ func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.Ex
 		_ = err
 	}
 
-	inspectResult, err := s.client.ContainerExecInspect(ctx, execID.ID)
+	inspectResult, err := s.client.ContainerExecInspect(execCtx, execID.ID)
 	exitCode := 0
 	if err == nil {
 		exitCode = inspectResult.ExitCode
+	}
+
+	// Check for timeout
+	if execCtx.Err() == context.DeadlineExceeded {
+		return sandbox.ExecuteResult{
+			Stdout:   stdoutBuf.String(),
+			Stderr:   stderrBuf.String() + "\nCommand timed out",
+			ExitCode: 124, // Standard timeout exit code
+		}, nil
 	}
 
 	return sandbox.ExecuteResult{
@@ -174,16 +179,31 @@ func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.Ex
 }
 
 // ReadFile reads a file from inside the container by copying it to stdout.
-func (s *DockerSandbox) ReadFile(ctx context.Context, virtualPath string) (string, error) {
-	// TODO:
-	//  1. virtualToContainerPath(virtualPath).
-	//  2. Execute(ctx, "cat "+containerPath) or use CopyFromContainer.
-	//  3. Return stdout content, or error if ExitCode != 0.
+func (s *DockerSandbox) ReadFile(ctx context.Context, virtualPath string, startLine, endLine int) (string, error) {
 	containerPath, err := virtualToContainerPath(virtualPath)
 	if err != nil {
 		return "", err
 	}
-	result, err := s.Execute(ctx, "cat "+shellQuote(containerPath))
+
+	// Build command with optional line range (P0 fix)
+	cmd := "cat " + shellQuote(containerPath)
+	if startLine > 0 || endLine > 0 {
+		// Use sed to extract line range
+		if startLine < 0 {
+			startLine = 0
+		}
+		if startLine > 0 {
+			// sed is 1-based, Go is 0-based
+			startLine++
+		}
+		if endLine > 0 {
+			cmd = fmt.Sprintf("sed -n '%d,%dp' %s", startLine+1, endLine, shellQuote(containerPath))
+		} else {
+			cmd = fmt.Sprintf("sed -n '%d,$p' %s", startLine+1, shellQuote(containerPath))
+		}
+	}
+
+	result, err := s.Execute(ctx, cmd)
 	if err != nil {
 		return "", err
 	}
@@ -284,107 +304,150 @@ func (s *DockerSandbox) ListDir(ctx context.Context, virtualPath string, maxDept
 }
 
 // Glob finds files/directories matching pattern under virtualPath.
+// This executes inside the Docker container to maintain sandbox isolation.
 func (s *DockerSandbox) Glob(ctx context.Context, virtualPath string, pattern string, includeDirs bool, maxResults int) ([]string, bool, error) {
-	_ = ctx
-	hostRoot, err := s.virtualToHostPath(virtualPath)
+	containerPath, err := virtualToContainerPath(virtualPath)
 	if err != nil {
 		return nil, false, err
 	}
 	if maxResults <= 0 {
 		maxResults = 200
 	}
+
+	// Build find command to execute inside container.
+	// Use find with -name pattern for simple cases, or execute a shell loop for glob patterns.
+	var cmd string
+	if includeDirs {
+		cmd = fmt.Sprintf("cd %s && find . -mindepth 1 -maxdepth 10 -print 2>/dev/null | head -n %d",
+			shellQuote(containerPath), maxResults+1)
+	} else {
+		cmd = fmt.Sprintf("cd %s && find . -mindepth 1 -maxdepth 10 -type f -print 2>/dev/null | head -n %d",
+			shellQuote(containerPath), maxResults+1)
+	}
+
+	result, execErr := s.Execute(ctx, cmd)
+	if execErr != nil {
+		return nil, false, execErr
+	}
+	if result.ExitCode != 0 {
+		return nil, false, fmt.Errorf("glob %q: %s", virtualPath, result.Stderr)
+	}
+
+	// Parse results and apply pattern matching.
+	lines := strings.Split(strings.TrimSpace(result.Stdout), "\n")
 	matches := make([]string, 0, minIntDocker(32, maxResults))
 	truncated := false
-	walkErr := filepath.WalkDir(hostRoot, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
-		if path == hostRoot {
-			return nil
-		}
-		if d.IsDir() && !includeDirs {
-			return nil
-		}
-		rel, err := filepath.Rel(hostRoot, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
+		// Remove leading "./"
+		rel := strings.TrimPrefix(line, "./")
 		if !matchPatternDocker(rel, pattern) {
-			return nil
+			continue
 		}
 		matches = append(matches, joinVirtualPath(virtualPath, rel))
 		if len(matches) >= maxResults {
 			truncated = true
-			return errStopWalkDocker
+			break
 		}
-		return nil
-	})
-	if walkErr != nil && walkErr != errStopWalkDocker {
-		return nil, false, fmt.Errorf("glob %q: %w", virtualPath, walkErr)
 	}
+
 	sort.Strings(matches)
 	return matches, truncated, nil
 }
 
 // Grep searches matching lines under virtualPath.
+// This executes inside the Docker container to maintain sandbox isolation.
 func (s *DockerSandbox) Grep(ctx context.Context, virtualPath string, pattern string, glob string, literal bool, caseSensitive bool, maxResults int) ([]sandbox.GrepMatch, bool, error) {
-	_ = ctx
-	hostRoot, err := s.virtualToHostPath(virtualPath)
+	containerPath, err := virtualToContainerPath(virtualPath)
 	if err != nil {
 		return nil, false, err
 	}
 	if maxResults <= 0 {
 		maxResults = 100
 	}
-	matcher, err := newLineMatcherDocker(pattern, literal, caseSensitive)
-	if err != nil {
-		return nil, false, err
+
+	// Build grep command to execute inside container.
+	// Use grep with -r for recursive search, -n for line numbers.
+	var grepOpts string
+	if literal {
+		grepOpts += " -F"
+	}
+	if !caseSensitive {
+		grepOpts += " -i"
 	}
 
+	var cmd string
+	if strings.TrimSpace(glob) != "" {
+		// Use --include for glob filtering.
+		cmd = fmt.Sprintf("cd %s && grep -r%s -n --include=%s -e %s . 2>/dev/null | head -n %d",
+			shellQuote(containerPath), grepOpts, shellQuote(glob), shellQuote(pattern), maxResults+1)
+	} else {
+		cmd = fmt.Sprintf("cd %s && grep -r%s -n -e %s . 2>/dev/null | head -n %d",
+			shellQuote(containerPath), grepOpts, shellQuote(pattern), maxResults+1)
+	}
+
+	result, execErr := s.Execute(ctx, cmd)
+	if execErr != nil {
+		return nil, false, execErr
+	}
+	// Exit code 1 means no matches, which is OK.
+	if result.ExitCode != 0 && result.ExitCode != 1 {
+		return nil, false, fmt.Errorf("grep %q: %s", virtualPath, result.Stderr)
+	}
+
+	// Parse results: format is "./path/to/file:line_number:content"
+	lines := strings.Split(strings.TrimSpace(result.Stdout), "\n")
 	matches := make([]sandbox.GrepMatch, 0, minIntDocker(16, maxResults))
 	truncated := false
-	walkErr := filepath.WalkDir(hostRoot, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
 		}
-		if d.IsDir() {
-			return nil
+		// Parse "./path/to/file:line_number:content"
+		// Handle the case where content may contain ":"
+		if !strings.HasPrefix(line, "./") {
+			continue
 		}
-		rel, err := filepath.Rel(hostRoot, path)
-		if err != nil {
-			return nil
+
+		// Find first two colons
+		firstColon := strings.Index(line, ":")
+		if firstColon < 0 {
+			continue
 		}
-		rel = filepath.ToSlash(rel)
-		if strings.TrimSpace(glob) != "" && !matchPatternDocker(rel, glob) {
-			return nil
+		secondColon := strings.Index(line[firstColon+1:], ":")
+		if secondColon < 0 {
+			continue
 		}
-		f, err := os.Open(path)
-		if err != nil {
-			return nil
+		secondColon += firstColon + 1
+
+		relPath := line[2:firstColon]
+		lineNumStr := line[firstColon+1 : secondColon]
+		content := line[secondColon+1:]
+
+		var lineNum int
+		if _, err := fmt.Sscanf(lineNumStr, "%d", &lineNum); err != nil {
+			continue
 		}
-		defer f.Close()
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		lineNo := 0
-		vp := joinVirtualPath(virtualPath, rel)
-		for scanner.Scan() {
-			lineNo++
-			line := scanner.Text()
-			if !matcher(line) {
-				continue
-			}
-			matches = append(matches, sandbox.GrepMatch{Path: vp, LineNumber: lineNo, Line: line})
-			if len(matches) >= maxResults {
-				truncated = true
-				return errStopWalkDocker
-			}
+
+		vp := joinVirtualPath(virtualPath, relPath)
+		matches = append(matches, sandbox.GrepMatch{
+			Path:       vp,
+			LineNumber: lineNum,
+			Line:       content,
+		})
+
+		if len(matches) >= maxResults {
+			truncated = true
+			break
 		}
-		return nil
-	})
-	if walkErr != nil && walkErr != errStopWalkDocker {
-		return nil, false, fmt.Errorf("grep %q: %w", virtualPath, walkErr)
 	}
+
 	return matches, truncated, nil
 }
 
@@ -398,7 +461,7 @@ func (s *DockerSandbox) StrReplace(ctx context.Context, virtualPath string, oldS
 
 // strReplaceLocked is the internal implementation of StrReplace without locking.
 func (s *DockerSandbox) strReplaceLocked(ctx context.Context, virtualPath string, oldStr string, newStr string, replaceAll bool) error {
-	content, err := s.ReadFile(ctx, virtualPath)
+	content, err := s.ReadFile(ctx, virtualPath, 0, 0) // Read entire file for str_replace
 	if err != nil {
 		return err
 	}
@@ -443,8 +506,6 @@ func (s *DockerSandbox) updateFileLocked(ctx context.Context, virtualPath string
 	return nil
 }
 
-var errStopWalkDocker = fmt.Errorf("stop walk")
-
 func (s *DockerSandbox) virtualToHostPath(virtualPath string) (string, error) {
 	if err := rejectPathTraversal(virtualPath); err != nil {
 		return "", err
@@ -474,26 +535,6 @@ func joinVirtualPath(rootVirtual string, rel string) string {
 		return root
 	}
 	return root + "/" + r
-}
-
-func newLineMatcherDocker(pattern string, literal bool, caseSensitive bool) (func(string) bool, error) {
-	if literal {
-		needle := pattern
-		if caseSensitive {
-			return func(line string) bool { return strings.Contains(line, needle) }, nil
-		}
-		needle = strings.ToLower(needle)
-		return func(line string) bool { return strings.Contains(strings.ToLower(line), needle) }, nil
-	}
-	p := pattern
-	if !caseSensitive {
-		p = "(?i)" + p
-	}
-	r, err := regexp.Compile(p)
-	if err != nil {
-		return nil, err
-	}
-	return func(line string) bool { return r.MatchString(line) }, nil
 }
 
 func matchPatternDocker(relPath, pattern string) bool {
@@ -564,9 +605,46 @@ func buildContainerEnv(env map[string]string) []string {
 		if strings.TrimSpace(k) == "" {
 			continue
 		}
-		out = append(out, fmt.Sprintf("%s=%s", k, env[k]))
+		// Resolve $ENV syntax (P1 fix)
+		resolvedValue := resolveEnvValue(env[k])
+		out = append(out, fmt.Sprintf("%s=%s", k, resolvedValue))
 	}
 	return out
+}
+
+// resolveEnvValue resolves $ENV_VAR and $ENV_VAR:default syntax.
+// - $ENV_VAR → value from environment, or empty string if not set
+// - $ENV_VAR:default → value from environment, or "default" if not set
+// This mirrors DeerFlow's environment variable resolution behavior.
+func resolveEnvValue(value string) string {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "$") {
+		return value
+	}
+
+	// Remove $ prefix
+	varPart := strings.TrimPrefix(value, "$")
+
+	// Check for default value syntax: $VAR:default
+	var varName, defaultVal string
+	if colonIdx := strings.Index(varPart, ":"); colonIdx >= 0 {
+		varName = strings.TrimSpace(varPart[:colonIdx])
+		defaultVal = varPart[colonIdx+1:]
+	} else {
+		varName = strings.TrimSpace(varPart)
+	}
+
+	if varName == "" {
+		return value
+	}
+
+	// Look up environment variable
+	if envVal, ok := os.LookupEnv(varName); ok {
+		return envVal
+	}
+
+	// Return default value (empty if no default specified)
+	return defaultVal
 }
 
 // ensureContainerRunning starts the container if it is stopped, or creates it
@@ -682,191 +760,4 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// ---------------------------------------------------------------------------
-// DockerSandboxProvider
-// ---------------------------------------------------------------------------
-
-// DockerSandboxProvider implements sandbox.SandboxProvider by managing a pool
-// of DockerSandbox instances keyed by sandbox ID (= container name).
-type DockerSandboxProvider struct {
-	mu      sync.Mutex
-	cfg     sandbox.SandboxConfig
-	baseDir string // host root for thread volume directories
-	client  *dockerclient.Client
-	pool    map[string]*DockerSandbox // key: sandboxID (container name)
-
-	stopWatchdog context.CancelFunc
-}
-
-// NewDockerSandboxProvider creates a DockerSandboxProvider and connects to the
-// local Docker daemon. Call Shutdown when done to clean up resources.
-func NewDockerSandboxProvider(cfg sandbox.SandboxConfig, baseDir string) (*DockerSandboxProvider, error) {
-	// TODO:
-	//  1. dockerclient.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation()).
-	//  2. Initialise pool map.
-	//  3. Start a background goroutine watchdog that calls evictIdleContainers
-	//     every minute (use cfg.Docker.ContainerTTL or defaultContainerTTL).
-	cli, err := dockerclient.NewClientWithOpts(
-		dockerclient.FromEnv,
-		dockerclient.WithAPIVersionNegotiation(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create docker client: %w", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	p := &DockerSandboxProvider{
-		cfg:          cfg,
-		baseDir:      filepath.Clean(baseDir),
-		client:       cli,
-		pool:         make(map[string]*DockerSandbox),
-		stopWatchdog: cancel,
-	}
-	go p.runWatchdog(ctx)
-	return p, nil
-}
-
-// Acquire returns (or creates) a DockerSandbox for the given thread.
-func (p *DockerSandboxProvider) Acquire(ctx context.Context, threadID string) (string, error) {
-	// TODO:
-	//  1. Lock p.mu.
-	//  2. Compute sandboxID = containerName(threadID).
-	//  3. If already in p.pool, unlock and return sandboxID.
-	//  4. Otherwise create a new DockerSandbox (do NOT call createContainer yet –
-	//     that happens lazily inside Execute/ensureContainerRunning).
-	//  5. Store in p.pool, unlock, return sandboxID.
-	sandboxID := containerName(p.cfg, threadID)
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if _, exists := p.pool[sandboxID]; exists {
-		return sandboxID, nil
-	}
-
-	threadBaseDir := filepath.Join(p.baseDir, "threads", threadID, "user-data")
-	sb := &DockerSandbox{
-		id:          sandboxID,
-		threadID:    threadID,
-		containerID: sandboxID, // container name == initial lookup key
-		baseDir:     threadBaseDir,
-		client:      p.client,
-		cfg:         p.cfg,
-		lastUsed:    time.Now(),
-	}
-	p.pool[sandboxID] = sb
-	return sandboxID, nil
-}
-
-// Get returns the sandbox with the given ID, or nil if not found.
-func (p *DockerSandboxProvider) Get(sandboxID string) sandbox.Sandbox {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if sb, ok := p.pool[sandboxID]; ok {
-		return sb
-	}
-	return nil
-}
-
-// Release stops and removes the container for the given sandbox ID.
-func (p *DockerSandboxProvider) Release(ctx context.Context, sandboxID string) error {
-	// TODO:
-	//  1. Lock p.mu, retrieve and delete sandbox from pool, unlock.
-	//  2. If sandbox not found, return nil.
-	//  3. Call client.ContainerStop(ctx, containerID, &containerStopTimeout).
-	//  4. Call client.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{Force: true}).
-	p.mu.Lock()
-	sb, ok := p.pool[sandboxID]
-	if ok {
-		delete(p.pool, sandboxID)
-	}
-	p.mu.Unlock()
-
-	if !ok || sb == nil {
-		return nil
-	}
-	stopTimeout := int(containerStopTimeout.Seconds())
-	if err := p.client.ContainerStop(ctx, sb.containerID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
-		// Log but don't fail – container might already be gone.
-		_ = err
-	}
-	if err := p.client.ContainerRemove(ctx, sb.containerID, container.RemoveOptions{Force: true}); err != nil {
-		return fmt.Errorf("remove container %q: %w", sandboxID, err)
-	}
-	return nil
-}
-
-// Shutdown stops all active containers and closes the Docker client.
-func (p *DockerSandboxProvider) Shutdown(ctx context.Context) error {
-	// TODO:
-	//  1. Cancel the watchdog goroutine via p.stopWatchdog().
-	//  2. Collect all sandboxIDs from pool under lock.
-	//  3. Call Release for each sandbox.
-	//  4. Close p.client.
-	p.stopWatchdog()
-
-	p.mu.Lock()
-	ids := make([]string, 0, len(p.pool))
-	for id := range p.pool {
-		ids = append(ids, id)
-	}
-	p.mu.Unlock()
-
-	var firstErr error
-	for _, id := range ids {
-		if err := p.Release(ctx, id); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	_ = p.client.Close()
-	return firstErr
-}
-
-// runWatchdog periodically evicts containers that have been idle longer than ContainerTTL.
-func (p *DockerSandboxProvider) runWatchdog(ctx context.Context) {
-	// TODO:
-	//  1. Compute ttl = p.cfg.Docker.ContainerTTL; if zero use defaultContainerTTL.
-	//  2. time.NewTicker(ttl / 2) for check interval.
-	//  3. On each tick call evictIdleContainers(ctx, ttl).
-	//  4. Exit when ctx is cancelled.
-	ttl := p.cfg.Docker.ContainerTTL
-	if ttl == 0 {
-		ttl = defaultContainerTTL
-	}
-	ticker := time.NewTicker(ttl / 2)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			p.evictIdleContainers(ctx, ttl)
-		}
-	}
-}
-
-// evictIdleContainers releases containers that have not been used within ttl.
-func (p *DockerSandboxProvider) evictIdleContainers(ctx context.Context, ttl time.Duration) {
-	// TODO:
-	//  1. Lock p.mu, collect sandboxIDs where time.Since(sb.lastUsed) > ttl, unlock.
-	//  2. Call Release for each evicted ID.
-	now := time.Now()
-	p.mu.Lock()
-	var evict []string
-	for id, sb := range p.pool {
-		sb.mu.Lock()
-		idle := now.Sub(sb.lastUsed)
-		sb.mu.Unlock()
-		if idle > ttl {
-			evict = append(evict, id)
-		}
-	}
-	p.mu.Unlock()
-
-	for _, id := range evict {
-		_ = p.Release(ctx, id)
-	}
-}
-
-// Ensure DockerSandboxProvider satisfies sandbox.SandboxProvider at compile time.
-var _ sandbox.SandboxProvider = (*DockerSandboxProvider)(nil)
+// DockerSandboxProvider is defined in provider.go

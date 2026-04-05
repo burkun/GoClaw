@@ -114,7 +114,7 @@ func (c *LangGraphEventConverter) Convert(ev agent.Event) []LangGraphSSEEvent {
 		return c.convertMessageDelta(ev)
 	case agent.EventToolEvent:
 		return c.convertToolEvent(ev)
-	case agent.EventTaskStarted, agent.EventTaskRunning, agent.EventTaskCompleted, agent.EventTaskFailed:
+	case agent.EventTaskStarted, agent.EventTaskRunning, agent.EventTaskCompleted, agent.EventTaskFailed, agent.EventTaskTimedOut:
 		return c.convertTaskEvent(ev)
 	case agent.EventCompleted:
 		return c.convertCompleted(ev)
@@ -227,18 +227,56 @@ func (c *LangGraphEventConverter) convertToolEvent(ev agent.Event) []LangGraphSS
 
 // convertTaskEvent handles task_* events as custom events.
 func (c *LangGraphEventConverter) convertTaskEvent(ev agent.Event) []LangGraphSSEEvent {
-	payload, ok := ev.Payload.(agent.TaskPayload)
-	if !ok {
+	// Handle both TaskPayload and map[string]any formats
+	var taskID, description, message string
+	var result, errorMsg string
+
+	switch payload := ev.Payload.(type) {
+	case agent.TaskPayload:
+		taskID = payload.TaskID
+		description = payload.Subject
+	case map[string]any:
+		if v, ok := payload["task_id"].(string); ok {
+			taskID = v
+		}
+		if v, ok := payload["description"].(string); ok {
+			description = v
+		}
+		if v, ok := payload["message"].(map[string]any); ok {
+			if content, ok := v["content"].(string); ok {
+				message = content
+			}
+		}
+		if v, ok := payload["result"].(string); ok {
+			result = v
+		}
+		if v, ok := payload["error"].(string); ok {
+			errorMsg = v
+		}
+	default:
 		return nil
+	}
+
+	data := LangGraphCustomEvent{
+		Type:    string(ev.Type),
+		TaskID:  taskID,
+		Message: description,
+	}
+
+	// Add additional fields for different event types
+	if ev.Type == agent.EventTaskRunning && message != "" {
+		data.Message = message
+	}
+	if ev.Type == agent.EventTaskCompleted && result != "" {
+		data.Message = result
+	}
+	if ev.Type == agent.EventTaskFailed && errorMsg != "" {
+		data.Message = errorMsg
 	}
 
 	return []LangGraphSSEEvent{{
 		Event: "custom",
-		Data: LangGraphCustomEvent{
-			Type:    string(ev.Type),
-			TaskID:  payload.TaskID,
-			Message: payload.Subject,
-		},
+		Data:  data,
 	}}
 }
 

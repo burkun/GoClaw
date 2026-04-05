@@ -182,8 +182,7 @@ memory:
 		"$TEST_BASE_URL should be resolved from environment")
 }
 
-// TestLoad_envVar_missing verifies that an unset "$VAR" resolves to an
-// empty string (not the literal "$VAR" token).
+// TestLoad_envVar_missing verifies that an unset "$VAR" fails fast with an error.
 func TestLoad_envVar_missing(t *testing.T) {
 	// Ensure the variable is definitely unset.
 	t.Setenv("GOCLAW_TEST_MISSING_VAR", "")
@@ -208,10 +207,9 @@ memory:
 `
 
 	path := writeTemp(t, yaml)
-	cfg, err := Load(path)
-	require.NoError(t, err)
-	// Unset variable resolves to empty string, not "$GOCLAW_TEST_MISSING_VAR".
-	assert.Equal(t, "", cfg.Models[0].APIKey)
+	_, err := Load(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GOCLAW_TEST_MISSING_VAR")
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +278,53 @@ memory:
 
 	require.Len(t, cfg.Extensions.Skills, 1)
 	assert.True(t, cfg.Extensions.Skills["my-skill"].Enabled)
+}
+
+func TestLoad_extensionsConfig_missingEnvVarFails(t *testing.T) {
+	t.Setenv("GOCLAW_TEST_MISSING_EXT_VAR", "")
+	os.Unsetenv("GOCLAW_TEST_MISSING_EXT_VAR") //nolint:errcheck
+
+	yaml := `
+config_version: 1
+log_level: info
+
+models:
+  - name: env-model
+    use: openai
+    model: gpt-4o-mini
+    api_key: sk-test
+
+sandbox:
+  use: local
+
+memory:
+  enabled: false
+  injection_enabled: false
+`
+
+	path := writeTemp(t, yaml)
+	dir := filepath.Dir(path)
+
+	ext := `{
+  "mcpServers": {
+    "remote": {
+      "enabled": true,
+      "type": "http",
+      "url": "https://mcp.example.com",
+      "headers": {
+        "Authorization": "$GOCLAW_TEST_MISSING_EXT_VAR"
+      }
+    }
+  },
+  "skills": {}
+}`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "extensions_config.json"), []byte(ext), 0o644))
+
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg.Extensions)
+	require.Contains(t, cfg.Extensions.MCPServers, "remote")
+	assert.Equal(t, "", cfg.Extensions.MCPServers["remote"].Headers["Authorization"])
 }
 
 // ---------------------------------------------------------------------------
@@ -369,19 +414,64 @@ func TestResolveEnvVars(t *testing.T) {
 	t.Setenv("MY_SECRET", "hunter2")
 
 	tests := []struct {
-		input    string
-		expected string
+		input       string
+		expected    string
+		expectError bool
 	}{
-		{"$MY_SECRET", "hunter2"},
-		{"literal-value", "literal-value"},
-		{"$DEFINITELY_UNSET_9999", ""},
-		{"", ""},
+		{"$MY_SECRET", "hunter2", false},
+		{"literal-value", "literal-value", false},
+		{"$DEFINITELY_UNSET_9999", "", true},
+		{"", "", false},
 	}
 
 	for _, tc := range tests {
-		got := resolveEnvVars(tc.input)
+		got, err := resolveEnvVars(tc.input, false)
+		if tc.expectError {
+			require.Error(t, err, "input: %q", tc.input)
+			continue
+		}
+		require.NoError(t, err, "input: %q", tc.input)
 		assert.Equal(t, tc.expected, got, "input: %q", tc.input)
 	}
+}
+
+func TestLoad_ModelConfigExplicitFields(t *testing.T) {
+	yaml := `
+config_version: 1
+log_level: info
+
+models:
+  - name: gpt-5
+    use: openai
+    model: gpt-5
+    api_key: sk-test
+    api_base: https://api.example.com/v1
+    use_responses_api: true
+    output_version: responses/v1
+    gemini_api_key: gemini-secret
+    thinking:
+      type: enabled
+      budget_tokens: 1024
+
+sandbox:
+  use: local
+
+memory:
+  enabled: false
+  injection_enabled: false
+`
+	path := writeTemp(t, yaml)
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	require.Len(t, cfg.Models, 1)
+	m := cfg.Models[0]
+	assert.Equal(t, "https://api.example.com/v1", m.APIBase)
+	if assert.NotNil(t, m.UseResponsesAPI) {
+		assert.True(t, *m.UseResponsesAPI)
+	}
+	assert.Equal(t, "responses/v1", m.OutputVersion)
+	assert.Equal(t, "gemini-secret", m.GeminiAPIKey)
+	assert.Equal(t, "enabled", m.Thinking["type"])
 }
 
 // ---------------------------------------------------------------------------

@@ -1,11 +1,14 @@
 // Package uploads implements UploadsMiddleware which scans the uploads directory
-// and injects the list of uploaded files into state.Extra["uploads"].
+// and injects the list of uploaded files into state.Extra["uploads"] and into
+// the last human message as <uploaded_files> XML block.
 package uploads
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
@@ -26,7 +29,8 @@ func (m *UploadsMiddleware) Name() string {
 	return "UploadsMiddleware"
 }
 
-// Before scans uploads directory and populates state.Extra["uploads"].
+// Before scans uploads directory and populates state.Extra["uploads"],
+// and injects <uploaded_files> XML block into the last human message.
 func (m *UploadsMiddleware) Before(_ context.Context, state *middleware.State) error {
 	uploadsPath, ok := state.Extra["uploads_path"].(string)
 	if !ok || uploadsPath == "" {
@@ -52,7 +56,43 @@ func (m *UploadsMiddleware) Before(_ context.Context, state *middleware.State) e
 		files = []string{}
 	}
 	state.Extra["uploads"] = files
+
+	// Inject <uploaded_files> XML block into the last human message.
+	if len(files) > 0 {
+		injectUploadedFilesToMessage(state.Messages, files)
+	}
 	return nil
+}
+
+// injectUploadedFilesToMessage finds the last human message and prepends
+// the <uploaded_files> XML block to its content.
+func injectUploadedFilesToMessage(messages []map[string]any, files []string) {
+	// Find the last human message.
+	var lastHumanIdx = -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		role, _ := messages[i]["role"].(string)
+		if role == "user" || role == "human" {
+			lastHumanIdx = i
+			break
+		}
+	}
+	if lastHumanIdx == -1 {
+		return
+	}
+
+	// Build the <uploaded_files> XML block.
+	var sb strings.Builder
+	sb.WriteString("<uploaded_files>\n")
+	for _, f := range files {
+		sb.WriteString(fmt.Sprintf("  <file path=\"%s\" />\n", f))
+	}
+	sb.WriteString("</uploaded_files>\n\n")
+	filesMsg := sb.String()
+
+	// Prepend to the message content.
+	msg := messages[lastHumanIdx]
+	content, _ := msg["content"].(string)
+	msg["content"] = filesMsg + content
 }
 
 // After is a no-op.

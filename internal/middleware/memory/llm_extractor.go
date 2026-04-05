@@ -83,7 +83,7 @@ func (e *EinoFactExtractor) Extract(messages []map[string]any, correctionDetecte
 		if _, ok := seen[key]; !ok {
 			filtered = append(filtered, Fact{
 				Content:    "User corrected a previous assistant response.",
-				Category:   "correction",
+				Category:   CategoryCorrection,
 				Confidence: 0.95,
 			})
 		}

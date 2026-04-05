@@ -524,3 +524,39 @@ func copyHeaders(in map[string]string) map[string]string {
 	}
 	return out
 }
+
+// invokeMCPHTTPRaw invokes an arbitrary MCP method via HTTP POST and returns the raw result.
+// This is used for tool discovery (tools/list) before creating specific tool wrappers.
+func invokeMCPHTTPRaw(ctx context.Context, serverName string, serverCfg config.MCPServerConfig, method string, params map[string]any) (string, error) {
+	endpoint := strings.TrimSpace(serverCfg.URL)
+	if endpoint == "" {
+		return "", fmt.Errorf("http server %q requires url", serverName)
+	}
+
+	runCtx := ctx
+	if _, ok := runCtx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, defaultMCPHTTPTimeout)
+		defer cancel()
+	}
+
+	headers := copyHeaders(serverCfg.Headers)
+	var err error
+	headers, err = applyOAuthHeader(runCtx, serverName, serverCfg, headers)
+	if err != nil {
+		return "", err
+	}
+
+	cli := &mcpHTTPClient{
+		httpClient: &http.Client{Timeout: defaultMCPHTTPTimeout},
+		url:        endpoint,
+		headers:    headers,
+	}
+
+	result, err := cli.request(runCtx, method, params)
+	if err != nil {
+		return "", err
+	}
+
+	return string(result), nil
+}

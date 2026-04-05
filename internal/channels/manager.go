@@ -23,6 +23,7 @@ type Manager struct {
 	running        bool
 	maxConcurrency int
 	sem            chan struct{}
+	channelCaps    map[string]bool
 }
 
 // NewManager creates a channels manager.
@@ -39,6 +40,11 @@ func NewManager(store ChannelStore, proc Processor) *Manager {
 		gen:            defaultThreadIDGenerator,
 		maxConcurrency: maxConc,
 		sem:            make(chan struct{}, maxConc),
+		channelCaps: map[string]bool{
+			"feishu":   true,
+			"slack":    false,
+			"telegram": false,
+		},
 	}
 }
 
@@ -156,6 +162,30 @@ func (m *Manager) RestartChannel(ctx context.Context, name string) error {
 // Bus returns the event bus for external subscription.
 func (m *Manager) Bus() *MessageBus { return m.bus }
 
+// SetChannelStreamingCapability sets whether a channel supports streaming dispatch.
+func (m *Manager) SetChannelStreamingCapability(channel string, supports bool) {
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		return
+	}
+	m.mu.Lock()
+	if m.channelCaps == nil {
+		m.channelCaps = make(map[string]bool)
+	}
+	m.channelCaps[channel] = supports
+	m.mu.Unlock()
+}
+
+func (m *Manager) channelSupportsStreaming(channel string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.channelCaps == nil {
+		return false
+	}
+	supported, ok := m.channelCaps[channel]
+	return ok && supported
+}
+
 func (m *Manager) onIncoming(ctx context.Context, msg IncomingMessage) error {
 	if msg.Channel == "" || msg.ChatID == "" {
 		return fmt.Errorf("invalid incoming message: channel/chat_id required")
@@ -174,36 +204,108 @@ func (m *Manager) onIncoming(ctx context.Context, msg IncomingMessage) error {
 		return ctx.Err()
 	}
 
-	threadID, ok := m.store.GetThreadID(msg.Channel, msg.ChatID)
+	var topicIDPtr *string
+	if msg.TopicID != "" {
+		topicIDPtr = &msg.TopicID
+	}
+	threadID, ok := m.store.GetThreadID(msg.Channel, msg.ChatID, topicIDPtr)
 	if !ok || threadID == "" {
 		m.mu.RLock()
 		gen := m.gen
 		m.mu.RUnlock()
 		threadID = gen(msg)
-		m.store.SetThreadID(msg.Channel, msg.ChatID, threadID)
+		m.store.SetThreadID(msg.Channel, msg.ChatID, threadID, topicIDPtr, msg.UserID)
 	}
 	msg.ThreadID = threadID
 	m.bus.Publish(msg)
 
 	m.mu.RLock()
 	proc := m.proc
-	ch := m.channels[msg.Channel]
 	m.mu.RUnlock()
-	if proc == nil || ch == nil {
+	if proc == nil {
 		return nil
+	}
+
+	if streamProc, ok := proc.(StreamProcessor); ok && m.channelSupportsStreaming(msg.Channel) {
+		return m.handleStreamingIncoming(ctx, msg, threadID, streamProc)
 	}
 
 	out, err := proc.Process(ctx, msg, threadID)
 	if err != nil {
 		return err
 	}
+	m.enrichOutgoing(&out, msg, threadID)
+	out.IsFinal = true
+	return m.dispatchOutgoing(ctx, out)
+}
+
+func (m *Manager) handleStreamingIncoming(ctx context.Context, msg IncomingMessage, threadID string, proc StreamProcessor) error {
+	stream, err := proc.ProcessStream(ctx, msg, threadID)
+	if err != nil {
+		return err
+	}
+	if stream == nil {
+		return nil
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out, ok := <-stream:
+			if !ok {
+				return nil
+			}
+			m.enrichOutgoing(&out, msg, threadID)
+			if err := m.dispatchOutgoing(ctx, out); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (m *Manager) enrichOutgoing(out *OutgoingMessage, incoming IncomingMessage, threadID string) {
+	if out == nil {
+		return
+	}
 	if out.Channel == "" {
-		out.Channel = msg.Channel
+		out.Channel = incoming.Channel
 	}
 	if out.ChatID == "" {
-		out.ChatID = msg.ChatID
+		out.ChatID = incoming.ChatID
+	}
+	if out.TopicID == "" {
+		out.TopicID = incoming.TopicID
 	}
 	out.ThreadID = threadID
+
+	if out.Metadata == nil {
+		out.Metadata = map[string]any{}
+	}
+	for k, v := range incoming.Metadata {
+		if _, exists := out.Metadata[k]; !exists {
+			out.Metadata[k] = v
+		}
+	}
+	if incoming.MessageID != "" {
+		if _, exists := out.Metadata["source_message_id"]; !exists {
+			out.Metadata["source_message_id"] = incoming.MessageID
+		}
+		if _, exists := out.Metadata["thread_ts"]; !exists {
+			out.Metadata["thread_ts"] = incoming.MessageID
+		}
+	}
+}
+
+func (m *Manager) dispatchOutgoing(ctx context.Context, out OutgoingMessage) error {
+	m.bus.PublishOutbound(ctx, out)
+
+	m.mu.RLock()
+	ch := m.channels[out.Channel]
+	m.mu.RUnlock()
+	if ch == nil {
+		return nil
+	}
 	return ch.Send(ctx, out)
 }
 
@@ -223,7 +325,11 @@ func (m *Manager) handleCommand(ctx context.Context, msg IncomingMessage) error 
 	switch cmd {
 	case "/new":
 		// Clear thread mapping to start fresh.
-		m.store.DeleteThreadID(msg.Channel, msg.ChatID)
+		var topicIDPtr *string
+		if msg.TopicID != "" {
+			topicIDPtr = &msg.TopicID
+		}
+		m.store.Remove(msg.Channel, msg.ChatID, topicIDPtr)
 		response = "Started a new conversation."
 	case "/status":
 		m.mu.RLock()
@@ -241,9 +347,12 @@ func (m *Manager) handleCommand(ctx context.Context, msg IncomingMessage) error 
 		out := OutgoingMessage{
 			Channel: msg.Channel,
 			ChatID:  msg.ChatID,
+			TopicID: msg.TopicID,
 			Text:    response,
+			IsFinal: true,
 		}
-		return ch.Send(ctx, out)
+		m.enrichOutgoing(&out, msg, msg.ThreadID)
+		return m.dispatchOutgoing(ctx, out)
 	}
 	return nil
 }

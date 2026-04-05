@@ -9,12 +9,9 @@
 package search
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -47,6 +44,12 @@ type PathResolver interface {
 	MaskHostPaths(output string) string
 }
 
+// SandboxSearcher is the sandbox-layer search capability used by tools.
+type SandboxSearcher interface {
+	Glob(ctx context.Context, path string, pattern string, includeDirs bool, maxResults int) ([]string, bool, error)
+	Grep(ctx context.Context, path string, pattern string, glob string, literal bool, caseSensitive bool, maxResults int) ([]GrepMatch, bool, error)
+}
+
 // ---------------------------------------------------------------------------
 // GrepTool
 // ---------------------------------------------------------------------------
@@ -54,8 +57,9 @@ type PathResolver interface {
 // GrepTool searches file contents for lines matching a pattern.
 // Implements tools.Tool.
 type GrepTool struct {
-	Resolver   PathResolver
-	MaxResults int
+	Resolver      PathResolver
+	SandboxGetter func(ctx context.Context) (SandboxSearcher, error)
+	MaxResults    int
 }
 
 type grepInput struct {
@@ -100,7 +104,8 @@ func (t *GrepTool) InputSchema() json.RawMessage {
 }
 
 // Execute searches files under path for lines matching pattern.
-func (t *GrepTool) Execute(_ context.Context, input string) (string, error) {
+// This operation ALWAYS goes through the sandbox layer to maintain isolation.
+func (t *GrepTool) Execute(ctx context.Context, input string) (string, error) {
 	var in grepInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
 		return "", fmt.Errorf("grep: invalid input JSON: %w", err)
@@ -108,68 +113,25 @@ func (t *GrepTool) Execute(_ context.Context, input string) (string, error) {
 	if strings.TrimSpace(in.Path) == "" || strings.TrimSpace(in.Pattern) == "" {
 		return "", fmt.Errorf("grep: path and pattern are required")
 	}
-	if t.Resolver == nil {
-		return "", fmt.Errorf("grep: resolver is required")
-	}
-
 	effectiveMax := clampMax(in.MaxResults, t.MaxResults, DefaultGrepMaxResults, 500)
-	hostRoot, err := t.Resolver.Resolve(in.Path)
+
+	// ALWAYS use sandbox layer - no fallback to direct filesystem access.
+	if t.SandboxGetter == nil {
+		return "", fmt.Errorf("grep: sandbox getter is required for sandbox isolation")
+	}
+
+	sb, err := t.SandboxGetter(ctx)
 	if err != nil {
-		return fmt.Sprintf("Error: %v", err), nil
+		return "", fmt.Errorf("grep: failed to get sandbox: %w", err)
+	}
+	if sb == nil {
+		return "", fmt.Errorf("grep: sandbox is not available")
 	}
 
-	matcher, err := newLineMatcher(in)
-	if err != nil {
-		return fmt.Sprintf("Error: invalid grep pattern: %v", err), nil
+	matches, truncated, callErr := sb.Grep(ctx, in.Path, in.Pattern, in.Glob, in.Literal, in.CaseSensitive, effectiveMax)
+	if callErr != nil {
+		return fmt.Sprintf("Error: %v", callErr), nil
 	}
-
-	matches := make([]GrepMatch, 0, minInt(16, effectiveMax))
-	truncated := false
-	walkErr := filepath.WalkDir(hostRoot, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		rel, err := filepath.Rel(hostRoot, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if strings.TrimSpace(in.Glob) != "" && !matchPattern(rel, in.Glob) {
-			return nil
-		}
-
-		f, err := os.Open(path)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		lineNo := 0
-		virtualPath := t.Resolver.MaskHostPaths(path)
-		for scanner.Scan() {
-			lineNo++
-			line := scanner.Text()
-			if !matcher(line) {
-				continue
-			}
-			matches = append(matches, GrepMatch{Path: virtualPath, LineNumber: lineNo, Line: line})
-			if len(matches) >= effectiveMax {
-				truncated = true
-				return errStopWalk
-			}
-		}
-		return nil
-	})
-	if walkErr != nil && walkErr != errStopWalk {
-		return fmt.Sprintf("Error: grep walk failed: %v", walkErr), nil
-	}
-
 	return formatGrepResults(in.Path, matches, truncated), nil
 }
 
@@ -198,8 +160,9 @@ func formatGrepResults(root string, matches []GrepMatch, truncated bool) string 
 // under a root directory.
 // Implements tools.Tool.
 type GlobTool struct {
-	Resolver   PathResolver
-	MaxResults int
+	Resolver      PathResolver
+	SandboxGetter func(ctx context.Context) (SandboxSearcher, error)
+	MaxResults    int
 }
 
 type globInput struct {
@@ -238,7 +201,8 @@ func (t *GlobTool) InputSchema() json.RawMessage {
 }
 
 // Execute walks the directory tree and collects paths matching the glob pattern.
-func (t *GlobTool) Execute(_ context.Context, input string) (string, error) {
+// This operation ALWAYS goes through the sandbox layer to maintain isolation.
+func (t *GlobTool) Execute(ctx context.Context, input string) (string, error) {
 	var in globInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
 		return "", fmt.Errorf("glob: invalid input JSON: %w", err)
@@ -246,52 +210,25 @@ func (t *GlobTool) Execute(_ context.Context, input string) (string, error) {
 	if strings.TrimSpace(in.Path) == "" || strings.TrimSpace(in.Pattern) == "" {
 		return "", fmt.Errorf("glob: path and pattern are required")
 	}
-	if t.Resolver == nil {
-		return "", fmt.Errorf("glob: resolver is required")
-	}
-
 	effectiveMax := clampMax(in.MaxResults, t.MaxResults, DefaultGlobMaxResults, 1000)
-	hostRoot, err := t.Resolver.Resolve(in.Path)
+
+	// ALWAYS use sandbox layer - no fallback to direct filesystem access.
+	if t.SandboxGetter == nil {
+		return "", fmt.Errorf("glob: sandbox getter is required for sandbox isolation")
+	}
+
+	sb, err := t.SandboxGetter(ctx)
 	if err != nil {
-		return fmt.Sprintf("Error: %v", err), nil
+		return "", fmt.Errorf("glob: failed to get sandbox: %w", err)
+	}
+	if sb == nil {
+		return "", fmt.Errorf("glob: sandbox is not available")
 	}
 
-	matches := make([]string, 0, minInt(32, effectiveMax))
-	truncated := false
-	walkErr := filepath.WalkDir(hostRoot, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if d.IsDir() && !in.IncludeDirs {
-			if path == hostRoot {
-				return nil
-			}
-			return nil
-		}
-
-		rel, err := filepath.Rel(hostRoot, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
-		if rel == "." {
-			return nil
-		}
-		if !matchPattern(rel, in.Pattern) {
-			return nil
-		}
-
-		matches = append(matches, t.Resolver.MaskHostPaths(path))
-		if len(matches) >= effectiveMax {
-			truncated = true
-			return errStopWalk
-		}
-		return nil
-	})
-	if walkErr != nil && walkErr != errStopWalk {
-		return fmt.Sprintf("Error: glob walk failed: %v", walkErr), nil
+	matches, truncated, callErr := sb.Glob(ctx, in.Path, in.Pattern, in.IncludeDirs, effectiveMax)
+	if callErr != nil {
+		return fmt.Sprintf("Error: %v", callErr), nil
 	}
-
 	sort.Strings(matches)
 	return formatGlobResults(in.Path, matches, truncated), nil
 }

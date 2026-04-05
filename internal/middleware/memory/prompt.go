@@ -27,6 +27,11 @@ GUIDELINES:
 4. If no new facts are found, return an empty array []
 5. Confidence should be high (0.8+) for explicit statements, lower for inferences
 
+CONFIDENCE LEVELS:
+- 0.9-1.0: Explicitly stated facts ("I work on X", "My role is Y")
+- 0.7-0.8: Strongly implied from actions/discussions
+- 0.5-0.6: Inferred patterns (use sparingly, only for clear patterns)
+
 Example input:
 Human: I prefer Go over Python for backend services
 Assistant: I'll use Go then.

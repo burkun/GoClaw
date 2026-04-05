@@ -52,8 +52,14 @@ func TestDanglingToolCallMiddleware_Before_InsertsPlaceholder(t *testing.T) {
 	if len(state.Messages) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(state.Messages))
 	}
-	last := state.Messages[3]
-	if last["tool_call_id"] != "tc2" {
-		t.Errorf("expected placeholder for tc2, got %v", last)
+	// Placeholder should be inserted right after assistant message (index 2)
+	placeholder := state.Messages[2]
+	if placeholder["tool_call_id"] != "tc2" {
+		t.Errorf("expected placeholder for tc2 at index 2, got %v", placeholder)
+	}
+	// Original tool response should be at index 3
+	originalTool := state.Messages[3]
+	if originalTool["tool_call_id"] != "tc1" {
+		t.Errorf("expected original tool response for tc1 at index 3, got %v", originalTool)
 	}
 }

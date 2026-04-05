@@ -50,10 +50,7 @@ func TestGetMemory_FallbackDefaultPath(t *testing.T) {
 	}
 	defer func() { _ = os.Chdir(oldWD) }()
 
-	if err := os.MkdirAll(filepath.Join(".goclaw"), 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(".goclaw", "memory.json"), []byte(`{"version":"1.1","facts":[]}`), 0o644); err != nil {
+	if err := os.WriteFile("memory.json", []byte(`{"version":"1.1","facts":[]}`), 0o644); err != nil {
 		t.Fatalf("write memory file failed: %v", err)
 	}
 
@@ -143,5 +140,25 @@ func TestGetMemory_CacheRefreshOnMtimeChange(t *testing.T) {
 	}
 	if resp.Version != "2.0" {
 		t.Fatalf("expected refreshed version 2.0, got %s", resp.Version)
+	}
+}
+
+func TestGetMemory_RejectsLegacyStringFactsSchema(t *testing.T) {
+	tmp := t.TempDir()
+	memPath := filepath.Join(tmp, "memory.json")
+	content := `{"version":"1.0","lastUpdated":"2026-01-01T00:00:00Z","facts":["User prefers Go","Works on AgentClaw"]}`
+	if err := os.WriteFile(memPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("write memory file failed: %v", err)
+	}
+
+	h := NewMemoryHandler(&config.AppConfig{Memory: config.MemoryConfig{StoragePath: memPath}})
+	req := httptest.NewRequest(http.MethodGet, "/api/memory", nil)
+	rr := httptest.NewRecorder()
+	c, _ := newGinContext(rr, req, nil)
+
+	h.GetMemory(c)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for legacy schema, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }

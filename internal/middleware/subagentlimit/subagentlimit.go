@@ -5,6 +5,7 @@ package subagentlimit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 
 	"github.com/bookerbai/goclaw/internal/middleware"
@@ -46,7 +47,13 @@ func (m *SubagentLimitMiddleware) Name() string {
 
 // Before increments counter and rejects if limit exceeded.
 func (m *SubagentLimitMiddleware) Before(_ context.Context, state *middleware.State) error {
-	// Only apply to subagent runs (indicated by extra flag).
+	if state.Extra == nil {
+		state.Extra = map[string]any{}
+	}
+	// Per-turn counter for truncating excessive task tool calls.
+	state.Extra["task_tool_calls_count"] = 0
+
+	// Only apply active-run counter to subagent runs (indicated by extra flag).
 	isSubagent, _ := state.Extra["is_subagent"].(bool)
 	if !isSubagent {
 		return nil
@@ -67,6 +74,30 @@ func (m *SubagentLimitMiddleware) After(_ context.Context, state *middleware.Sta
 		atomic.AddInt64(m.current, -1)
 	}
 	return nil
+}
+
+// WrapToolCall truncates excessive task tool calls in a single run.
+// For task calls beyond MaxConcurrent, it returns a synthetic success output
+// without executing the underlying tool.
+func (m *SubagentLimitMiddleware) WrapToolCall(ctx context.Context, state *middleware.State, toolCall *middleware.ToolCall, handler middleware.ToolHandler) (*middleware.ToolResult, error) {
+	if toolCall == nil || toolCall.Name != "task" {
+		return handler(ctx, toolCall)
+	}
+	if state.Extra == nil {
+		state.Extra = map[string]any{}
+	}
+	count, _ := state.Extra["task_tool_calls_count"].(int)
+	if count >= m.cfg.MaxConcurrent {
+		return &middleware.ToolResult{
+			ID: toolCall.ID,
+			Output: fmt.Sprintf(
+				"subagent task call skipped: exceeded max_concurrent limit (%d)",
+				m.cfg.MaxConcurrent,
+			),
+		}, nil
+	}
+	state.Extra["task_tool_calls_count"] = count + 1
+	return handler(ctx, toolCall)
 }
 
 // Current returns the current active subagent count.

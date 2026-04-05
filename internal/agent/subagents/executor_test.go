@@ -59,7 +59,8 @@ func TestExecutorTimeout(t *testing.T) {
 }
 
 func TestExecutorConcurrencyLimit(t *testing.T) {
-	exec := NewExecutor(ExecutorConfig{MaxConcurrent: 1, DefaultTimeout: time.Second})
+	// Note: MaxConcurrent is clamped to [2, 4] range per DeerFlow spec
+	exec := NewExecutor(ExecutorConfig{MaxConcurrent: 2, DefaultTimeout: time.Second})
 
 	var mu sync.Mutex
 	current := 0
@@ -100,8 +101,8 @@ func TestExecutorConcurrencyLimit(t *testing.T) {
 		t.Fatalf("wait t2 failed: %v", err)
 	}
 
-	if maxSeen != 1 {
-		t.Fatalf("expected max concurrent workers=1, got %d", maxSeen)
+	if maxSeen != 2 {
+		t.Fatalf("expected max concurrent workers=2, got %d", maxSeen)
 	}
 }
 
@@ -129,7 +130,8 @@ func TestExecutorFailed(t *testing.T) {
 }
 
 func TestExecutorSubscribeAndEventDispatch(t *testing.T) {
-	exec := NewExecutor(ExecutorConfig{MaxConcurrent: 1, DefaultTimeout: 500 * time.Millisecond})
+	// Note: MaxConcurrent is clamped to [2, 4] range per DeerFlow spec
+	exec := NewExecutor(ExecutorConfig{MaxConcurrent: 2, DefaultTimeout: 500 * time.Millisecond})
 
 	events := make([]TaskEvent, 0)
 	var mu sync.Mutex

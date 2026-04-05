@@ -32,6 +32,7 @@ func TestListModels_Empty(t *testing.T) {
 }
 
 func TestListModels_Mapping(t *testing.T) {
+	useResponsesAPI := true
 	h := NewModelsHandler(&config.AppConfig{Models: []config.ModelConfig{
 		{
 			Name:                    "gpt-4o",
@@ -41,6 +42,10 @@ func TestListModels_Mapping(t *testing.T) {
 			SupportsThinking:        true,
 			SupportsReasoningEffort: true,
 			SupportsVision:          true,
+			UseResponsesAPI:         &useResponsesAPI,
+			OutputVersion:           "responses/v1",
+			APIBase:                 "https://api.example.com/v1",
+			GeminiAPIKey:            "secret-gemini-key",
 		},
 	}})
 
@@ -68,5 +73,17 @@ func TestListModels_Mapping(t *testing.T) {
 	}
 	if !m.Capabilities.SupportsThinking || !m.Capabilities.SupportsReasoningEffort || !m.Capabilities.SupportsVision {
 		t.Fatalf("unexpected capabilities mapping: %+v", m.Capabilities)
+	}
+	if m.UseResponsesAPI == nil || *m.UseResponsesAPI != true {
+		t.Fatalf("unexpected use_responses_api mapping: %+v", m.UseResponsesAPI)
+	}
+	if m.OutputVersion != "responses/v1" {
+		t.Fatalf("unexpected output_version mapping: %s", m.OutputVersion)
+	}
+	if !m.HasAPIBase {
+		t.Fatalf("expected has_api_base=true")
+	}
+	if !m.HasGeminiAPIKey {
+		t.Fatalf("expected has_gemini_api_key=true")
 	}
 }

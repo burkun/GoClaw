@@ -38,19 +38,39 @@ func (m *ToolErrorHandlingMiddleware) WrapToolCall(
 	toolCall *middleware.ToolCall,
 	handler middleware.ToolHandler,
 ) (*middleware.ToolResult, error) {
+	_ = state
+
 	// Execute the tool
 	result, err := handler(ctx, toolCall)
 	if err != nil {
-		// Convert error to ToolMessage
-		return &middleware.ToolResult{
-			ID:     toolCall.ID,
-			Output: map[string]any{
-				"status":  "error",
-				"content": fmt.Sprintf("Error: Tool '%s' failed: %s. Continue with available context.", toolCall.Name, err.Error()),
-			},
-			Error: nil, // Clear error so agent can continue
-		}, nil
+		return buildErrorToolResult(toolCall, err), nil
+	}
+	if result != nil && result.Error != nil {
+		return buildErrorToolResult(toolCall, result.Error), nil
 	}
 
 	return result, nil
+}
+
+func buildErrorToolResult(toolCall *middleware.ToolCall, err error) *middleware.ToolResult {
+	toolID := ""
+	toolName := "unknown"
+	if toolCall != nil {
+		toolID = toolCall.ID
+		if toolCall.Name != "" {
+			toolName = toolCall.Name
+		}
+	}
+	msg := fmt.Sprintf("Error: Tool '%s' failed: %s. Continue with available context.", toolName, err.Error())
+	return &middleware.ToolResult{
+		ID: toolID,
+		Output: map[string]any{
+			"status":        "error",
+			"content":       msg,
+			"error_type":    "tool_execution_error",
+			"tool_name":     toolName,
+			"error_message": err.Error(),
+		},
+		Error: nil,
+	}
 }

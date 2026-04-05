@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/bookerbai/goclaw/internal/config"
 )
 
 type fakeChannelsManager struct {
@@ -95,6 +97,13 @@ func TestChannelsHandler_RestartChannel_NilManager_Returns503(t *testing.T) {
 }
 
 func TestChannelsHandler_WithManager(t *testing.T) {
+	config.SetAppConfig(&config.AppConfig{Channels: &config.ChannelsConfig{
+		LangGraphURL: "http://langgraph:2024",
+		GatewayURL:   "http://gateway:8001",
+		Feishu:       &config.FeishuConfig{Enabled: true, AppID: "app-id", AppSecret: "app-secret"},
+	}})
+	defer config.ResetAppConfig()
+
 	mgr := &fakeChannelsManager{channels: map[string]bool{"feishu": false}}
 	h := NewChannelsHandler(mgr)
 
@@ -144,6 +153,41 @@ func TestChannelsHandler_WithManager(t *testing.T) {
 		}
 	}
 
+	// get config
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/channels/feishu/config", nil)
+		rr := httptest.NewRecorder()
+		ctx, _ := newGinContext(rr, req, map[string]string{"name": "feishu"})
+		h.GetChannelConfig(ctx)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var resp ChannelConfigResponse
+		_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+		if resp.Name != "feishu" || !resp.Enabled {
+			t.Fatalf("unexpected config response: %#v", resp)
+		}
+		if got, _ := resp.Config["app_secret"].(string); got != "***" {
+			t.Fatalf("expected redacted app_secret, got %q", got)
+		}
+	}
+
+	// oauth status
+	{
+		req := httptest.NewRequest(http.MethodGet, "/api/channels/feishu/oauth-status", nil)
+		rr := httptest.NewRecorder()
+		ctx, _ := newGinContext(rr, req, map[string]string{"name": "feishu"})
+		h.GetChannelOAuthStatus(ctx)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		var resp ChannelOAuthStatusResponse
+		_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+		if !resp.Configured {
+			t.Fatalf("expected configured=true, got %#v", resp)
+		}
+	}
+
 	// stop
 	{
 		req := httptest.NewRequest(http.MethodPost, "/api/channels/feishu/stop", nil)
@@ -167,6 +211,8 @@ func TestRegisterChannelsRoutes(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/channels"},
+		{http.MethodGet, "/api/channels/feishu/config"},
+		{http.MethodGet, "/api/channels/feishu/oauth-status"},
 		{http.MethodPost, "/api/channels/feishu/restart"},
 		{http.MethodPost, "/api/channels/feishu/start"},
 		{http.MethodPost, "/api/channels/feishu/stop"},

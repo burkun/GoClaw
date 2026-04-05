@@ -169,6 +169,19 @@ type ModelConfig struct {
 	// BaseURL overrides the default provider API endpoint.
 	BaseURL string `yaml:"base_url,omitempty"`
 
+	// APIBase is an alias used by some configs/providers.
+	// Kept as explicit field for parity with DeerFlow-side model config.
+	APIBase string `yaml:"api_base,omitempty"`
+
+	// GeminiAPIKey is an optional dedicated key for Gemini-compatible providers.
+	GeminiAPIKey string `yaml:"gemini_api_key,omitempty"`
+
+	// UseResponsesAPI routes OpenAI-compatible calls via Responses API when true.
+	UseResponsesAPI *bool `yaml:"use_responses_api,omitempty"`
+
+	// OutputVersion controls structured output format, e.g. "responses/v1".
+	OutputVersion string `yaml:"output_version,omitempty"`
+
 	// MaxTokens sets the maximum number of output tokens per request.
 	MaxTokens int `yaml:"max_tokens,omitempty"`
 
@@ -193,6 +206,9 @@ type ModelConfig struct {
 	// WhenThinkingEnabled holds extra provider-specific params injected when
 	// thinking/reasoning mode is active (mirrors DeerFlow's when_thinking_enabled).
 	WhenThinkingEnabled map[string]any `yaml:"when_thinking_enabled,omitempty"`
+
+	// Thinking is a shortcut config merged into when_thinking_enabled.thinking.
+	Thinking map[string]any `yaml:"thinking,omitempty"`
 
 	// Extra captures any additional YAML fields not covered above.
 	// These are forwarded verbatim to the Eino model factory.
@@ -254,6 +270,10 @@ type SandboxConfig struct {
 	// when using the local sandbox. Disabled by default for safety.
 	AllowHostBash bool `yaml:"allow_host_bash,omitempty"`
 
+	// StrictDocker controls whether sandbox.use=docker must fail hard
+	// when the Docker provider cannot be initialized.
+	StrictDocker bool `yaml:"strict_docker,omitempty"`
+
 	// Image is the Docker image used by the docker sandbox provider.
 	Image string `yaml:"image,omitempty"`
 
@@ -298,7 +318,7 @@ type MemoryConfig struct {
 	Enabled bool `yaml:"enabled"`
 
 	// StoragePath is the file path for the memory JSON store.
-	// Relative paths are resolved against the goclaw data directory.
+	// Relative paths are resolved against the current working directory.
 	StoragePath string `yaml:"storage_path,omitempty"`
 
 	// DebounceSeconds is the delay before processing queued memory updates.
@@ -434,11 +454,14 @@ type SubagentOverrideConfig struct {
 
 // SubagentTypeConfig configures a subagent type with capabilities and overrides.
 type SubagentTypeConfig struct {
-	Enabled      bool     `yaml:"enabled,omitempty"`
-	Model        string   `yaml:"model,omitempty"`
-	TimeoutSecs  int      `yaml:"timeout_seconds,omitempty"`
-	SystemPrompt string   `yaml:"system_prompt,omitempty"`
-	AllowedTools []string `yaml:"allowed_tools,omitempty"`
+	Enabled         bool     `yaml:"enabled,omitempty"`
+	Description     string   `yaml:"description,omitempty"`
+	Model           string   `yaml:"model,omitempty"`
+	TimeoutSecs     int      `yaml:"timeout_seconds,omitempty"`
+	SystemPrompt    string   `yaml:"system_prompt,omitempty"`
+	MaxTurns        int      `yaml:"max_turns,omitempty"`
+	AllowedTools    []string `yaml:"allowed_tools,omitempty"`
+	DisallowedTools []string `yaml:"disallowed_tools,omitempty"`
 }
 
 // SubagentsConfig configures sub-agent execution behaviour.
@@ -469,10 +492,11 @@ type SessionConfig struct {
 
 // FeishuConfig holds Feishu/Lark channel configuration.
 type FeishuConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	AppID     string `yaml:"app_id,omitempty"`
-	AppSecret string `yaml:"app_secret,omitempty"`
-	Domain    string `yaml:"domain,omitempty"`
+	Enabled     bool   `yaml:"enabled"`
+	AppID       string `yaml:"app_id,omitempty"`
+	AppSecret   string `yaml:"app_secret,omitempty"`
+	Domain      string `yaml:"domain,omitempty"`
+	WebhookPort int    `yaml:"webhook_port,omitempty"`
 }
 
 // SlackConfig holds Slack channel configuration.
@@ -508,9 +532,11 @@ type ChannelsConfig struct {
 
 // AgentConfig holds configuration for a custom agent.
 type AgentConfig struct {
-	Enabled     bool   `yaml:"enabled" json:"enabled"`
-	Model       string `yaml:"model,omitempty" json:"model,omitempty"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Enabled     bool     `yaml:"enabled" json:"enabled"`
+	Model       string   `yaml:"model,omitempty" json:"model,omitempty"`
+	Description string   `yaml:"description,omitempty" json:"description,omitempty"`
+	Skills      []string `yaml:"skills,omitempty" json:"skills,omitempty"`
+	ToolGroups  []string `yaml:"tool_groups,omitempty" json:"tool_groups,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -527,6 +553,9 @@ type ExtensionsConfigRef struct {
 
 // MCPOAuthConfig configures OAuth for MCP HTTP/SSE servers.
 type MCPOAuthConfig struct {
+	// Enabled controls whether OAuth is active for this server.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+
 	// TokenURL is the OAuth token endpoint.
 	TokenURL string `yaml:"token_url,omitempty" json:"token_url,omitempty"`
 
@@ -544,6 +573,32 @@ type MCPOAuthConfig struct {
 
 	// RefreshToken allows refresh_token grant when provided.
 	RefreshToken string `yaml:"refresh_token,omitempty" json:"refresh_token,omitempty"`
+
+	// Audience is the OAuth audience field (required for Auth0, Okta, etc.).
+	Audience string `yaml:"audience,omitempty" json:"audience,omitempty"`
+
+	// TokenField is the field name in the token response that contains the access token.
+	// Defaults to "access_token".
+	TokenField string `yaml:"token_field,omitempty" json:"token_field,omitempty"`
+
+	// TokenTypeField is the field name for the token type (e.g., "Bearer").
+	// Defaults to "token_type".
+	TokenTypeField string `yaml:"token_type_field,omitempty" json:"token_type_field,omitempty"`
+
+	// ExpiresInField is the field name for the expires_in value.
+	// Defaults to "expires_in".
+	ExpiresInField string `yaml:"expires_in_field,omitempty" json:"expires_in_field,omitempty"`
+
+	// DefaultTokenType is the default token type when not returned by the server.
+	// Defaults to "Bearer".
+	DefaultTokenType string `yaml:"default_token_type,omitempty" json:"default_token_type,omitempty"`
+
+	// RefreshSkewSeconds is the number of seconds before expiration to refresh.
+	// Defaults to 60 seconds.
+	RefreshSkewSeconds int `yaml:"refresh_skew_seconds,omitempty" json:"refresh_skew_seconds,omitempty"`
+
+	// ExtraTokenParams holds additional parameters sent with the token request.
+	ExtraTokenParams map[string]string `yaml:"extra_token_params,omitempty" json:"extra_token_params,omitempty"`
 }
 
 // MCPServerConfig configures a single MCP server endpoint.
@@ -609,42 +664,59 @@ func (e *ExtensionsConfig) EnabledMCPServers() map[string]MCPServerConfig {
 
 // resolveEnvVars replaces bare "$VAR_NAME" string values with the corresponding
 // environment variable. Strings that do not start with "$" are returned as-is.
-// Only top-level string replacement is performed here; callers should use
-// resolveEnvVarsInMap / resolveEnvVarsInSlice for nested structures.
-func resolveEnvVars(v string) string {
+// When failLate is true, missing env vars return empty string instead of error
+// (mirrors DeerFlow's extensions_config behavior).
+func resolveEnvVars(v string, failLate bool) (string, error) {
 	if !strings.HasPrefix(v, "$") {
-		return v
+		return v, nil
 	}
-	varName := v[1:]
+	varName := strings.TrimSpace(v[1:])
+	if varName == "" {
+		return "", fmt.Errorf("config: invalid environment variable reference %q", v)
+	}
 	if val, ok := os.LookupEnv(varName); ok {
-		return val
+		return val, nil
 	}
-	// Return empty string when variable is unset so callers don't receive
-	// the literal "$VAR" token. Callers that require the variable should
-	// validate after loading.
-	return ""
+	if failLate {
+		// For extensions_config.json: return empty string with warning (fail-late)
+		logger.Warn("Environment variable not found, using empty string (fail-late mode)",
+			"var", varName, "hint", "This may cause runtime errors if the value is required")
+		return "", nil
+	}
+	// For config.yaml: return error (fail-fast)
+	logger.Warn("Missing environment variable referenced by config", "name", varName)
+	return "", fmt.Errorf("config: environment variable %s not found for value %s", varName, v)
 }
 
 // resolveEnvVarsInAny recursively traverses a raw decoded YAML value (map,
 // slice, or scalar) and replaces "$VAR" strings with env var values.
-func resolveEnvVarsInAny(v any) any {
+// When failLate is true, missing env vars return empty string instead of error.
+func resolveEnvVarsInAny(v any, failLate bool) (any, error) {
 	switch val := v.(type) {
 	case string:
-		return resolveEnvVars(val)
+		return resolveEnvVars(val, failLate)
 	case map[string]any:
 		out := make(map[string]any, len(val))
 		for k, child := range val {
-			out[k] = resolveEnvVarsInAny(child)
+			resolved, err := resolveEnvVarsInAny(child, failLate)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = resolved
 		}
-		return out
+		return out, nil
 	case []any:
 		out := make([]any, len(val))
 		for i, child := range val {
-			out[i] = resolveEnvVarsInAny(child)
+			resolved, err := resolveEnvVarsInAny(child, failLate)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = resolved
 		}
-		return out
+		return out, nil
 	default:
-		return v
+		return v, nil
 	}
 }
 
@@ -678,7 +750,14 @@ func Load(path string) (*AppConfig, error) {
 		return nil, fmt.Errorf("config: parse %s: %w", resolved, err)
 	}
 
-	raw = resolveEnvVarsInAny(raw)
+	// Check config version before resolving env vars (mirrors DeerFlow).
+	checkConfigVersion(raw, resolved)
+
+	// config.yaml uses fail-fast for missing env vars (mirrors DeerFlow).
+	raw, err = resolveEnvVarsInAny(raw, false)
+	if err != nil {
+		return nil, err
+	}
 
 	// Re-encode the resolved map back to YAML bytes and unmarshal into AppConfig.
 	// This two-pass approach avoids a custom YAML decoder and keeps the struct tags.
@@ -700,6 +779,74 @@ func Load(path string) (*AppConfig, error) {
 	cfg.Extensions = extensions
 
 	return &cfg, nil
+}
+
+// checkConfigVersion warns if the user's config.yaml is outdated compared to
+// config.example.yaml. Mirrors DeerFlow's _check_config_version.
+func checkConfigVersion(rawConfig any, configPath string) {
+	// Extract user version from raw config map.
+	var userVersion int
+	if m, ok := rawConfig.(map[string]any); ok {
+		if v, ok := m["config_version"]; ok {
+			switch val := v.(type) {
+			case int:
+				userVersion = val
+			case float64:
+				userVersion = int(val)
+			}
+		}
+	}
+
+	// Find config.example.yaml by searching config.yaml's directory and parents.
+	examplePath := ""
+	searchDir := filepath.Dir(configPath)
+	for i := 0; i < 5; i++ {
+		candidate := filepath.Join(searchDir, "config.example.yaml")
+		if _, err := os.Stat(candidate); err == nil {
+			examplePath = candidate
+			break
+		}
+		parent := filepath.Dir(searchDir)
+		if parent == searchDir {
+			break
+		}
+		searchDir = parent
+	}
+
+	if examplePath == "" {
+		return
+	}
+
+	// Read example config version.
+	exampleData, err := os.ReadFile(examplePath)
+	if err != nil {
+		return
+	}
+
+	var exampleRaw any
+	if err := yaml.Unmarshal(exampleData, &exampleRaw); err != nil {
+		return
+	}
+
+	var exampleVersion int
+	if m, ok := exampleRaw.(map[string]any); ok {
+		if v, ok := m["config_version"]; ok {
+			switch val := v.(type) {
+			case int:
+				exampleVersion = val
+			case float64:
+				exampleVersion = int(val)
+			}
+		}
+	}
+
+	if userVersion < exampleVersion {
+		logger.Warn("Your config.yaml is outdated",
+			"current_version", userVersion,
+			"latest_version", exampleVersion,
+			"hint", "Run 'make config-upgrade' to merge new fields into your config.",
+		)
+	}
 }
 
 func loadExtensionsConfig(rootDir string) (ExtensionsConfig, error) {
@@ -734,7 +881,13 @@ func loadExtensionsConfig(rootDir string) (ExtensionsConfig, error) {
 		return ExtensionsConfig{}, fmt.Errorf("config: parse %s: %w", target, err)
 	}
 
-	raw = resolveEnvVarsInAny(raw)
+	// extensions_config.json uses fail-late for missing env vars (mirrors DeerFlow).
+	// Missing env vars are replaced with empty string, allowing the service to start
+	// but potentially fail later if the value is required.
+	raw, err = resolveEnvVarsInAny(raw, true)
+	if err != nil {
+		return ExtensionsConfig{}, err
+	}
 	resolvedJSON, err := json.Marshal(raw)
 	if err != nil {
 		return ExtensionsConfig{}, fmt.Errorf("config: re-marshal extensions: %w", err)

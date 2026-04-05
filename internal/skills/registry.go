@@ -110,3 +110,29 @@ func (r *Registry) OnConfigReload(cfg *config.AppConfig) error {
 	}
 	return nil
 }
+
+// GetSkillsPromptSection returns a formatted string for system prompt injection.
+// It includes the name and description of all enabled skills.
+// This mirrors DeerFlow's get_skills_prompt_section() functionality.
+func (r *Registry) GetSkillsPromptSection() string {
+	skills := r.List()
+	if len(skills) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## Available Skills\n\n")
+	sb.WriteString("You have access to the following skills. Each skill provides specialized capabilities:\n\n")
+
+	for _, skill := range skills {
+		sb.WriteString(fmt.Sprintf("- **%s**", skill.Metadata.Name))
+		if skill.Metadata.Description != "" {
+			sb.WriteString(": ")
+			sb.WriteString(skill.Metadata.Description)
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("\nWhen a user request matches a skill's purpose, you should leverage that skill's capabilities.\n")
+	return sb.String()
+}

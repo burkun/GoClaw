@@ -17,17 +17,20 @@ const (
 	// EventError is the terminal failure event for a run.
 	EventError EventType = "error"
 
-	// EventTaskStarted is emitted when the agent begins tracking a new task (plan mode).
+	// EventTaskStarted is emitted when a subagent task starts.
 	EventTaskStarted EventType = "task_started"
 
-	// EventTaskRunning is emitted when a tracked task transitions to in-progress.
+	// EventTaskRunning is emitted when a subagent task has progress (new AI message).
 	EventTaskRunning EventType = "task_running"
 
-	// EventTaskCompleted is emitted when a tracked task finishes successfully.
+	// EventTaskCompleted is emitted when a subagent task finishes successfully.
 	EventTaskCompleted EventType = "task_completed"
 
-	// EventTaskFailed is emitted when a tracked task fails.
+	// EventTaskFailed is emitted when a subagent task fails.
 	EventTaskFailed EventType = "task_failed"
+
+	// EventTaskTimedOut is emitted when a subagent task times out.
+	EventTaskTimedOut EventType = "task_timed_out"
 )
 
 // Event is the envelope sent over the channel returned by LeadAgent.Run.

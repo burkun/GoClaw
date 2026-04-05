@@ -43,6 +43,45 @@ func TestBashToolExecute_Success(t *testing.T) {
 	}
 }
 
+func TestBashToolExecute_StdoutStderrSeparated(t *testing.T) {
+	tool := NewBashTool(Config{Enabled: true, Timeout: 2 * time.Second})
+	out, err := tool.Execute(context.Background(), `{"description":"x","command":"echo out; echo err >&2"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "out") {
+		t.Fatalf("expected stdout content, got: %s", out)
+	}
+	if !strings.Contains(out, "Std Error:") || !strings.Contains(out, "err") {
+		t.Fatalf("expected stderr section, got: %s", out)
+	}
+}
+
+func TestBashToolExecute_NonZeroIncludesExitCode(t *testing.T) {
+	tool := NewBashTool(Config{Enabled: true, Timeout: 2 * time.Second})
+	out, err := tool.Execute(context.Background(), `{"description":"x","command":"echo boom >&2; exit 7"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "Std Error:") || !strings.Contains(out, "boom") {
+		t.Fatalf("expected stderr output, got: %s", out)
+	}
+	if !strings.Contains(out, "Exit Code: 7") {
+		t.Fatalf("expected exit code in output, got: %s", out)
+	}
+}
+
+func TestBashToolExecute_NoOutputMarker(t *testing.T) {
+	tool := NewBashTool(Config{Enabled: true, Timeout: 2 * time.Second})
+	out, err := tool.Execute(context.Background(), `{"description":"x","command":"true"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "(no output)" {
+		t.Fatalf("expected no output marker, got: %s", out)
+	}
+}
+
 func TestTruncateMiddle(t *testing.T) {
 	in := strings.Repeat("a", 300)
 	out := truncateMiddle(in, 120)

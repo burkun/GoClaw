@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,6 +14,13 @@ type stubResolver struct {
 }
 
 func (r *stubResolver) Resolve(vp string) (string, error) {
+	if vp == "/mnt/user-data/outputs" {
+		return r.base, nil
+	}
+	if strings.HasPrefix(vp, "/mnt/user-data/outputs/") {
+		rel := strings.TrimPrefix(vp, "/mnt/user-data/outputs/")
+		return filepath.Join(r.base, filepath.FromSlash(rel)), nil
+	}
 	return filepath.Join(r.base, filepath.Base(vp)), nil
 }
 
@@ -72,7 +80,7 @@ func TestPresentFileTool_Execute(t *testing.T) {
 	}
 
 	tool := &PresentFileTool{Resolver: &stubResolver{base: tmp}}
-	in, _ := json.Marshal(presentFileInput{Description: "report", Path: "/mnt/user-data/outputs/report.pdf", Title: "Monthly Report"})
+	in, _ := json.Marshal(presentFileInput{Description: "report", Filepaths: []string{"/mnt/user-data/outputs/report.pdf"}})
 	out, err := tool.Execute(context.Background(), string(in))
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -82,10 +90,24 @@ func TestPresentFileTool_Execute(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
 		t.Fatalf("unmarshal result failed: %v", err)
 	}
-	if result["type"] != "artifact" {
-		t.Errorf("expected type=artifact, got %v", result["type"])
+	if result["type"] != "command" {
+		t.Errorf("expected type=command, got %v", result["type"])
 	}
-	if result["title"] != "Monthly Report" {
-		t.Errorf("expected title='Monthly Report', got %v", result["title"])
+
+	update, ok := result["update"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected update object, got %T", result["update"])
+	}
+	artifacts, ok := update["artifacts"].([]any)
+	if !ok || len(artifacts) != 1 || artifacts[0] != "/mnt/user-data/outputs/report.pdf" {
+		t.Fatalf("unexpected artifacts: %#v", update["artifacts"])
+	}
+	messages, ok := update["messages"].([]any)
+	if !ok || len(messages) == 0 {
+		t.Fatalf("expected messages in command update")
+	}
+	msg, ok := messages[0].(map[string]any)
+	if !ok || msg["content"] != "Successfully presented files" {
+		t.Fatalf("unexpected command message: %#v", messages[0])
 	}
 }

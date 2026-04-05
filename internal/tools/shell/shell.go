@@ -19,6 +19,7 @@
 package shell
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -28,7 +29,8 @@ import (
 )
 
 // DefaultTimeout is the maximum duration a single bash command may run.
-const DefaultTimeout = 60 * time.Second
+// Aligned with DeerFlow's 600s timeout.
+const DefaultTimeout = 600 * time.Second
 
 // DefaultMaxOutputChars is the maximum length of the command output returned
 // to the model. Longer output is middle-truncated (head + tail preserved).
@@ -159,25 +161,53 @@ func (t *BashTool) Execute(ctx context.Context, input string) (string, error) {
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	outputBytes, err := exec.CommandContext(runCtx, "bash", "-c", resolvedCmd).CombinedOutput()
-	output := truncateMiddle(string(outputBytes), t.cfg.MaxOutputChars)
+	cmd := exec.CommandContext(runCtx, "bash", "-c", resolvedCmd)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+	err := cmd.Run()
+
+	formatOutput := func(includeExitCode bool, exitCode int) string {
+		out := strings.TrimRight(stdoutBuf.String(), "\n")
+		errOut := strings.TrimRight(stderrBuf.String(), "\n")
+		var b strings.Builder
+		if out != "" {
+			b.WriteString(out)
+		}
+		if errOut != "" {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString("Std Error:\n")
+			b.WriteString(errOut)
+		}
+		if includeExitCode {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(fmt.Sprintf("Exit Code: %d", exitCode))
+		}
+		if b.Len() == 0 {
+			return "(no output)"
+		}
+		return b.String()
+	}
 
 	if runCtx.Err() == context.DeadlineExceeded {
-		if strings.TrimSpace(output) == "" {
+		output := truncateMiddle(formatOutput(false, 0), t.cfg.MaxOutputChars)
+		if strings.TrimSpace(output) == "" || output == "(no output)" {
 			return fmt.Sprintf("Error: command timed out after %s", timeout), nil
 		}
 		return fmt.Sprintf("Error: command timed out after %s\n%s", timeout, output), nil
 	}
 	if err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
-			if strings.TrimSpace(output) == "" {
-				return "Error: command exited with non-zero status", nil
-			}
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			output := truncateMiddle(formatOutput(true, exitErr.ExitCode()), t.cfg.MaxOutputChars)
 			return output, nil
 		}
 		return "", fmt.Errorf("bash: execute command failed: %w", err)
 	}
-	return output, nil
+	return truncateMiddle(formatOutput(false, 0), t.cfg.MaxOutputChars), nil
 }
 
 // validateCommand checks the command against the dangerous-path denylist and

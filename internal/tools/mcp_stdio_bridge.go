@@ -423,3 +423,63 @@ func terminateMCPProcess(cmd *exec.Cmd, stdin io.Closer) {
 		<-done
 	}
 }
+
+// invokeMCPStdioRaw invokes an arbitrary MCP method via STDIO and returns the raw result.
+// This is used for tool discovery (tools/list) before creating specific tool wrappers.
+func invokeMCPStdioRaw(ctx context.Context, serverName string, serverCfg config.MCPServerConfig, method string, params map[string]any) (string, error) {
+	command := strings.TrimSpace(serverCfg.Command)
+	if command == "" {
+		return "", fmt.Errorf("stdio server %q requires command", serverName)
+	}
+
+	runCtx := ctx
+	if _, ok := runCtx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, defaultMCPStdioTimeout)
+		defer cancel()
+	}
+
+	if hasMCPConfigChanged(serverName, serverCfg) {
+		globalStdioClientPool.invalidate(serverName)
+	}
+
+	client := globalStdioClientPool.get(serverName, serverCfg)
+	return client.invokeRaw(runCtx, method, params)
+}
+
+// invokeRaw performs an MCP request and returns the raw JSON result.
+func (p *pooledStdioClient) invokeRaw(ctx context.Context, method string, params map[string]any) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if err := p.ensureStarted(); err != nil {
+		return "", err
+	}
+
+	if !p.initialized {
+		if _, err := p.client.request(ctx, "initialize", map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo": map[string]any{
+				"name":    "goclaw",
+				"version": "0.1.0",
+			},
+		}); err != nil {
+			p.stopLocked()
+			return "", fmt.Errorf("initialize failed: %w; stderr=%s", err, strings.TrimSpace(p.stderr.String()))
+		}
+		if err := p.client.notify("notifications/initialized", map[string]any{}); err != nil {
+			p.stopLocked()
+			return "", fmt.Errorf("initialized notify failed: %w", err)
+		}
+		p.initialized = true
+	}
+
+	result, err := p.client.request(ctx, method, params)
+	if err != nil {
+		p.stopLocked()
+		return "", fmt.Errorf("%s failed: %w", method, err)
+	}
+
+	return string(result), nil
+}
