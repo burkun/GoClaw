@@ -5,7 +5,7 @@
 //	WebSearchTool – searches the web via the Tavily Search API and returns a
 //	                list of results with title, URL, and snippet.
 //	WebFetchTool  – fetches and extracts the readable text from a web page via
-//	                the Jina Reader API (r.jina.ai).
+//	                the Jina Reader API (r.jina.ai) or Tavily Extract API.
 //
 // Both tools share a WebToolConfig for API key and timeout configuration.
 // The config is loaded from the application configuration system; API keys
@@ -37,6 +37,8 @@ type WebToolConfig struct {
 	MaxSearchResults int
 	// MaxFetchChars caps the number of characters returned by WebFetchTool. Default: 4096.
 	MaxFetchChars int
+	// UseTavilyExtract uses Tavily Extract API instead of Jina Reader for web_fetch.
+	UseTavilyExtract bool
 }
 
 // defaultWebToolConfig returns sensible defaults for WebToolConfig.
@@ -233,7 +235,7 @@ func (t *WebFetchTool) InputSchema() json.RawMessage {
 }`)
 }
 
-// Execute fetches the page via the Jina Reader API and returns extracted text.
+// Execute fetches the page via Jina Reader or Tavily Extract API and returns extracted text.
 func (t *WebFetchTool) Execute(ctx context.Context, input string) (string, error) {
 	var in webFetchInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
@@ -249,6 +251,81 @@ func (t *WebFetchTool) Execute(ctx context.Context, input string) (string, error
 		return "Error: invalid URL. Must include http:// or https:// scheme.", nil
 	}
 
+	// Prefer Tavily Extract if configured and API key is available
+	if t.cfg.UseTavilyExtract && t.cfg.TavilyAPIKey != "" {
+		return t.executeTavilyExtract(ctx, rawURL)
+	}
+
+	// Fallback to Jina Reader
+	return t.executeJinaReader(ctx, rawURL)
+}
+
+// executeTavilyExtract fetches content using Tavily Extract API.
+func (t *WebFetchTool) executeTavilyExtract(ctx context.Context, rawURL string) (string, error) {
+	payload := map[string]any{
+		"api_key": t.cfg.TavilyAPIKey,
+		"urls":    []string{rawURL},
+	}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.tavily.com/extract", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Sprintf("Error: cannot build request: %v", err), nil
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := newHTTPClient(t.cfg.Timeout).Do(req)
+	if err != nil {
+		return fmt.Sprintf("Error: tavily extract request failed: %v", err), nil
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Sprintf("Error: failed to read tavily response: %v", err), nil
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Sprintf("Error: tavily extract returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody))), nil
+	}
+
+	var raw struct {
+		Results []struct {
+			URL     string `json:"url"`
+			RawContent string `json:"raw_content"`
+		} `json:"results"`
+		FailedResults []struct {
+			URL   string `json:"url"`
+			Error string `json:"error"`
+		} `json:"failed_results"`
+	}
+	if err := json.Unmarshal(respBody, &raw); err != nil {
+		return fmt.Sprintf("Error: invalid tavily extract response: %v", err), nil
+	}
+
+	// Check for failed results
+	if len(raw.FailedResults) > 0 {
+		return fmt.Sprintf("Error: %s", raw.FailedResults[0].Error), nil
+	}
+
+	// Return extracted content
+	if len(raw.Results) == 0 {
+		return "Error: no content extracted", nil
+	}
+
+	content := raw.Results[0].RawContent
+	maxChars := t.cfg.MaxFetchChars
+	if maxChars <= 0 {
+		maxChars = defaultWebToolConfig().MaxFetchChars
+	}
+	if len(content) > maxChars {
+		content = content[:maxChars] + "\n... (truncated)"
+	}
+	return content, nil
+}
+
+// executeJinaReader fetches content using Jina Reader API.
+func (t *WebFetchTool) executeJinaReader(ctx context.Context, rawURL string) (string, error) {
 	fetchURL := "https://r.jina.ai/" + rawURL
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fetchURL, nil)
 	if err != nil {

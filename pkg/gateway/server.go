@@ -3,6 +3,7 @@
 package gateway
 
 import (
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	slackch "github.com/bookerbai/goclaw/internal/channels/slack"
 	telegramch "github.com/bookerbai/goclaw/internal/channels/telegram"
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/tracing"
 	"github.com/bookerbai/goclaw/pkg/gateway/handlers"
 )
 
@@ -36,6 +38,11 @@ func New(cfg *config.AppConfig, leadAgent agent.LeadAgent) *Server {
 		cfg:    cfg,
 		agent:  leadAgent,
 		agents: map[string]agent.LeadAgent{"default": leadAgent}, // 向后兼容
+	}
+
+	// Initialize tracing (Langfuse, etc.) if configured
+	if err := tracing.AppendGlobalCallbacks(); err != nil {
+		slog.Warn("tracing initialization failed, continuing without tracing", "error", err)
 	}
 
 	s.registerMiddleware()

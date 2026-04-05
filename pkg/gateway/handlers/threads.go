@@ -62,6 +62,9 @@ type RunThreadRequest struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 	// CheckpointID resumes from an existing checkpoint when provided.
 	CheckpointID string `json:"checkpoint_id,omitempty"`
+	// LastEventID is the last event ID received by the client for SSE resume.
+	// If provided, the server will attempt to resume from this event.
+	LastEventID string `json:"last_event_id,omitempty"`
 }
 
 // SSEEvent is the unified envelope for all Server-Sent Events.
@@ -75,6 +78,8 @@ type SSEEvent struct {
 	RunID string `json:"run_id,omitempty"`
 	// CheckpointID is used for interruption persistence and resume.
 	CheckpointID string `json:"checkpoint_id,omitempty"`
+	// EventID is a unique identifier for this event, used for SSE resume.
+	EventID string `json:"event_id,omitempty"`
 	// Payload holds event-specific data (delta text, tool args, error details, etc.).
 	Payload any `json:"payload"`
 	// Timestamp is the UTC Unix millisecond at which the event was generated.
@@ -85,13 +90,20 @@ type SSEEvent struct {
 // SSE helpers
 // ---------------------------------------------------------------------------
 
-// writeSSE serialises event as an SSE data-only frame and flushes it.
+// writeSSE serialises event as an SSE frame with optional event ID and flushes it.
 // Format:
 //
+//	id: <event_id>\n (if EventID is set)
 //	data: <json>\n\n
 //
 // The caller must have already set the response headers for text/event-stream.
 func writeSSE(w io.Writer, event SSEEvent) error {
+	// Write event ID if present (for SSE resume support)
+	if event.EventID != "" {
+		if _, err := fmt.Fprintf(w, "id: %s\n", event.EventID); err != nil {
+			return fmt.Errorf("writeSSE id: %w", err)
+		}
+	}
 	b, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("writeSSE marshal: %w", err)
@@ -149,6 +161,15 @@ func (h *ThreadsHandler) RunThread(c *gin.Context) {
 	c.Header("X-Accel-Buffering", "no") // prevents nginx from buffering the stream
 	// Content-Location header for SDK run metadata extraction.
 	c.Header("Content-Location", fmt.Sprintf("/api/threads/%s/runs/%s/stream?thread_id=%s&run_id=%s", threadID, runID, threadID, runID))
+
+	// Check for Last-Event-ID header for SSE resume (RFC 8895)
+	lastEventID := c.GetHeader("Last-Event-ID")
+	if lastEventID != "" {
+		// Log resume attempt for debugging
+		// In a full implementation, we would use this to resume from the specific event
+		// For now, we just acknowledge it and continue from checkpoint_id
+		c.Header("X-Resume-From-Event", lastEventID)
+	}
 
 	w := c.Writer
 
@@ -233,12 +254,17 @@ func (h *ThreadsHandler) RunThread(c *gin.Context) {
 	}
 
 	// Consume agent events and stream them to client.
+	eventCounter := 0
 	for ev := range eventChan {
+		eventCounter++
+		// Generate unique event ID for SSE resume support
+		eventID := fmt.Sprintf("%s-%d", runID, eventCounter)
 		sseEv := SSEEvent{
 			Type:         string(ev.Type),
 			ThreadID:     ev.ThreadID,
 			RunID:        runID,
 			CheckpointID: checkpointID,
+			EventID:      eventID,
 			Payload:      ev.Payload,
 			Timestamp:    ev.Timestamp,
 		}
