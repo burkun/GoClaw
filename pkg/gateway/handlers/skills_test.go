@@ -168,20 +168,103 @@ func TestSkillsHandler_InstallSkill_NotFound(t *testing.T) {
 	}
 }
 
+func TestSkillsHandler_InstallSkill_MissingSkillMD(t *testing.T) {
+	cwd, _ := os.Getwd()
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	threadID := "thread-1"
+	archiveRel := "outputs/invalid.skill"
+	archiveHost := filepath.Join(".goclaw", "threads", threadID, "user-data", archiveRel)
+	if err := os.MkdirAll(filepath.Dir(archiveHost), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := writeRawArchive(archiveHost, map[string]string{"README.md": "# no skill"}); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	cfg := &config.AppConfig{
+		ExtensionsRef: config.ExtensionsConfigRef{ConfigPath: filepath.Join(tmp, "extensions_config.json")},
+		Skills:        config.SkillsConfig{Path: filepath.Join(tmp, "skills")},
+	}
+	h := NewSkillsHandler(cfg, nil)
+	body := `{"thread_id":"thread-1","path":"/mnt/user-data/outputs/invalid.skill"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/install", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ctx, _ := newGinContext(rr, req, nil)
+
+	h.InstallSkill(ctx)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "SKILL.md") {
+		t.Fatalf("expected SKILL.md validation error, got %s", rr.Body.String())
+	}
+}
+
+func TestSkillsHandler_InstallSkill_InvalidName(t *testing.T) {
+	cwd, _ := os.Getwd()
+	tmp := t.TempDir()
+	_ = os.Chdir(tmp)
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	threadID := "thread-1"
+	archiveRel := "outputs/invalid-name.skill"
+	archiveHost := filepath.Join(".goclaw", "threads", threadID, "user-data", archiveRel)
+	if err := os.MkdirAll(filepath.Dir(archiveHost), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := writeRawArchive(archiveHost, map[string]string{
+		"SKILL.md": "---\nname: Invalid_Name\ndescription: bad\n---\n# test",
+	}); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+
+	cfg := &config.AppConfig{
+		ExtensionsRef: config.ExtensionsConfigRef{ConfigPath: filepath.Join(tmp, "extensions_config.json")},
+		Skills:        config.SkillsConfig{Path: filepath.Join(tmp, "skills")},
+	}
+	h := NewSkillsHandler(cfg, nil)
+	body := `{"thread_id":"thread-1","path":"/mnt/user-data/outputs/invalid-name.skill"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/install", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	ctx, _ := newGinContext(rr, req, nil)
+
+	h.InstallSkill(ctx)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "hyphen-case") {
+		t.Fatalf("expected name validation error, got %s", rr.Body.String())
+	}
+}
+
 func writeSkillArchive(path, skillName, desc string) error {
+	return writeRawArchive(path, map[string]string{
+		"SKILL.md": "---\nname: " + skillName + "\ndescription: " + desc + "\n---\n\n# Hello",
+	})
+}
+
+func writeRawArchive(path string, files map[string]string) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 	zw := zip.NewWriter(f)
-	w, err := zw.Create("SKILL.md")
-	if err != nil {
-		return err
-	}
-	content := "---\nname: " + skillName + "\ndescription: " + desc + "\n---\n\n# Hello"
-	if _, err := w.Write([]byte(content)); err != nil {
-		return err
+	for name, content := range files {
+		w, err := zw.Create(name)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			return err
+		}
 	}
 	return zw.Close()
 }

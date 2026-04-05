@@ -16,12 +16,14 @@ import (
 
 	"github.com/bookerbai/goclaw/internal/agent"
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/threadstore"
 )
 
 // ThreadsHandler serves /api/threads/:thread_id/* endpoints.
 type ThreadsHandler struct {
-	cfg   *config.AppConfig
-	agent agent.LeadAgent
+	cfg    *config.AppConfig
+	agent  agent.LeadAgent
+	store  threadstore.Store
 
 	runsMu sync.RWMutex
 	runs   map[string]runHandle
@@ -34,8 +36,16 @@ type runHandle struct {
 }
 
 // NewThreadsHandler creates a handler wired to the given agent.
-func NewThreadsHandler(cfg *config.AppConfig, a agent.LeadAgent) *ThreadsHandler {
-	return &ThreadsHandler{cfg: cfg, agent: a, runs: make(map[string]runHandle)}
+func NewThreadsHandler(cfg *config.AppConfig, a agent.LeadAgent, store threadstore.Store) *ThreadsHandler {
+	if store == nil {
+		// Create default file store
+		var err error
+		store, err = threadstore.NewFileStore("")
+		if err != nil {
+			panic(fmt.Sprintf("failed to create thread store: %v", err))
+		}
+	}
+	return &ThreadsHandler{cfg: cfg, agent: a, store: store, runs: make(map[string]runHandle)}
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +322,7 @@ func (h *ThreadsHandler) getRun(runID string) (runHandle, bool) {
 // ThreadMetadata contains basic thread information.
 type ThreadMetadata struct {
 	ThreadID  string         `json:"thread_id"`
+	Title     string         `json:"title,omitempty"`
 	Status    string         `json:"status"`
 	CreatedAt int64          `json:"created_at"`
 	UpdatedAt int64          `json:"updated_at"`
@@ -356,21 +367,56 @@ func (h *ThreadsHandler) CreateThread(c *gin.Context) {
 	if threadID == "" {
 		threadID = uuid.NewString()
 	}
-	now := time.Now().UnixMilli()
-	meta := ThreadMetadata{
-		ThreadID:  threadID,
-		Status:    "idle",
-		CreatedAt: now,
-		UpdatedAt: now,
-		Metadata:  req.Metadata,
+
+	meta := &threadstore.ThreadMetadata{
+		ThreadID: threadID,
+		Status:   "idle",
+		Metadata: req.Metadata,
 	}
-	c.JSON(http.StatusCreated, meta)
+
+	if err := h.store.Create(meta); err != nil {
+		NewAPIError("create_thread_failed", err.Error()).Render(c, http.StatusInternalServerError)
+		return
+	}
+
+	c.JSON(http.StatusCreated, ThreadMetadata{
+		ThreadID:  meta.ThreadID,
+		Title:     meta.Title,
+		Status:    meta.Status,
+		CreatedAt: meta.CreatedAt,
+		UpdatedAt: meta.UpdatedAt,
+		Metadata:  meta.Metadata,
+	})
 }
 
 // SearchThreads handles POST /api/threads/search.
 func (h *ThreadsHandler) SearchThreads(c *gin.Context) {
-	// Minimal implementation: return empty list (no persistent store yet).
-	c.JSON(http.StatusOK, gin.H{"threads": []ThreadMetadata{}})
+	var query threadstore.SearchQuery
+	if err := c.ShouldBindJSON(&query); err != nil {
+		// Allow empty body
+		query = threadstore.SearchQuery{}
+	}
+
+	results, total, err := h.store.Search(query)
+	if err != nil {
+		NewAPIError("search_failed", err.Error()).Render(c, http.StatusInternalServerError)
+		return
+	}
+
+	// Convert to response format
+	threads := make([]ThreadMetadata, len(results))
+	for i, t := range results {
+		threads[i] = ThreadMetadata{
+			ThreadID:  t.ThreadID,
+			Title:     t.Title,
+			Status:    t.Status,
+			CreatedAt: t.CreatedAt,
+			UpdatedAt: t.UpdatedAt,
+			Metadata:  t.Metadata,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"threads": threads, "total": total})
 }
 
 // GetThread handles GET /api/threads/:thread_id.
@@ -380,15 +426,21 @@ func (h *ThreadsHandler) GetThread(c *gin.Context) {
 		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
 		return
 	}
-	// Minimal implementation: return synthetic metadata (no persistent store yet).
-	now := time.Now().UnixMilli()
-	meta := ThreadMetadata{
-		ThreadID:  threadID,
-		Status:    "idle",
-		CreatedAt: now,
-		UpdatedAt: now,
+
+	meta, err := h.store.Get(threadID)
+	if err != nil {
+		NewNotFoundError("thread not found").Render(c, http.StatusNotFound)
+		return
 	}
-	c.JSON(http.StatusOK, meta)
+
+	c.JSON(http.StatusOK, ThreadMetadata{
+		ThreadID:  meta.ThreadID,
+		Title:     meta.Title,
+		Status:    meta.Status,
+		CreatedAt: meta.CreatedAt,
+		UpdatedAt: meta.UpdatedAt,
+		Metadata:  meta.Metadata,
+	})
 }
 
 // PatchThread handles PATCH /api/threads/:thread_id.
@@ -398,6 +450,7 @@ func (h *ThreadsHandler) PatchThread(c *gin.Context) {
 		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
 		return
 	}
+
 	var req struct {
 		Metadata map[string]any `json:"metadata,omitempty"`
 	}
@@ -405,15 +458,37 @@ func (h *ThreadsHandler) PatchThread(c *gin.Context) {
 		NewValidationError("invalid request body").Render(c, http.StatusBadRequest)
 		return
 	}
-	now := time.Now().UnixMilli()
-	meta := ThreadMetadata{
-		ThreadID:  threadID,
-		Status:    "idle",
-		CreatedAt: now,
-		UpdatedAt: now,
-		Metadata:  req.Metadata,
+
+	// Get existing metadata
+	existing, err := h.store.Get(threadID)
+	if err != nil {
+		NewNotFoundError("thread not found").Render(c, http.StatusNotFound)
+		return
 	}
-	c.JSON(http.StatusOK, meta)
+
+	// Merge metadata
+	if req.Metadata != nil {
+		if existing.Metadata == nil {
+			existing.Metadata = make(map[string]any)
+		}
+		for k, v := range req.Metadata {
+			existing.Metadata[k] = v
+		}
+	}
+
+	if err := h.store.Update(threadID, existing); err != nil {
+		NewAPIError("update_failed", err.Error()).Render(c, http.StatusInternalServerError)
+		return
+	}
+
+	c.JSON(http.StatusOK, ThreadMetadata{
+		ThreadID:  existing.ThreadID,
+		Title:     existing.Title,
+		Status:    existing.Status,
+		CreatedAt: existing.CreatedAt,
+		UpdatedAt: existing.UpdatedAt,
+		Metadata:  existing.Metadata,
+	})
 }
 
 // DeleteThread handles DELETE /api/threads/:thread_id.
@@ -423,7 +498,12 @@ func (h *ThreadsHandler) DeleteThread(c *gin.Context) {
 		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
 		return
 	}
-	// Minimal implementation: no-op (no persistent store yet).
+
+	if err := h.store.Delete(threadID); err != nil {
+		NewNotFoundError("thread not found").Render(c, http.StatusNotFound)
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"thread_id": threadID, "deleted": true})
 }
 

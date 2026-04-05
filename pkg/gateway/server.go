@@ -112,7 +112,7 @@ func (s *Server) registerMiddleware() {
 func (s *Server) registerRoutes() {
 	// Build handler instances that hold references to config / agent.
 	modelsH := handlers.NewModelsHandler(s.cfg)
-	threadsH := handlers.NewThreadsHandler(s.cfg, s.agent)
+	threadsH := handlers.NewThreadsHandler(s.cfg, s.agent, nil) // nil = use default file store
 	uploadsH := handlers.NewUploadsHandler(s.cfg)
 	memoryH := handlers.NewMemoryHandler(s.cfg)
 	mcpH := handlers.NewMCPHandler(s.cfg)
@@ -121,7 +121,7 @@ func (s *Server) registerRoutes() {
 	suggestionsH := handlers.NewSuggestionsHandler(s.cfg)
 	agentsH := handlers.NewAgentsHandler(s.cfg)
 	channelsH := handlers.NewChannelsHandler(buildChannelsManager(s.cfg))
-	
+
 	// P1 fix: 支持多agent
 	langgraphH := handlers.NewLangGraphHandlerWithAgents(s.cfg, s.agent, s.agents)
 

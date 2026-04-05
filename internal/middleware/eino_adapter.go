@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -158,6 +159,22 @@ func (a *EinoMiddlewareAdapter) WrapInvokableToolCall(ctx context.Context, endpo
 	}
 
 	return wrapped, nil
+}
+
+// WrapModel wraps the LLM model with custom behavior.
+// If the middleware implements ModelWrapper interface, it calls WrapModel.
+// Otherwise, it returns the model unchanged.
+func (a *EinoMiddlewareAdapter) WrapModel(ctx context.Context, m model.BaseChatModel, mc *adk.ModelContext) (model.BaseChatModel, error) {
+	// Check if middleware implements ModelWrapper interface
+	type ModelWrapper interface {
+		WrapModel(inner model.BaseChatModel) model.BaseChatModel
+	}
+
+	if wrapper, ok := a.mw.(ModelWrapper); ok {
+		return wrapper.WrapModel(m), nil
+	}
+
+	return m, nil
 }
 
 // Helper functions for state conversion

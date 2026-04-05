@@ -140,7 +140,7 @@ func TestMemoryMiddleware_inject(t *testing.T) {
 	}
 
 	sysContent, _ := state.Messages[0]["content"].(string)
-	if !strings.Contains(sysContent, "<memory_facts>") {
+	if !strings.Contains(sysContent, "<memory>") {
 		t.Fatalf("expected memory block, got: %s", sysContent)
 	}
 	if len(state.MemoryFacts) != 3 {

@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/bookerbai/goclaw/internal/agent"
+	"github.com/bookerbai/goclaw/internal/threadstore"
 )
 
 // ---------------------------------------------------------------------------
@@ -95,7 +96,7 @@ func TestRunThread_SSETermination(t *testing.T) {
 		{Type: agent.EventMessageDelta, ThreadID: "thread-001", Payload: agent.MessageDeltaPayload{Content: "hello"}, Timestamp: time.Now().UnixMilli()},
 		{Type: agent.EventCompleted, ThreadID: "thread-001", Payload: agent.CompletedPayload{FinalMessage: "done"}, Timestamp: time.Now().UnixMilli()},
 	}}
-	handler := NewThreadsHandler(nil, mock)
+	handler := NewThreadsHandler(nil, mock, nil)
 
 	req := newRunRequest(t, "thread-001", `{"input": "hello"}`)
 	rr := httptest.NewRecorder()
@@ -115,7 +116,7 @@ func TestRunThread_SSETermination(t *testing.T) {
 // TestRunThread_errorEvent verifies that when the agent start fails the
 // SSE stream contains an "error" event with a non-empty message payload.
 func TestRunThread_errorEvent(t *testing.T) {
-	handler := NewThreadsHandler(nil, &mockLeadAgent{runErr: errors.New("boom")})
+	handler := NewThreadsHandler(nil, &mockLeadAgent{runErr: errors.New("boom")}, nil)
 
 	req := newRunRequest(t, "thread-001", `{"input": "hello"}`)
 	rr := httptest.NewRecorder()
@@ -157,7 +158,7 @@ func newGinContext(w *httptest.ResponseRecorder, r *http.Request, params map[str
 }
 
 func TestCancelRun(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
+	h := NewThreadsHandler(nil, nil, nil)
 
 	cancelled := false
 	h.registerRun("run-1", runHandle{
@@ -188,7 +189,7 @@ func TestCancelRun(t *testing.T) {
 }
 
 func TestCancelRun_NotFound(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
+	h := NewThreadsHandler(nil, nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/threads/thread-1/runs/run-x/cancel", nil)
 	rr := httptest.NewRecorder()
 	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-1", "run_id": "run-x"})
@@ -208,7 +209,12 @@ var _ = context.Background
 // ---------------------------------------------------------------------------
 
 func TestCreateThread(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
+	tmpDir := t.TempDir()
+	store, err := threadstore.NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	h := NewThreadsHandler(nil, nil, store)
 	body := `{"thread_id": "thread-abc", "metadata": {"key": "value"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/threads", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -216,12 +222,30 @@ func TestCreateThread(t *testing.T) {
 	c, _ := newGinContext(rr, req, nil)
 	h.CreateThread(c)
 	if rr.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d", rr.Code)
+		t.Fatalf("expected 201, got %d, body=%s", rr.Code, rr.Body.String())
 	}
 }
 
 func TestGetThread(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
+	tmpDir := t.TempDir()
+	store, err := threadstore.NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	h := NewThreadsHandler(nil, nil, store)
+
+	// First create the thread
+	body := `{"thread_id": "thread-xyz"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/threads", strings.NewReader(body))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRR := httptest.NewRecorder()
+	createCtx, _ := newGinContext(createRR, createReq, nil)
+	h.CreateThread(createCtx)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("failed to create thread: expected 201, got %d, body=%s", createRR.Code, createRR.Body.String())
+	}
+
+	// Now get the thread
 	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz", nil)
 	rr := httptest.NewRecorder()
 	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz"})
@@ -232,10 +256,28 @@ func TestGetThread(t *testing.T) {
 }
 
 func TestDeleteThread(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
-	req := httptest.NewRequest(http.MethodDelete, "/api/threads/thread-xyz", nil)
+	tmpDir := t.TempDir()
+	store, err := threadstore.NewFileStore(tmpDir)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	h := NewThreadsHandler(nil, nil, store)
+
+	// First create the thread with a unique ID
+	body := `{"thread_id": "thread-to-delete"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/api/threads", strings.NewReader(body))
+	createReq.Header.Set("Content-Type", "application/json")
+	createRR := httptest.NewRecorder()
+	createCtx, _ := newGinContext(createRR, createReq, nil)
+	h.CreateThread(createCtx)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("failed to create thread: expected 201, got %d, body=%s", createRR.Code, createRR.Body.String())
+	}
+
+	// Now delete the thread
+	req := httptest.NewRequest(http.MethodDelete, "/api/threads/thread-to-delete", nil)
 	rr := httptest.NewRecorder()
-	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz"})
+	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-to-delete"})
 	h.DeleteThread(c)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rr.Code)
@@ -243,7 +285,7 @@ func TestDeleteThread(t *testing.T) {
 }
 
 func TestGetThreadState(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
+	h := NewThreadsHandler(nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz/state", nil)
 	rr := httptest.NewRecorder()
 	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz"})
@@ -254,7 +296,7 @@ func TestGetThreadState(t *testing.T) {
 }
 
 func TestGetThreadHistory(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
+	h := NewThreadsHandler(nil, nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/threads/thread-xyz/history", nil)
 	rr := httptest.NewRecorder()
 	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz"})
@@ -265,7 +307,7 @@ func TestGetThreadHistory(t *testing.T) {
 }
 
 func TestListRuns(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
+	h := NewThreadsHandler(nil, nil, nil)
 	h.registerRun("run-1", runHandle{ThreadID: "thread-xyz"})
 	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz/runs", nil)
 	rr := httptest.NewRecorder()
@@ -280,7 +322,7 @@ func TestListRuns(t *testing.T) {
 }
 
 func TestGetRun(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
+	h := NewThreadsHandler(nil, nil, nil)
 	h.registerRun("run-2", runHandle{ThreadID: "thread-xyz"})
 	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz/runs/run-2", nil)
 	rr := httptest.NewRecorder()
@@ -292,7 +334,7 @@ func TestGetRun(t *testing.T) {
 }
 
 func TestGetRun_NotFound(t *testing.T) {
-	h := NewThreadsHandler(nil, nil)
+	h := NewThreadsHandler(nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/threads/thread-xyz/runs/run-missing", nil)
 	rr := httptest.NewRecorder()
 	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-xyz", "run_id": "run-missing"})
@@ -306,7 +348,7 @@ func TestRunThread_ContentLocationHeader(t *testing.T) {
 	mock := &mockLeadAgent{events: []agent.Event{
 		{Type: agent.EventCompleted, ThreadID: "thread-loc", Payload: agent.CompletedPayload{FinalMessage: "done"}, Timestamp: time.Now().UnixMilli()},
 	}}
-	h := NewThreadsHandler(nil, mock)
+	h := NewThreadsHandler(nil, mock, nil)
 	req := newRunRequest(t, "thread-loc", `{"input": "hi"}`)
 	rr := httptest.NewRecorder()
 	c, _ := newGinContext(rr, req, map[string]string{"thread_id": "thread-loc"})

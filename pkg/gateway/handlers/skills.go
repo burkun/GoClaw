@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 
 	"github.com/bookerbai/goclaw/internal/config"
 	"github.com/bookerbai/goclaw/internal/skills"
@@ -163,19 +165,16 @@ func (h *SkillsHandler) InstallSkill(c *gin.Context) {
 		return
 	}
 
-	skillName, err := readSkillNameFromArchive(archivePath)
+	meta, err := readSkillMetadataFromArchive(archivePath)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	skillName := meta.Name
 
 	extCfg, err := h.loadExtensions()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	if st, ok := extCfg.Skills[skillName]; ok && st.Enabled {
-		c.JSON(http.StatusConflict, gin.H{"error": "skill already exists"})
 		return
 	}
 
@@ -233,46 +232,147 @@ func resolveThreadArtifactPath(threadID, pathValue string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid path")
 	}
-	if !strings.HasPrefix(absCandidate, absBase) {
+	if !isPathWithinBase(absCandidate, absBase) {
 		return "", fmt.Errorf("invalid path")
 	}
 	return absCandidate, nil
 }
 
-func readSkillNameFromArchive(archivePath string) (string, error) {
+func isPathWithinBase(candidate, base string) bool {
+	rel, err := filepath.Rel(base, candidate)
+	if err != nil {
+		return false
+	}
+	if rel == "." {
+		return true
+	}
+	if rel == ".." {
+		return false
+	}
+	return !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+const maxSkillArchiveTotalBytes int64 = 512 * 1024 * 1024
+
+var allowedSkillFrontmatterKeys = map[string]struct{}{
+	"name":          {},
+	"description":   {},
+	"license":       {},
+	"allowed-tools": {},
+	"metadata":      {},
+	"compatibility": {},
+	"version":       {},
+	"author":        {},
+}
+
+var skillNamePattern = regexp.MustCompile(`^[a-z0-9-]+$`)
+
+func readSkillMetadataFromArchive(archivePath string) (skills.SkillMetadata, error) {
 	zr, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return "", fmt.Errorf("invalid skill archive")
+		return skills.SkillMetadata{}, fmt.Errorf("invalid skill archive")
 	}
 	defer zr.Close()
 
+	hasVisibleEntry := false
 	for _, f := range zr.File {
-		if strings.EqualFold(filepath.Base(f.Name), "SKILL.md") {
+		cleanName := filepath.Clean(f.Name)
+		if cleanName == "." || strings.HasPrefix(cleanName, "..") {
+			return skills.SkillMetadata{}, fmt.Errorf("invalid archive path")
+		}
+		if !strings.HasPrefix(cleanName, "__MACOSX") && !strings.HasPrefix(filepath.Base(cleanName), ".") {
+			hasVisibleEntry = true
+		}
+		if strings.EqualFold(filepath.Base(cleanName), "SKILL.md") {
 			rc, err := f.Open()
 			if err != nil {
-				return "", fmt.Errorf("invalid skill archive")
+				return skills.SkillMetadata{}, fmt.Errorf("invalid skill archive")
 			}
 			data, err := io.ReadAll(io.LimitReader(rc, 2*1024*1024))
 			rc.Close()
 			if err != nil {
-				return "", fmt.Errorf("invalid skill archive")
+				return skills.SkillMetadata{}, fmt.Errorf("invalid skill archive")
 			}
-			meta, _, err := skills.ParseSkillMarkdown(string(data))
-			if err != nil {
-				return "", fmt.Errorf("invalid SKILL.md metadata")
-			}
-			if strings.TrimSpace(meta.Name) != "" {
-				return strings.TrimSpace(meta.Name), nil
-			}
+			return parseAndValidateSkillMarkdown(string(data))
 		}
 	}
 
-	base := strings.TrimSuffix(filepath.Base(archivePath), filepath.Ext(archivePath))
-	base = strings.TrimSpace(base)
-	if base == "" {
-		return "", fmt.Errorf("invalid skill archive")
+	if !hasVisibleEntry {
+		return skills.SkillMetadata{}, fmt.Errorf("skill archive is empty")
 	}
-	return base, nil
+	return skills.SkillMetadata{}, fmt.Errorf("SKILL.md not found")
+}
+
+func parseAndValidateSkillMarkdown(content string) (skills.SkillMetadata, error) {
+	trimmed := strings.TrimSpace(content)
+	if !strings.HasPrefix(trimmed, "---\n") {
+		return skills.SkillMetadata{}, fmt.Errorf("no YAML frontmatter found")
+	}
+
+	rest := strings.TrimPrefix(trimmed, "---\n")
+	idx := strings.Index(rest, "\n---")
+	if idx < 0 {
+		return skills.SkillMetadata{}, fmt.Errorf("invalid frontmatter format")
+	}
+	fmText := rest[:idx]
+
+	var fm map[string]any
+	if err := yaml.Unmarshal([]byte(fmText), &fm); err != nil {
+		return skills.SkillMetadata{}, fmt.Errorf("invalid YAML in frontmatter")
+	}
+	if fm == nil {
+		return skills.SkillMetadata{}, fmt.Errorf("frontmatter must be a YAML dictionary")
+	}
+
+	for k := range fm {
+		if _, ok := allowedSkillFrontmatterKeys[k]; !ok {
+			return skills.SkillMetadata{}, fmt.Errorf("unexpected key in SKILL.md frontmatter: %s", k)
+		}
+	}
+
+	meta, _, err := skills.ParseSkillMarkdown(trimmed)
+	if err != nil {
+		return skills.SkillMetadata{}, fmt.Errorf("invalid SKILL.md metadata")
+	}
+	meta.Name = strings.TrimSpace(meta.Name)
+	meta.Description = strings.TrimSpace(meta.Description)
+
+	if meta.Name == "" {
+		return skills.SkillMetadata{}, fmt.Errorf("missing 'name' in frontmatter")
+	}
+	if meta.Description == "" {
+		return skills.SkillMetadata{}, fmt.Errorf("missing 'description' in frontmatter")
+	}
+	if err := validateSkillName(meta.Name); err != nil {
+		return skills.SkillMetadata{}, err
+	}
+	if err := validateSkillDescription(meta.Description); err != nil {
+		return skills.SkillMetadata{}, err
+	}
+	return meta, nil
+}
+
+func validateSkillName(name string) error {
+	if len(name) > 64 {
+		return fmt.Errorf("name is too long (%d characters). maximum is 64 characters", len(name))
+	}
+	if !skillNamePattern.MatchString(name) {
+		return fmt.Errorf("name '%s' should be hyphen-case", name)
+	}
+	if strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") || strings.Contains(name, "--") {
+		return fmt.Errorf("name '%s' cannot start/end with hyphen or contain consecutive hyphens", name)
+	}
+	return nil
+}
+
+func validateSkillDescription(description string) error {
+	if strings.Contains(description, "<") || strings.Contains(description, ">") {
+		return fmt.Errorf("description cannot contain angle brackets")
+	}
+	if len(description) > 1024 {
+		return fmt.Errorf("description is too long (%d characters). maximum is 1024 characters", len(description))
+	}
+	return nil
 }
 
 func safeExtractSkillArchive(archivePath, targetDir string) error {
@@ -291,6 +391,18 @@ func safeExtractSkillArchive(archivePath, targetDir string) error {
 		return err
 	}
 
+	var totalExpected int64
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		totalExpected += int64(f.UncompressedSize64)
+		if totalExpected > maxSkillArchiveTotalBytes {
+			return fmt.Errorf("skill archive is too large or appears highly compressed")
+		}
+	}
+
+	var totalWritten int64
 	for _, f := range zr.File {
 		cleanName := filepath.Clean(f.Name)
 		if cleanName == "." || strings.HasPrefix(cleanName, "..") {
@@ -301,7 +413,7 @@ func safeExtractSkillArchive(archivePath, targetDir string) error {
 		if err != nil {
 			return err
 		}
-		if !strings.HasPrefix(absDst, absTarget) {
+		if !isPathWithinBase(absDst, absTarget) {
 			return fmt.Errorf("invalid archive path")
 		}
 
@@ -324,10 +436,31 @@ func safeExtractSkillArchive(archivePath, targetDir string) error {
 			rc.Close()
 			return err
 		}
-		if _, err := io.Copy(out, io.LimitReader(rc, 20*1024*1024)); err != nil {
-			out.Close()
-			rc.Close()
-			return err
+
+		buf := make([]byte, 64*1024)
+		for {
+			n, readErr := rc.Read(buf)
+			if n > 0 {
+				totalWritten += int64(n)
+				if totalWritten > maxSkillArchiveTotalBytes {
+					out.Close()
+					rc.Close()
+					return fmt.Errorf("skill archive is too large or appears highly compressed")
+				}
+				if _, wErr := out.Write(buf[:n]); wErr != nil {
+					out.Close()
+					rc.Close()
+					return wErr
+				}
+			}
+			if readErr == io.EOF {
+				break
+			}
+			if readErr != nil {
+				out.Close()
+				rc.Close()
+				return readErr
+			}
 		}
 		out.Close()
 		rc.Close()

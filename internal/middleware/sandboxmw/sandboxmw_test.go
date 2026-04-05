@@ -15,7 +15,9 @@ func (s *stubSandbox) ID() string { return s.id }
 func (s *stubSandbox) Execute(_ context.Context, _ string) (sandbox.ExecuteResult, error) {
 	return sandbox.ExecuteResult{}, nil
 }
-func (s *stubSandbox) ReadFile(_ context.Context, _ string) (string, error) { return "", nil }
+func (s *stubSandbox) ReadFile(_ context.Context, _ string, _, _ int) (string, error) {
+	return "", nil
+}
 func (s *stubSandbox) WriteFile(_ context.Context, _ string, _ string, _ bool) error {
 	return nil
 }

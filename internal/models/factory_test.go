@@ -36,13 +36,19 @@ func TestCreateChatModel_UsesDefaultModelAndBuilder(t *testing.T) {
 	RegisterProviderBuilder("openai", func(ctx context.Context, cfg config.ModelConfig, opts BuildOptions) (model.BaseChatModel, error) {
 		called = true
 		require.Equal(t, "gpt-4o", cfg.Name)
-		require.True(t, opts.ThinkingEnabled)
+		// Note: ThinkingEnabled is false because model doesn't have SupportsThinking=true
+		require.False(t, opts.ThinkingEnabled)
 		require.Equal(t, "high", opts.ReasoningEffort)
 		return &stubModel{}, nil
 	})
 
 	appCfg := &config.AppConfig{
-		Models: []config.ModelConfig{{Name: "gpt-4o", Use: "openai", Model: "gpt-4o"}},
+		Models: []config.ModelConfig{{
+			Name: "gpt-4o",
+			Use:  "openai",
+			Model: "gpt-4o",
+			// Note: SupportsThinking is false by default, so ThinkingEnabled will be disabled
+		}},
 	}
 
 	m, err := CreateChatModel(context.Background(), appCfg, CreateRequest{ThinkingEnabled: true, ReasoningEffort: "high"})

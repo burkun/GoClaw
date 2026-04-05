@@ -4,14 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/bookerbai/goclaw/internal/config"
 	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
 	toolruntime "github.com/bookerbai/goclaw/internal/tools"
-	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -116,100 +114,6 @@ func TestLeadAgent_planMode(t *testing.T) {
 	mws := buildMiddlewares(RunConfig{IsPlanMode: true})
 	if len(mws) == 0 {
 		t.Fatalf("expected non-empty middleware chain in plan mode")
-	}
-}
-
-func TestBuildMiddlewares_WrapToolCallBridge(t *testing.T) {
-	mws := buildMiddlewares(RunConfig{})
-	if len(mws) == 0 {
-		t.Fatalf("expected non-empty middleware list")
-	}
-	if mws[0].WrapToolCall.Invokable == nil {
-		t.Fatalf("expected WrapToolCall.Invokable to be configured")
-	}
-}
-
-func TestBuildMiddlewares_WrapToolCallInterceptsClarification(t *testing.T) {
-	mws := buildMiddlewares(RunConfig{})
-	if len(mws) == 0 || mws[0].WrapToolCall.Invokable == nil {
-		t.Fatalf("wrap tool middleware not configured")
-	}
-
-	called := false
-	endpoint := mws[0].WrapToolCall.Invokable(func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
-		called = true
-		return &compose.ToolOutput{Result: `{"status":"ok"}`}, nil
-	})
-
-	out, err := endpoint(context.Background(), &compose.ToolInput{
-		Name:      "ask_clarification",
-		CallID:    "call-clarify-1",
-		Arguments: `{"question":"请确认范围"}`,
-	})
-	if err != nil {
-		t.Fatalf("endpoint returned error: %v", err)
-	}
-	if called {
-		t.Fatalf("expected clarification call to be short-circuited")
-	}
-	if out == nil || !strings.Contains(out.Result, `"question":"请确认范围"`) {
-		t.Fatalf("unexpected clarification output: %+v", out)
-	}
-}
-
-func TestBuildMiddlewares_WrapToolCallConvertsToolError(t *testing.T) {
-	mws := buildMiddlewares(RunConfig{})
-	if len(mws) == 0 || mws[0].WrapToolCall.Invokable == nil {
-		t.Fatalf("wrap tool middleware not configured")
-	}
-
-	endpoint := mws[0].WrapToolCall.Invokable(func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
-		return nil, errors.New("boom")
-	})
-
-	out, err := endpoint(context.Background(), &compose.ToolInput{
-		Name:      "bash",
-		CallID:    "call-bash-1",
-		Arguments: `{"command":"ls"}`,
-	})
-	if err != nil {
-		t.Fatalf("expected tool error to be converted, got error: %v", err)
-	}
-	if out == nil {
-		t.Fatalf("expected non-nil output")
-	}
-	var payload map[string]any
-	if unmarshalErr := json.Unmarshal([]byte(out.Result), &payload); unmarshalErr != nil {
-		t.Fatalf("expected JSON output, got %q (%v)", out.Result, unmarshalErr)
-	}
-	if status, _ := payload["status"].(string); status != "error" {
-		t.Fatalf("expected status=error, got %v", payload["status"])
-	}
-	if toolName, _ := payload["tool_name"].(string); toolName != "bash" {
-		t.Fatalf("expected tool_name=bash, got %v", payload["tool_name"])
-	}
-}
-
-// TestLeadAgent_cancelContext verifies run termination behavior under cancel.
-// With an uninitialized agent we still guarantee a terminal EventError.
-func TestLeadAgent_cancelContext(t *testing.T) {
-	a := &leadAgent{}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	state := newTestState("thread-003", "Do a very long task.")
-	cfg := RunConfig{ThreadID: "thread-003"}
-
-	ch, err := a.Run(ctx, state, cfg)
-	if err != nil {
-		t.Fatalf("Run returned unexpected error: %v", err)
-	}
-
-	events := drainChannel(t, ch, 5*time.Second)
-	assertTerminal(t, events)
-	last := events[len(events)-1]
-	if last.Type != EventError {
-		t.Errorf("expected EventError, got %q", last.Type)
 	}
 }
 

@@ -32,6 +32,11 @@ func NewNotFoundError(msg string) APIError {
 	return APIError{Code: ErrCodeNotFound, Message: msg}
 }
 
+// NewAPIError creates an API error with a custom code.
+func NewAPIError(code, msg string) APIError {
+	return APIError{Code: code, Message: msg}
+}
+
 // NewInternalError creates an internal error (use when underlying error should not be exposed).
 func NewInternalError(msg string) APIError {
 	return APIError{Code: ErrCodeInternal, Message: msg}
