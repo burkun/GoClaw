@@ -10,7 +10,7 @@ import (
 
 type fakeTool struct{}
 
-func (f *fakeTool) Name() string { return "fake_tool" }
+func (f *fakeTool) Name() string        { return "fake_tool" }
 func (f *fakeTool) Description() string { return "fake desc" }
 func (f *fakeTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}`)

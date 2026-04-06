@@ -9,15 +9,15 @@ import (
 
 // TaskEventData represents the data for a task event.
 type TaskEventData struct {
-	Type           string         `json:"type"`
-	TaskID         string         `json:"task_id"`
-	Timestamp      int64          `json:"timestamp"`
-	Description    string         `json:"description,omitempty"`
-	Message        map[string]any `json:"message,omitempty"`
-	MessageIndex   int            `json:"message_index,omitempty"`
-	TotalMessages  int            `json:"total_messages,omitempty"`
-	Result         string         `json:"result,omitempty"`
-	Error          string         `json:"error,omitempty"`
+	Type          string         `json:"type"`
+	TaskID        string         `json:"task_id"`
+	Timestamp     int64          `json:"timestamp"`
+	Description   string         `json:"description,omitempty"`
+	Message       map[string]any `json:"message,omitempty"`
+	MessageIndex  int            `json:"message_index,omitempty"`
+	TotalMessages int            `json:"total_messages,omitempty"`
+	Result        string         `json:"result,omitempty"`
+	Error         string         `json:"error,omitempty"`
 }
 
 // sendTaskEvent sends a custom task event to the SSE stream.

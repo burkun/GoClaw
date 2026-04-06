@@ -2,37 +2,47 @@ package main
 
 import (
 	"context"
-	"log"
+	"os"
 	"strings"
 
 	"github.com/bookerbai/goclaw/internal/agent"
 	"github.com/bookerbai/goclaw/internal/agentconfig"
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/logging"
 	"github.com/bookerbai/goclaw/pkg/gateway"
 )
 
 func main() {
 	ctx := context.Background()
 
+	// Initialize logging with default level first (will be updated after config load)
+	logging.Init("info")
+
 	cfg, err := config.GetAppConfig()
 	if err != nil {
-		log.Fatalf("load config failed: %v", err)
+		logging.Error("load config failed", "error", err)
+		os.Exit(1)
+	}
+
+	// Update log level from config
+	if cfg != nil && cfg.LogLevel != "" {
+		logging.SetLevel(cfg.LogLevel)
 	}
 
 	// P1 fix: 预加载所有enabled agents
 	agents := make(map[string]agent.LeadAgent)
-	
+
 	// 1. 从文件系统加载自定义agents
 	agentLoader := agentconfig.DefaultLoader
 	fileAgents, err := agentLoader.ListAgents()
 	if err != nil {
-		log.Printf("[WARN] failed to list file agents: %v", err)
+		logging.Warn("failed to list file agents", "error", err)
 	} else {
 		for _, agentName := range fileAgents {
 			// 加载per-agent配置检查是否enabled
 			_, err := agentLoader.LoadConfig(agentName)
 			if err != nil {
-				log.Printf("[WARN] failed to load agent config %s: %v", agentName, err)
+				logging.Warn("failed to load agent config", "agent", agentName, "error", err)
 				continue
 			}
 
@@ -45,19 +55,19 @@ func main() {
 			}
 
 			if !enabled {
-				log.Printf("[INFO] agent %s is disabled, skipping", agentName)
+				logging.Info("agent is disabled, skipping", "agent", agentName)
 				continue
 			}
 
 			// 创建agent实例
 			leadAgent, err := agent.NewWithName(ctx, agentName)
 			if err != nil {
-				log.Printf("[WARN] failed to create agent %s: %v", agentName, err)
+				logging.Warn("failed to create agent", "agent", agentName, "error", err)
 				continue
 			}
-			
+
 			agents[agentName] = leadAgent
-			log.Printf("[INFO] loaded agent: %s", agentName)
+			logging.Info("loaded agent", "agent", agentName)
 		}
 	}
 
@@ -67,7 +77,7 @@ func main() {
 			if !agentCfg.Enabled {
 				continue
 			}
-			
+
 			// 检查是否已从文件系统加载
 			if _, exists := agents[name]; exists {
 				continue
@@ -76,12 +86,12 @@ func main() {
 			// 创建agent实例
 			leadAgent, err := agent.NewWithName(ctx, name)
 			if err != nil {
-				log.Printf("[WARN] failed to create agent %s from config: %v", name, err)
+				logging.Warn("failed to create agent from config", "agent", name, "error", err)
 				continue
 			}
-			
+
 			agents[name] = leadAgent
-			log.Printf("[INFO] loaded agent from config: %s", name)
+			logging.Info("loaded agent from config", "agent", name)
 		}
 	}
 
@@ -89,10 +99,11 @@ func main() {
 	if len(agents) == 0 {
 		leadAgent, err := agent.New(ctx)
 		if err != nil {
-			log.Fatalf("initialize default agent failed: %v", err)
+			logging.Error("initialize default agent failed", "error", err)
+			os.Exit(1)
 		}
 		agents["default"] = leadAgent
-		log.Printf("[INFO] created default agent")
+		logging.Info("created default agent")
 	}
 
 	// 获取默认agent（第一个或名为default的）
@@ -114,10 +125,10 @@ func main() {
 
 	// P1 fix: 传递agents map给gateway
 	srv := gateway.NewWithAgents(cfg, defaultAgent, agents)
-	log.Printf("goclaw gateway listening on %s", addr)
-	log.Printf("loaded %d agents: %v", len(agents), getAgentNames(agents))
+	logging.Info("goclaw gateway listening", "address", addr, "agents", getAgentNames(agents))
 	if err := srv.Run(addr); err != nil {
-		log.Fatalf("gateway run failed: %v", err)
+		logging.Error("gateway run failed", "error", err)
+		os.Exit(1)
 	}
 }
 

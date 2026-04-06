@@ -21,9 +21,9 @@ import (
 
 // ThreadsHandler serves /api/threads/:thread_id/* endpoints.
 type ThreadsHandler struct {
-	cfg    *config.AppConfig
-	agent  agent.LeadAgent
-	store  threadstore.Store
+	cfg   *config.AppConfig
+	agent agent.LeadAgent
+	store threadstore.Store
 
 	runsMu sync.RWMutex
 	runs   map[string]runHandle

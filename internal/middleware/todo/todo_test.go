@@ -65,7 +65,7 @@ func TestInjectAnnotation_existingSystemMessage(t *testing.T) {
 func TestTodosInMessages_found(t *testing.T) {
 	messages := []map[string]any{
 		{
-			"role": "assistant",
+			"role":    "assistant",
 			"content": "I'll update the tasks.",
 			"tool_calls": []map[string]any{
 				{
@@ -85,7 +85,7 @@ func TestTodosInMessages_found(t *testing.T) {
 func TestTodosInMessages_notFound(t *testing.T) {
 	messages := []map[string]any{
 		{
-			"role": "assistant",
+			"role":    "assistant",
 			"content": "I'll do the work.",
 			"tool_calls": []map[string]any{
 				{
@@ -283,7 +283,7 @@ func TestBefore_noReminderWhenWriteTodosPresent(t *testing.T) {
 			{"role": "system", "content": "You are helpful."},
 			{"role": "user", "content": "Do task 1"},
 			{
-				"role": "assistant",
+				"role":    "assistant",
 				"content": "Updating tasks",
 				"tool_calls": []map[string]any{
 					{"name": WriteTodosToolName, "id": "call_1"},
@@ -319,8 +319,8 @@ func TestBefore_noReminderWhenAlreadyPresent(t *testing.T) {
 			{"role": "user", "content": "Do task 1"},
 			{"role": "assistant", "content": "Working..."},
 			{
-				"role": "human",
-				"name": "todo_reminder",
+				"role":    "human",
+				"name":    "todo_reminder",
 				"content": "Your todos are: ...",
 			},
 		},

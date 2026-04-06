@@ -44,8 +44,8 @@ func TestCreateChatModel_UsesDefaultModelAndBuilder(t *testing.T) {
 
 	appCfg := &config.AppConfig{
 		Models: []config.ModelConfig{{
-			Name: "gpt-4o",
-			Use:  "openai",
+			Name:  "gpt-4o",
+			Use:   "openai",
 			Model: "gpt-4o",
 			// Note: SupportsThinking is false by default, so ThinkingEnabled will be disabled
 		}},

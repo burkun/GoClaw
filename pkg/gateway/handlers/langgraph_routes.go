@@ -100,16 +100,16 @@ type LGThreadState struct {
 
 // LGRunRequest is the body for POST /threads/{id}/runs/stream.
 type LGRunRequest struct {
-	AssistantID      string         `json:"assistant_id"`
-	Input            any            `json:"input,omitempty"`
-	Config           map[string]any `json:"config,omitempty"`
-	Metadata         map[string]any `json:"metadata,omitempty"`
-	StreamMode       any            `json:"stream_mode,omitempty"` // string or []string
-	StreamSubgraphs  bool           `json:"stream_subgraphs,omitempty"`
-	StreamResumable  bool           `json:"stream_resumable,omitempty"`
-	CheckpointID     string         `json:"checkpoint_id,omitempty"`
-	InterruptBefore  any            `json:"interrupt_before,omitempty"`
-	InterruptAfter   any            `json:"interrupt_after,omitempty"`
+	AssistantID     string         `json:"assistant_id"`
+	Input           any            `json:"input,omitempty"`
+	Config          map[string]any `json:"config,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+	StreamMode      any            `json:"stream_mode,omitempty"` // string or []string
+	StreamSubgraphs bool           `json:"stream_subgraphs,omitempty"`
+	StreamResumable bool           `json:"stream_resumable,omitempty"`
+	CheckpointID    string         `json:"checkpoint_id,omitempty"`
+	InterruptBefore any            `json:"interrupt_before,omitempty"`
+	InterruptAfter  any            `json:"interrupt_after,omitempty"`
 }
 
 // LGSearchRequest is the body for POST /threads/search.

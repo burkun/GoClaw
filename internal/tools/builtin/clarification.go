@@ -25,10 +25,10 @@ func NewClarificationTool() *ClarificationTool {
 }
 
 type clarificationInput struct {
-	Description         string   `json:"description"`
-	Question            string   `json:"question"`
-	ClarificationType   string   `json:"clarification_type,omitempty"`
-	Options             []string `json:"options,omitempty"`
+	Description       string   `json:"description"`
+	Question          string   `json:"question"`
+	ClarificationType string   `json:"clarification_type,omitempty"`
+	Options           []string `json:"options,omitempty"`
 }
 
 // validClarificationTypes defines the allowed clarification types (P0 fix).

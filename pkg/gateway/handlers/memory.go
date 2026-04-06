@@ -79,13 +79,13 @@ type MemoryResponse struct {
 
 // MemoryConfigResponse is the memory configuration response.
 type MemoryConfigResponse struct {
-	Enabled                bool    `json:"enabled"`
-	StoragePath            string  `json:"storage_path"`
-	DebounceSeconds        int     `json:"debounce_seconds"`
-	MaxFacts               int     `json:"max_facts"`
+	Enabled                 bool    `json:"enabled"`
+	StoragePath             string  `json:"storage_path"`
+	DebounceSeconds         int     `json:"debounce_seconds"`
+	MaxFacts                int     `json:"max_facts"`
 	FactConfidenceThreshold float64 `json:"fact_confidence_threshold"`
-	InjectionEnabled       bool    `json:"injection_enabled"`
-	MaxInjectionTokens     int     `json:"max_injection_tokens"`
+	InjectionEnabled        bool    `json:"injection_enabled"`
+	MaxInjectionTokens      int     `json:"max_injection_tokens"`
 }
 
 // MemoryStatusResponse combines config and data.

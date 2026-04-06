@@ -25,7 +25,7 @@ func (f *fakeAgent) Run(ctx context.Context, input *adk.AgentInput, options ...a
 		defer gen.Close()
 		gen.Send(&adk.AgentEvent{
 			AgentName: "fake",
-			Output: &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: schema.AssistantMessage("ok", nil)}},
+			Output:    &adk.AgentOutput{MessageOutput: &adk.MessageVariant{Message: schema.AssistantMessage("ok", nil)}},
 		})
 	}()
 	return iter

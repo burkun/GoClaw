@@ -15,17 +15,14 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/bookerbai/goclaw/internal/logging"
 )
 
-// logger is the package-level logger for config events.
-// Callers may replace it via SetLogger.
-var logger = slog.Default()
-
 // SetLogger allows external code to inject a custom logger.
+// Deprecated: Use logging.Init() instead.
 func SetLogger(l *slog.Logger) {
-	if l != nil {
-		logger = l
-	}
+	// No-op, kept for backward compatibility
 }
 
 // ---------------------------------------------------------------------------
@@ -690,12 +687,12 @@ func resolveEnvVars(v string, failLate bool) (string, error) {
 	}
 	if failLate {
 		// For extensions_config.json: return empty string with warning (fail-late)
-		logger.Warn("Environment variable not found, using empty string (fail-late mode)",
+		logging.Warn("Environment variable not found, using empty string (fail-late mode)",
 			"var", varName, "hint", "This may cause runtime errors if the value is required")
 		return "", nil
 	}
 	// For config.yaml: return error (fail-fast)
-	logger.Warn("Missing environment variable referenced by config", "name", varName)
+	logging.Warn("Missing environment variable referenced by config", "name", varName)
 	return "", fmt.Errorf("config: environment variable %s not found for value %s", varName, v)
 }
 
@@ -852,7 +849,7 @@ func checkConfigVersion(rawConfig any, configPath string) {
 	}
 
 	if userVersion < exampleVersion {
-		logger.Warn("Your config.yaml is outdated",
+		logging.Warn("Your config.yaml is outdated",
 			"current_version", userVersion,
 			"latest_version", exampleVersion,
 			"hint", "Run 'make config-upgrade' to merge new fields into your config.",
@@ -981,7 +978,7 @@ var (
 func Watch(path string, onChange func(*AppConfig)) (stop func()) {
 	resolved, err := resolvePath(path)
 	if err != nil {
-		logger.Warn("config: Watch path resolution failed", "path", path, "error", err)
+		logging.Warn("config: Watch path resolution failed", "path", path, "error", err)
 		return func() {}
 	}
 
@@ -1011,14 +1008,14 @@ func Watch(path string, onChange func(*AppConfig)) (stop func()) {
 			case <-ticker.C:
 				info, err := os.Stat(resolved)
 				if err != nil {
-					logger.Warn("config: file stat failed, may be temporarily removed", "path", resolved, "error", err)
+					logging.Warn("config: file stat failed, may be temporarily removed", "path", resolved, "error", err)
 					continue
 				}
 				if info.ModTime().After(lastMtime) {
 					lastMtime = info.ModTime()
 					cfg, err := Load(resolved)
 					if err != nil {
-						logger.Error("config: reload failed, retaining old config", "path", resolved, "error", err)
+						logging.Error("config: reload failed, retaining old config", "path", resolved, "error", err)
 						continue
 					}
 					onChange(cfg)
@@ -1079,7 +1076,7 @@ func GetAppConfig() (*AppConfig, error) {
 	cfg, err := Load(path)
 	if err != nil {
 		if current != nil {
-			logger.Warn("config: reload failed, serving stale config", "path", path, "error", err)
+			logging.Warn("config: reload failed, serving stale config", "path", path, "error", err)
 			return current, nil
 		}
 		return nil, err

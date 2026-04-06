@@ -69,13 +69,13 @@ type GuardrailProvider interface {
 
 // OAP Reason Codes (standard codes from the OAP specification).
 const (
-	ReasonAllowed          = "oap.allowed"
-	ReasonToolNotAllowed   = "oap.tool_not_allowed"
+	ReasonAllowed           = "oap.allowed"
+	ReasonToolNotAllowed    = "oap.tool_not_allowed"
 	ReasonCommandNotAllowed = "oap.command_not_allowed"
-	ReasonBlockedPattern   = "oap.blocked_pattern"
-	ReasonLimitExceeded    = "oap.limit_exceeded"
+	ReasonBlockedPattern    = "oap.blocked_pattern"
+	ReasonLimitExceeded     = "oap.limit_exceeded"
 	ReasonPassportSuspended = "oap.passport_suspended"
-	ReasonEvaluatorError   = "oap.evaluator_error"
+	ReasonEvaluatorError    = "oap.evaluator_error"
 )
 
 // NewGuardrailRequest creates a GuardrailRequest from tool call parameters.
@@ -93,8 +93,8 @@ func NewGuardrailRequest(toolName string, toolInput map[string]any, agentID, thr
 // DecisionAllowed returns a simple allow decision.
 func DecisionAllowed() GuardrailDecision {
 	return GuardrailDecision{
-		Allow:    true,
-		Reasons:  []GuardrailReason{{Code: ReasonAllowed}},
+		Allow:   true,
+		Reasons: []GuardrailReason{{Code: ReasonAllowed}},
 	}
 }
 

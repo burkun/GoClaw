@@ -21,8 +21,8 @@ func TestGuardrailMiddleware_Before_Disabled(t *testing.T) {
 
 func TestGuardrailMiddleware_Before_Decisions(t *testing.T) {
 	mw := NewGuardrailMiddleware(Config{
-		Enabled: true,
-		Policies: []Policy{{ToolPattern: "bash", Decision: DecisionDeny, Reason: "unsafe"}, {ToolPattern: "web*", Decision: DecisionAsk, Reason: "approve"}},
+		Enabled:         true,
+		Policies:        []Policy{{ToolPattern: "bash", Decision: DecisionDeny, Reason: "unsafe"}, {ToolPattern: "web*", Decision: DecisionAsk, Reason: "approve"}},
 		DefaultDecision: DecisionPermit,
 	})
 	state := &middleware.State{Extra: map[string]any{"pending_tool_calls": []map[string]any{{"name": "bash"}, {"name": "web_search"}, {"name": "read_file"}}}}

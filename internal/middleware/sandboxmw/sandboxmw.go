@@ -12,8 +12,8 @@ package sandboxmw
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
+	"github.com/bookerbai/goclaw/internal/logging"
 	"github.com/bookerbai/goclaw/internal/middleware"
 	"github.com/bookerbai/goclaw/internal/sandbox"
 )
@@ -56,7 +56,7 @@ func (m *SandboxMiddleware) BeforeAgent(ctx context.Context, state *middleware.S
 	}
 	state.Extra["sandbox"] = sb
 	state.Extra["sandbox_id"] = sandboxID
-	slog.Debug("sandboxmw: acquired sandbox", "sandbox_id", sandboxID, "thread_id", state.ThreadID)
+	logging.Debug("sandboxmw: acquired sandbox", "sandbox_id", sandboxID, "thread_id", state.ThreadID)
 	return nil
 }
 
@@ -74,11 +74,13 @@ func (m *SandboxMiddleware) AfterAgent(_ context.Context, state *middleware.Stat
 
 	// Release the sandbox if the provider supports it.
 	// Note: Some providers use TTL-based release instead.
-	if releaser, ok := m.provider.(interface{ Release(ctx context.Context, sandboxID string) error }); ok {
+	if releaser, ok := m.provider.(interface {
+		Release(ctx context.Context, sandboxID string) error
+	}); ok {
 		if err := releaser.Release(context.Background(), sandboxID); err != nil {
-			slog.Warn("sandboxmw: release failed", "sandbox_id", sandboxID, "error", err)
+			logging.Warn("sandboxmw: release failed", "sandbox_id", sandboxID, "error", err)
 		} else {
-			slog.Debug("sandboxmw: released sandbox", "sandbox_id", sandboxID)
+			logging.Debug("sandboxmw: released sandbox", "sandbox_id", sandboxID)
 		}
 	}
 

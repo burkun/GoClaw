@@ -8,7 +8,6 @@ package llmerror
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +16,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
+	"github.com/bookerbai/goclaw/internal/logging"
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
 
@@ -346,14 +346,19 @@ func (w *retryModelWrapper) Generate(ctx context.Context, input []*schema.Messag
 		retriable, reason := classifyError(err)
 		if retriable && attempt < w.maxAttempts {
 			delay := w.buildRetryDelay(attempt, err)
-			log.Printf("[WARN] Transient LLM error on attempt %d/%d; retrying in %v: %s",
-				attempt, w.maxAttempts, delay, extractErrorDetail(err))
+			logging.Warn("[LLM] Transient error, retrying",
+				"attempt", attempt,
+				"max_attempts", w.maxAttempts,
+				"delay", delay,
+				"error", extractErrorDetail(err))
 			time.Sleep(delay)
 			attempt++
 			continue
 		}
 
-		log.Printf("[WARN] LLM call failed after %d attempt(s): %s", attempt, extractErrorDetail(err))
+		logging.Warn("[LLM] Call failed after attempts",
+			"attempts", attempt,
+			"error", extractErrorDetail(err))
 
 		// Return a friendly error message
 		return schema.AssistantMessage(buildUserMessage(err, reason), nil), nil
@@ -372,14 +377,19 @@ func (w *retryModelWrapper) Stream(ctx context.Context, input []*schema.Message,
 		retriable, reason := classifyError(err)
 		if retriable && attempt < w.maxAttempts {
 			delay := w.buildRetryDelay(attempt, err)
-			log.Printf("[WARN] Transient LLM error on attempt %d/%d; retrying in %v: %s",
-				attempt, w.maxAttempts, delay, extractErrorDetail(err))
+			logging.Warn("[LLM] Transient error, retrying",
+				"attempt", attempt,
+				"max_attempts", w.maxAttempts,
+				"delay", delay,
+				"error", extractErrorDetail(err))
 			time.Sleep(delay)
 			attempt++
 			continue
 		}
 
-		log.Printf("[WARN] LLM call failed after %d attempt(s): %s", attempt, extractErrorDetail(err))
+		logging.Warn("[LLM] Stream failed after attempts",
+			"attempts", attempt,
+			"error", extractErrorDetail(err))
 
 		// Return a stream with friendly error message
 		msg := schema.AssistantMessage(buildUserMessage(err, reason), nil)
@@ -394,7 +404,9 @@ func (w *retryModelWrapper) Stream(ctx context.Context, input []*schema.Message,
 
 // BindTools implements model.BaseChatModel.
 func (w *retryModelWrapper) BindTools(tools []*schema.ToolInfo) error {
-	if binder, ok := w.inner.(interface{ BindTools([]*schema.ToolInfo) error }); ok {
+	if binder, ok := w.inner.(interface {
+		BindTools([]*schema.ToolInfo) error
+	}); ok {
 		return binder.BindTools(tools)
 	}
 	return nil

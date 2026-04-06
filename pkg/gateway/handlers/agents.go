@@ -237,11 +237,11 @@ func (h *AgentsHandler) CreateAgent(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"status":       "created",
-		"name":         name,
-		"config_path":  configPath,
-		"soul_path":    soulPath,
-		"agent_dir":    agentDir,
+		"status":      "created",
+		"name":        name,
+		"config_path": configPath,
+		"soul_path":   soulPath,
+		"agent_dir":   agentDir,
 	})
 }
 

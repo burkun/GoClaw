@@ -70,10 +70,10 @@ func TestLLMErrorHandlingMiddleware_RetryDelay(t *testing.T) {
 	m := NewLLMErrorHandlingMiddleware(3)
 
 	tests := []struct {
-		name     string
-		attempt  int
-		wantMin  time.Duration
-		wantMax  time.Duration
+		name    string
+		attempt int
+		wantMin time.Duration
+		wantMax time.Duration
 	}{
 		{
 			name:    "first retry",

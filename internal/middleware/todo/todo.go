@@ -238,8 +238,8 @@ func reminderInMessages(messages []map[string]any) bool {
 // formatTodos returns a human-readable bullet list of the current todos.
 // Example output:
 //
-//	- [pending] Write unit tests
-//	- [in_progress] Implement API handler
+//   - [pending] Write unit tests
+//   - [in_progress] Implement API handler
 func formatTodos(todos []map[string]any) string {
 	var lines []string
 	for _, todo := range todos {

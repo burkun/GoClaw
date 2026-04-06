@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/bookerbai/goclaw/internal/channels"
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/logging"
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
@@ -29,6 +29,7 @@ type Channel struct {
 	cfg            config.FeishuConfig
 	messages       map[string][]*larkim.Message // ChatID -> messages history
 	runningCardIDs map[string]string            // source_message_id -> running card message_id
+	wg             sync.WaitGroup               // tracks active goroutines
 }
 
 // New creates a new Feishu channel adapter.
@@ -65,7 +66,7 @@ func (c *Channel) Start(ctx context.Context, handler channels.MessageHandler) er
 	)
 
 	// Test authentication - the client auto-manages token, just verify connectivity
-	log.Printf("[Feishu] Client initialized for app %s", appID)
+	logging.Info("[Feishu] Client initialized", "app_id", appID)
 
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -95,11 +96,13 @@ func (c *Channel) startWebhookServer(ctx context.Context) {
 		Handler: mux,
 	}
 
-	log.Printf("[Feishu] Starting webhook server on %s", addr)
+	logging.Info("[Feishu] Starting webhook server", "address", addr)
 
+	c.wg.Add(1)
 	go func() {
+		defer c.wg.Done()
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("[Feishu] Webhook server error: %v", err)
+			logging.Error("[Feishu] Webhook server error", "error", err)
 		}
 	}()
 
@@ -107,7 +110,7 @@ func (c *Channel) startWebhookServer(ctx context.Context) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("[Feishu] Webhook server shutdown error: %v", err)
+		logging.Error("[Feishu] Webhook server shutdown error", "error", err)
 	}
 }
 
@@ -144,7 +147,7 @@ func (c *Channel) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// Handle event callback
 	if event.Type == "event_callback" {
 		if err := c.processEvent(r.Context(), event.Event); err != nil {
-			log.Printf("[Feishu] Error processing event: %v", err)
+			logging.Error("[Feishu] Error processing event", "error", err)
 		}
 	}
 
@@ -232,20 +235,22 @@ func (c *Channel) processEvent(ctx context.Context, rawEvent json.RawMessage) er
 // Stop stops the Feishu channel.
 func (c *Channel) Stop(_ context.Context) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if !c.started {
+		c.mu.Unlock()
 		return nil
 	}
 
 	if c.cancel != nil {
 		c.cancel()
 	}
-
 	c.started = false
 	c.handler = nil
 	c.client = nil
 	c.runningCardIDs = make(map[string]string)
+	c.mu.Unlock()
+
+	// Wait for goroutines to exit after releasing lock
+	c.wg.Wait()
 	return nil
 }
 

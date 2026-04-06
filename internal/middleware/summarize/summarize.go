@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/bookerbai/goclaw/internal/logging"
+
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
 
@@ -128,10 +130,9 @@ func (s *SummarizationMiddleware) AfterModel(_ context.Context, _ *middleware.St
 //  8. Build a single system summary message:
 //     content = SummarySentinel + "\n" + summaryText
 //  9. Replace state.Messages with [summaryMsg] + recent.
+//
 // 10. Update state.TokenCount = estimateTokens(state.Messages).
 func (s *SummarizationMiddleware) BeforeModel(ctx context.Context, state *middleware.State) error {
-	// TODO: implement all 10 steps above.
-
 	if !s.cfg.Enabled {
 		return nil
 	}
@@ -186,8 +187,9 @@ func (s *SummarizationMiddleware) BeforeModel(ctx context.Context, state *middle
 	if s.summ != nil {
 		if text, err := s.summ.Summarize(ctx, transcript); err == nil && text != "" {
 			summaryText = text
+		} else if err != nil {
+			logging.Warn("[SummarizationMiddleware] summarisation failed", "error", err)
 		}
-		// TODO: log error when summarisation fails.
 	}
 
 	// --- Steps 8–9: rebuild message list ---
@@ -204,26 +206,53 @@ func (s *SummarizationMiddleware) BeforeModel(ctx context.Context, state *middle
 }
 
 // estimateTokens approximates the token count of a message list.
-// The heuristic (characters / 4) is intentionally conservative; replace with
-// a tiktoken binding for production accuracy.
+// Uses a character-type-based heuristic that accounts for multibyte characters:
+// - ASCII characters: ~4 chars per token
+// - CJK and other multibyte characters: ~1.5 chars per token
+// This provides better accuracy for non-English text than simple char/4.
 func estimateTokens(messages []map[string]any) int {
-	// TODO: replace with a proper tokeniser binding (e.g. tiktoken-go).
 	total := 0
 	for _, msg := range messages {
 		content, _ := msg["content"].(string)
-		total += len(content) / 4
+		total += estimateStringTokens(content)
 	}
 	return total
+}
+
+// estimateStringTokens estimates tokens for a single string using character-type analysis.
+func estimateStringTokens(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+
+	asciiCount := 0
+	multibyteCount := 0
+
+	for _, r := range s {
+		if r < 128 {
+			asciiCount++
+		} else {
+			multibyteCount++
+		}
+	}
+
+	// ASCII: ~4 chars per token
+	// Multibyte (CJK, etc.): ~1.5 chars per token
+	// This is a heuristic; for production use tiktoken or similar
+	asciiTokens := asciiCount / 4
+	multibyteTokens := multibyteCount * 2 / 3
+
+	// Minimum of 1 token if there's any content
+	if asciiTokens+multibyteTokens == 0 && (asciiCount > 0 || multibyteCount > 0) {
+		return 1
+	}
+
+	return asciiTokens + multibyteTokens
 }
 
 // formatTranscript converts a message slice (and optional prior summary) into
 // a plain-text transcript suitable for the summarisation LLM prompt.
 func formatTranscript(messages []map[string]any, priorSummary, promptTemplate string) string {
-	// TODO:
-	// 1. Start with promptTemplate + "\n\n".
-	// 2. If priorSummary != "", prepend "[Previous summary]\n" + priorSummary + "\n\n".
-	// 3. Append each message as "Role: content\n".
-
 	var b strings.Builder
 	b.WriteString(promptTemplate)
 	b.WriteString("\n\n")

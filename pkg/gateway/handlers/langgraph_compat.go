@@ -24,7 +24,7 @@ type LangGraphSSEEvent struct {
 
 // LangGraphMetadataEvent is sent as the first event in a stream.
 type LangGraphMetadataEvent struct {
-	RunID   string `json:"run_id"`
+	RunID    string `json:"run_id"`
 	ThreadID string `json:"thread_id"`
 }
 
@@ -39,28 +39,28 @@ type LangGraphValuesEvent struct {
 // LangGraphMessage represents a message in LangGraph format.
 // The SDK expects messages with specific structure including type, content, and additional_kwargs.
 type LangGraphMessage struct {
-	Type             string         `json:"type"`                        // "human", "ai", "tool", "system"
-	Content          any            `json:"content"`                     // string or []ContentPart
-	ID               string         `json:"id,omitempty"`
-	Name             string         `json:"name,omitempty"`
-	AdditionalKwargs map[string]any `json:"additional_kwargs,omitempty"`
+	Type             string              `json:"type"`    // "human", "ai", "tool", "system"
+	Content          any                 `json:"content"` // string or []ContentPart
+	ID               string              `json:"id,omitempty"`
+	Name             string              `json:"name,omitempty"`
+	AdditionalKwargs map[string]any      `json:"additional_kwargs,omitempty"`
 	ToolCalls        []LangGraphToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	ToolCallID       string              `json:"tool_call_id,omitempty"`
 }
 
 // LangGraphContentPart represents a content part for multimodal messages.
 type LangGraphContentPart struct {
-	Type     string `json:"type"`     // "text", "image"
+	Type     string `json:"type"` // "text", "image"
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
 }
 
 // LangGraphToolCall represents a tool call in LangGraph message format.
 type LangGraphToolCall struct {
-	ID       string                 `json:"id"`
-	Name     string                 `json:"name"`
-	Args     map[string]any         `json:"args"`
-	Type     string                 `json:"type"` // always "tool_call"
+	ID   string         `json:"id"`
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
+	Type string         `json:"type"` // always "tool_call"
 }
 
 // LangGraphCustomEvent represents a custom event (task_running, llm_retry, etc.).
@@ -178,8 +178,8 @@ func (c *LangGraphEventConverter) convertToolEvent(ev agent.Event) []LangGraphSS
 
 		// Create an AI message with tool_call.
 		aiMsg := LangGraphMessage{
-			Type:   "ai",
-			ID:     fmt.Sprintf("msg-toolcall-%d", ev.Timestamp),
+			Type:    "ai",
+			ID:      fmt.Sprintf("msg-toolcall-%d", ev.Timestamp),
 			Content: "",
 			ToolCalls: []LangGraphToolCall{{
 				ID:   payload.CallID,
@@ -375,9 +375,9 @@ func ConvertSchemaMessageToLangGraph(msg *schema.Message) LangGraphMessage {
 	}
 
 	lgMsg := LangGraphMessage{
-		Content:    msg.Content,
-		ID:         fmt.Sprintf("msg-%d", time.Now().UnixMilli()),
-		Name:       msg.Name,
+		Content: msg.Content,
+		ID:      fmt.Sprintf("msg-%d", time.Now().UnixMilli()),
+		Name:    msg.Name,
 	}
 
 	// Map role types.

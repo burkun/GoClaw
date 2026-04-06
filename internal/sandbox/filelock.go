@@ -25,7 +25,7 @@ type FileLockMode int
 const (
 	// LockModeInProcess uses sync.Mutex - fast but only works within a single process.
 	LockModeInProcess FileLockMode = iota
-	
+
 	// LockModeCrossProcess uses flock - works across multiple processes.
 	LockModeCrossProcess
 )
@@ -115,19 +115,19 @@ func NewCrossProcessFileLock(lockDir string) (*CrossProcessFileLock, error) {
 func (cpl *CrossProcessFileLock) Acquire(ctx context.Context, filePath string) (unlock func(), err error) {
 	// Create lock file path
 	lockFileName := filepath.Join(cpl.lockDir, filepath.Base(filePath)+".lock")
-	
+
 	// Open or create lock file
 	file, err := os.OpenFile(lockFileName, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
-	
+
 	// Try to acquire lock with context support
 	acquired := make(chan error, 1)
 	go func() {
 		acquired <- cpl.tryAcquireFileLock(file)
 	}()
-	
+
 	select {
 	case err := <-acquired:
 		if err != nil {

@@ -35,8 +35,8 @@ func TestLangGraphEventConverter_MessageDelta(t *testing.T) {
 		ThreadID:  "thread-1",
 		Timestamp: 1000,
 		Payload: agent.MessageDeltaPayload{
-			Content:     "Hello",
-			IsThinking:  false,
+			Content:    "Hello",
+			IsThinking: false,
 		},
 	}
 

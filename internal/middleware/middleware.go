@@ -9,6 +9,8 @@ package middleware
 
 import (
 	"context"
+
+	"github.com/bookerbai/goclaw/internal/logging"
 )
 
 // State is the mutable conversation state passed through every middleware.
@@ -201,6 +203,47 @@ func (MiddlewareWrapper) Name() string { return "wrapper" }
 // values from multiple tool calls in a single turn.
 type Reducer func(existing, new any) any
 
+// typeName returns a readable type name for logging.
+func typeName(v any) string {
+	if v == nil {
+		return "nil"
+	}
+	switch v.(type) {
+	case string:
+		return "string"
+	case int, int64, float64:
+		return "number"
+	case bool:
+		return "bool"
+	case []string:
+		return "[]string"
+	case []any:
+		return "[]any"
+	case map[string]any:
+		return "map[string]any"
+	case map[string]ViewedImage:
+		return "map[string]ViewedImage"
+	default:
+		return "unknown"
+	}
+}
+
+// mapViewToViewedImage converts a map[string]any to ViewedImage.
+// Returns nil if the conversion fails.
+func mapViewToViewedImage(m map[string]any) *ViewedImage {
+	img := &ViewedImage{}
+	if base64, ok := m["base64"].(string); ok {
+		img.Base64 = base64
+	}
+	if mimeType, ok := m["mime_type"].(string); ok {
+		img.MIMEType = mimeType
+	}
+	if img.Base64 == "" && img.MIMEType == "" {
+		return nil
+	}
+	return img
+}
+
 // MergeArtifacts is a reducer that merges and deduplicates artifact paths.
 // It preserves the order of first occurrence and removes duplicates.
 //
@@ -210,13 +253,39 @@ func MergeArtifacts(existing, new any) any {
 	var newList []string
 
 	if existing != nil {
-		if e, ok := existing.([]string); ok {
+		switch e := existing.(type) {
+		case []string:
 			existingList = e
+		case []any:
+			// Handle JSON-unmarshaled arrays
+			existingList = make([]string, 0, len(e))
+			for i, item := range e {
+				if s, ok := item.(string); ok {
+					existingList = append(existingList, s)
+				} else {
+					logging.Warn("MergeArtifacts: non-string item in existing array", "index", i, "type", typeName(item))
+				}
+			}
+		default:
+			logging.Warn("MergeArtifacts: unexpected existing type", "type", typeName(existing))
 		}
 	}
 	if new != nil {
-		if n, ok := new.([]string); ok {
+		switch n := new.(type) {
+		case []string:
 			newList = n
+		case []any:
+			// Handle JSON-unmarshaled arrays
+			newList = make([]string, 0, len(n))
+			for i, item := range n {
+				if s, ok := item.(string); ok {
+					newList = append(newList, s)
+				} else {
+					logging.Warn("MergeArtifacts: non-string item in new array", "index", i, "type", typeName(item))
+				}
+			}
+		default:
+			logging.Warn("MergeArtifacts: unexpected new type", "type", typeName(new))
 		}
 	}
 
@@ -256,13 +325,49 @@ func MergeViewedImages(existing, new any) any {
 	var newMap map[string]ViewedImage
 
 	if existing != nil {
-		if e, ok := existing.(map[string]ViewedImage); ok {
+		switch e := existing.(type) {
+		case map[string]ViewedImage:
 			existingMap = e
+		case map[string]any:
+			// Handle JSON-unmarshaled maps
+			existingMap = make(map[string]ViewedImage)
+			for k, v := range e {
+				if img, ok := v.(ViewedImage); ok {
+					existingMap[k] = img
+				} else if m, ok := v.(map[string]any); ok {
+					// Try to convert from map[string]any
+					if img := mapViewToViewedImage(m); img != nil {
+						existingMap[k] = *img
+					}
+				} else {
+					logging.Warn("MergeViewedImages: unexpected value type in existing map", "key", k, "type", typeName(v))
+				}
+			}
+		default:
+			logging.Warn("MergeViewedImages: unexpected existing type", "type", typeName(existing))
 		}
 	}
 	if new != nil {
-		if n, ok := new.(map[string]ViewedImage); ok {
+		switch n := new.(type) {
+		case map[string]ViewedImage:
 			newMap = n
+		case map[string]any:
+			// Handle JSON-unmarshaled maps
+			newMap = make(map[string]ViewedImage)
+			for k, v := range n {
+				if img, ok := v.(ViewedImage); ok {
+					newMap[k] = img
+				} else if m, ok := v.(map[string]any); ok {
+					// Try to convert from map[string]any
+					if img := mapViewToViewedImage(m); img != nil {
+						newMap[k] = *img
+					}
+				} else {
+					logging.Warn("MergeViewedImages: unexpected value type in new map", "key", k, "type", typeName(v))
+				}
+			}
+		default:
+			logging.Warn("MergeViewedImages: unexpected new type", "type", typeName(new))
 		}
 	}
 

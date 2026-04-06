@@ -7,8 +7,8 @@ package tokenusage
 
 import (
 	"context"
-	"log/slog"
 
+	"github.com/bookerbai/goclaw/internal/logging"
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
 
@@ -55,7 +55,7 @@ func (m *TokenUsageMiddleware) AfterModel(ctx context.Context, state *middleware
 	totalTokens := extractInt(usage, "total_tokens")
 
 	// Log token usage
-	slog.Info("LLM token usage",
+	logging.Info("LLM token usage",
 		"input", inputTokens,
 		"output", outputTokens,
 		"total", totalTokens,

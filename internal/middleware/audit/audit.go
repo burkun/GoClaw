@@ -8,25 +8,25 @@ package audit
 
 import (
 	"context"
-	"log"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/bookerbai/goclaw/internal/logging"
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
 
 // AuditEntry represents a single audit log entry.
 type AuditEntry struct {
-	Timestamp   time.Time      `json:"timestamp"`
-	ThreadID    string         `json:"thread_id"`
-	ToolName    string         `json:"tool_name"`
-	Operation   string         `json:"operation"`
-	Target      string         `json:"target,omitempty"`
-	Success     bool           `json:"success"`
-	ErrorMsg    string         `json:"error_msg,omitempty"`
-	DurationMs  int64          `json:"duration_ms,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Timestamp  time.Time      `json:"timestamp"`
+	ThreadID   string         `json:"thread_id"`
+	ToolName   string         `json:"tool_name"`
+	Operation  string         `json:"operation"`
+	Target     string         `json:"target,omitempty"`
+	Success    bool           `json:"success"`
+	ErrorMsg   string         `json:"error_msg,omitempty"`
+	DurationMs int64          `json:"duration_ms,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 // AuditLogger defines the interface for audit logging.
@@ -34,21 +34,28 @@ type AuditLogger interface {
 	Log(entry AuditEntry)
 }
 
-// DefaultAuditLogger logs to standard logger.
+// DefaultAuditLogger logs using slog.
 type DefaultAuditLogger struct{}
 
 func (l *DefaultAuditLogger) Log(entry AuditEntry) {
-	log.Printf("[SandboxAudit] thread=%s tool=%s op=%s target=%s success=%v err=%s",
-		entry.ThreadID, entry.ToolName, entry.Operation, entry.Target, entry.Success, entry.ErrorMsg)
+	logging.Info("[SandboxAudit]",
+		"thread", entry.ThreadID,
+		"tool", entry.ToolName,
+		"op", entry.Operation,
+		"target", entry.Target,
+		"success", entry.Success,
+		"error", entry.ErrorMsg,
+		"duration_ms", entry.DurationMs,
+	)
 }
 
 // CommandRiskLevel represents the risk classification of a command.
 type CommandRiskLevel string
 
 const (
-	RiskPass   CommandRiskLevel = "pass"   // Safe to execute
-	RiskWarn   CommandRiskLevel = "warn"   // Medium-risk, add warning
-	RiskBlock  CommandRiskLevel = "block"  // High-risk, block execution
+	RiskPass  CommandRiskLevel = "pass"  // Safe to execute
+	RiskWarn  CommandRiskLevel = "warn"  // Medium-risk, add warning
+	RiskBlock CommandRiskLevel = "block" // High-risk, block execution
 )
 
 // SandboxAuditMiddleware logs sandbox operations and intercepts risky commands.

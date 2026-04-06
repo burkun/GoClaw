@@ -291,7 +291,7 @@ func (t *WebFetchTool) executeTavilyExtract(ctx context.Context, rawURL string) 
 
 	var raw struct {
 		Results []struct {
-			URL     string `json:"url"`
+			URL        string `json:"url"`
 			RawContent string `json:"raw_content"`
 		} `json:"results"`
 		FailedResults []struct {

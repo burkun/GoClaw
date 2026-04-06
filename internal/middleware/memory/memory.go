@@ -31,14 +31,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/bookerbai/goclaw/internal/logging"
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
 
@@ -216,14 +217,6 @@ func (s *JSONFileStore) Load() (*Memory, error) {
 // Save atomically writes m to the backing file.
 // It updates LastUpdated before writing and refreshes the in-memory cache.
 func (s *JSONFileStore) Save(m *Memory) error {
-	// TODO:
-	// 1. Set m.LastUpdated = time.Now().UTC().Format(time.RFC3339).
-	// 2. json.Marshal(m) → data.
-	// 3. Write data to s.path + ".tmp" (os.WriteFile with 0o644).
-	// 4. os.Rename(tmp, s.path) for atomic replacement.
-	// 5. s.mu.Lock(); update s.cache = m; stat new file for s.cacheMod; s.mu.Unlock().
-	// 6. Return any error encountered.
-
 	m.LastUpdated = time.Now().UTC().Format(time.RFC3339)
 
 	data, err := json.MarshalIndent(m, "", "  ")
@@ -341,12 +334,6 @@ var memorySentenceSplitRe = regexp.MustCompile(`[\n。！？!?；;]+`)
 // detectCorrection returns true if any recent human message contains an
 // explicit correction signal. It inspects at most the last 6 messages.
 func detectCorrection(messages []map[string]any) bool {
-	// TODO:
-	// 1. Filter messages to the last 6 entries where role == "human".
-	// 2. For each such message, extract content as string.
-	// 3. Test each correctionPatterns regexp against the content.
-	// 4. Return true on first match, false if none match.
-
 	var recent []map[string]any
 	for _, m := range messages {
 		if m["role"] == "human" {
@@ -371,14 +358,6 @@ func detectCorrection(messages []map[string]any) bool {
 // that contain tool_calls, keeping only human turns and final AI responses.
 // This mirrors DeerFlow's _filter_messages_for_memory.
 func filterMessagesForMemory(messages []map[string]any) []map[string]any {
-	// TODO:
-	// 1. Iterate over messages.
-	// 2. role == "tool": skip.
-	// 3. role == "assistant" with non-empty tool_calls field: skip.
-	// 4. role == "human": include (strip <uploaded_files>…</uploaded_files> blocks).
-	// 5. role == "assistant" with no tool_calls: include.
-	// 6. Return filtered list.
-
 	var filtered []map[string]any
 	for _, msg := range messages {
 		role, _ := msg["role"].(string)
@@ -396,7 +375,6 @@ func filterMessagesForMemory(messages []map[string]any) []map[string]any {
 			// Strip ephemeral <uploaded_files> blocks before persisting.
 			content, _ := msg["content"].(string)
 			if strings.Contains(content, "<uploaded_files>") {
-				// TODO: apply regexp to strip the block; skip message if nothing remains.
 				cleaned := regexp.MustCompile(`(?s)<uploaded_files>.*?</uploaded_files>\n*`).ReplaceAllString(content, "")
 				cleaned = strings.TrimSpace(cleaned)
 				if cleaned == "" {
@@ -444,6 +422,8 @@ type UpdateQueue struct {
 	extractor FactExtractor
 	updater   *LLMMemoryUpdater // Full memory updater for User/History contexts + facts
 	maxFacts  int
+	ctx       context.Context    // Context for cancellation
+	cancel    context.CancelFunc // Cancel function for shutdown
 
 	// DebounceDelay is the wait after the last Add before processing begins.
 	// Default: 30 seconds, matching DeerFlow's debounce_seconds config.
@@ -465,14 +445,25 @@ func newFactID() string {
 func GetGlobalQueue(memoryPath string) *UpdateQueue {
 	globalQueueOnce.Do(func() {
 		store := NewJSONFileStore(memoryPath)
+		ctx, cancel := context.WithCancel(context.Background())
 		globalQueue = &UpdateQueue{
 			entries:       make(map[string]*updateEntry),
 			store:         store,
 			DebounceDelay: 30 * time.Second,
 			maxFacts:      100,
+			ctx:           ctx,
+			cancel:        cancel,
 		}
 	})
 	return globalQueue
+}
+
+// Shutdown stops the update queue and cancels all pending operations.
+func (q *UpdateQueue) Shutdown() {
+	if q == nil || q.cancel == nil {
+		return
+	}
+	q.cancel()
 }
 
 // SetExtractor sets or replaces the fact extractor used by the queue.
@@ -510,13 +501,6 @@ func (q *UpdateQueue) SetMaxFacts(limit int) {
 // Add enqueues or replaces the pending memory update for threadID.
 // If the debounce timer is running it is reset.
 func (q *UpdateQueue) Add(threadID string, messages []map[string]any, agentName string, correctionDetected bool) {
-	// TODO:
-	// 1. q.mu.Lock().
-	// 2. Merge correctionDetected with any existing entry for threadID.
-	// 3. Replace q.entries[threadID] with a new updateEntry.
-	// 4. Reset the debounce timer: cancel existing, start new with q.DebounceDelay.
-	// 5. q.mu.Unlock().
-
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -551,7 +535,7 @@ func (q *UpdateQueue) process() {
 
 	for _, entry := range snap {
 		if err := q.extractAndSave(entry); err != nil {
-			log.Printf("[MemoryMiddleware] extract failed thread=%s err=%v", entry.threadID, err)
+			logging.Error("[MemoryMiddleware] extract failed", "thread", entry.threadID, "error", err)
 		}
 	}
 }
@@ -565,9 +549,14 @@ func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
 		return err
 	}
 
+	// Use queue's context for cancellation support
+	ctx := q.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Try full LLM memory update (User/History contexts + facts) if updater is configured.
 	if q.updater != nil {
-		ctx := context.Background()
 		update, extractErr := q.updater.ExtractMemoryUpdate(ctx, mem, entry.messages, entry.correctionDetected)
 		if extractErr == nil && update != nil && update.HasUpdates() {
 			if ApplyUpdates(mem, update, entry.threadID) {
@@ -580,8 +569,9 @@ func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
 				if err := q.store.Save(mem); err != nil {
 					return err
 				}
-				log.Printf("[MemoryMiddleware] saved memory update for thread=%s (contexts + %d newFacts)",
-					entry.threadID, len(update.NewFacts))
+				logging.Info("[MemoryMiddleware] saved memory update",
+					"thread", entry.threadID,
+					"new_facts", len(update.NewFacts))
 				return nil
 			}
 		}
@@ -642,7 +632,9 @@ func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
 	if err := q.store.Save(mem); err != nil {
 		return err
 	}
-	log.Printf("[MemoryMiddleware] saved %d fact(s) for thread=%s", len(extractedFacts), entry.threadID)
+	logging.Info("[MemoryMiddleware] saved facts",
+		"count", len(extractedFacts),
+		"thread", entry.threadID)
 	return nil
 }
 
@@ -650,14 +642,10 @@ func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
 func sortFactsByConfidence(facts []MemoryFact) []MemoryFact {
 	sorted := make([]MemoryFact, len(facts))
 	copy(sorted, facts)
-	// Simple bubble sort for stability
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[j].Confidence > sorted[i].Confidence {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	// Use standard library sort for O(n log n) efficiency
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Confidence > sorted[j].Confidence
+	})
 	return sorted
 }
 
@@ -782,29 +770,11 @@ func NewMemoryMiddleware(store MemoryStore, queue *UpdateQueue, agentName string
 func (m *MemoryMiddleware) Name() string { return "MemoryMiddleware" }
 
 // Before loads persisted facts and injects them into the system prompt.
-//
-// Implementation:
-//  1. Load Memory from store; on error log and return nil (non-fatal).
-//  2. Collect up to MaxFactsToInject facts from m.Facts (most recent last).
-//  3. Append them to state.MemoryFacts.
-//  4. Prepend a formatted "<memory_facts>…</memory_facts>" block to the
-//     first system message in state.Messages (insert one if absent).
 func (m *MemoryMiddleware) BeforeModel(ctx context.Context, state *middleware.State) error {
-	// TODO:
-	// 1. mem, err := m.store.Load()
-	//    if err != nil { log.Printf("memory load error: %v", err); return nil }
-	// 2. facts := mem.Facts; if len(facts) > MaxFactsToInject { facts = facts[len-15:] }
-	// 3. state.MemoryFacts = facts
-	// 4. Build the injection block:
-	//    "<memory_facts>\n" + strings.Join(facts, "\n") + "\n</memory_facts>"
-	// 5. Find the first message with role=="system" in state.Messages.
-	//    If found, prepend the block to its "content".
-	//    If not found, prepend a new system message to state.Messages.
-
 	mem, err := m.store.Load()
 	if err != nil {
 		// Non-fatal: the agent can proceed without memory.
-		log.Printf("[MemoryMiddleware] load failed: %v", err)
+		logging.Error("[MemoryMiddleware] load failed", "error", err)
 		return nil
 	}
 
@@ -1035,7 +1005,7 @@ func (m *MemoryMiddleware) AfterAgent(_ context.Context, state *middleware.State
 		return nil
 	}
 	if m.queue == nil {
-		log.Printf("[MemoryMiddleware] queue is nil, skip enqueue thread=%s", state.ThreadID)
+		logging.Warn("[MemoryMiddleware] queue is nil, skip enqueue", "thread", state.ThreadID)
 		return nil
 	}
 

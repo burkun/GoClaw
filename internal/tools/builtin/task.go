@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bookerbai/goclaw/internal/logging"
 )
 
 // TaskStatus represents the current state of a subagent task.
@@ -82,13 +84,13 @@ type SubagentConfig struct {
 // SubagentExecutor manages the execution of a subagent.
 // Mirrors DeerFlow's SubagentExecutor class.
 type SubagentExecutor struct {
-	Config       SubagentConfig
-	Tools        []Tool
-	ParentModel  string
-	ThreadID     string
-	TraceID      string
-	maxTurns     int
-	timeout      time.Duration
+	Config      SubagentConfig
+	Tools       []Tool
+	ParentModel string
+	ThreadID    string
+	TraceID     string
+	maxTurns    int
+	timeout     time.Duration
 }
 
 // Tool is the interface for tools that can be passed to subagents.
@@ -236,16 +238,14 @@ func (e *SubagentExecutor) ExecuteAsync(task string) string {
 // runSubagent is the core subagent execution logic.
 // This is a simplified implementation that should be extended based on the agent framework used.
 func (e *SubagentExecutor) runSubagent(ctx context.Context, task string, result *TaskResult) error {
-	// TODO: Implement actual subagent execution using Eino or other framework
-	// This is a placeholder that simulates execution
-
-	// In a full implementation, this would:
+	// NOTE: This is a placeholder implementation.
+	// A full implementation would:
 	// 1. Create an agent instance with the configured model
 	// 2. Set up the initial state with the task
 	// 3. Stream execution results
 	// 4. Collect AI messages
 	// 5. Return the final result
-
+	//
 	// For now, return a placeholder result
 	result.Result = fmt.Sprintf("Subagent '%s' executed task: %s (placeholder implementation)", e.Config.Name, task)
 	return nil
@@ -259,10 +259,47 @@ func (e *SubagentExecutor) runSubagent(ctx context.Context, task string, result 
 type taskRegistry struct {
 	mu    sync.RWMutex
 	tasks map[string]*TaskResult
+	wg    sync.WaitGroup // tracks cleanup goroutine
 }
+
+// defaultTaskTTL is the default time-to-live for completed tasks.
+const defaultTaskTTL = 30 * time.Minute
+
+// cleanupInterval is the interval between automatic cleanup runs.
+const cleanupInterval = 5 * time.Minute
 
 var globalTaskRegistry = &taskRegistry{
 	tasks: make(map[string]*TaskResult),
+}
+
+// StartTaskRegistryCleanup starts a background goroutine that periodically
+// removes completed tasks older than the TTL. Call this once at application start.
+// Returns a stop function to halt the cleanup goroutine.
+func StartTaskRegistryCleanup() func() {
+	return globalTaskRegistry.StartCleanup(defaultTaskTTL)
+}
+
+// StartCleanup starts a background cleanup goroutine with the given TTL.
+func (r *taskRegistry) StartCleanup(ttl time.Duration) func() {
+	stop := make(chan struct{})
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		ticker := time.NewTicker(cleanupInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				r.Cleanup(ttl)
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		r.wg.Wait()
+	}
 }
 
 // Store stores a task result.
@@ -300,6 +337,13 @@ func (r *taskRegistry) Cleanup(maxAge time.Duration) {
 			}
 		}
 	}
+}
+
+// Size returns the current number of tasks in the registry.
+func (r *taskRegistry) Size() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.tasks)
 }
 
 // GetBackgroundTaskResult retrieves a task result from the global registry.
@@ -572,7 +616,7 @@ func (t *TaskTool) pollForCompletion(ctx context.Context, taskID, description st
 	lastMessageCount := 0
 
 	// Send task_started event
-	// TODO: Stream this event to the client
+	logging.Info("[TaskTool] task started", "task_id", taskID)
 
 	for {
 		result, ok := GetBackgroundTaskResult(taskID)
@@ -583,6 +627,10 @@ func (t *TaskTool) pollForCompletion(ctx context.Context, taskID, description st
 
 		// Log status changes
 		if result.Status != lastStatus {
+			logging.Info("[TaskTool] task status changed",
+				"task_id", taskID,
+				"from", lastStatus,
+				"to", result.Status)
 			lastStatus = result.Status
 		}
 
@@ -590,8 +638,7 @@ func (t *TaskTool) pollForCompletion(ctx context.Context, taskID, description st
 		currentMessageCount := len(result.AIMessages)
 		if currentMessageCount > lastMessageCount {
 			for i := lastMessageCount; i < currentMessageCount; i++ {
-				// TODO: Stream task_running event to client
-				_ = i
+				logging.Debug("[TaskTool] task running: new message", "task_id", taskID)
 			}
 			lastMessageCount = currentMessageCount
 		}
@@ -599,17 +646,17 @@ func (t *TaskTool) pollForCompletion(ctx context.Context, taskID, description st
 		// Check if task completed, failed, or timed out
 		switch result.Status {
 		case TaskStatusCompleted:
-			// TODO: Stream task_completed event
+			logging.Info("[TaskTool] task completed", "task_id", taskID, "result", result.Result)
 			CleanupBackgroundTask(taskID)
 			return fmt.Sprintf("Task Succeeded. Result: %s", result.Result), nil
 
 		case TaskStatusFailed:
-			// TODO: Stream task_failed event
+			logging.Warn("[TaskTool] task failed", "task_id", taskID, "error", result.Error)
 			CleanupBackgroundTask(taskID)
 			return fmt.Sprintf("Task failed. Error: %s", result.Error), nil
 
 		case TaskStatusTimedOut:
-			// TODO: Stream task_timed_out event
+			logging.Warn("[TaskTool] task timed out", "task_id", taskID, "error", result.Error)
 			CleanupBackgroundTask(taskID)
 			return fmt.Sprintf("Task timed out. Error: %s", result.Error), nil
 		}
@@ -627,7 +674,9 @@ func (t *TaskTool) pollForCompletion(ctx context.Context, taskID, description st
 		// Polling timeout as safety net
 		if pollCount > maxPollCount {
 			timeoutMinutes := timeoutSeconds / 60
-			// TODO: Stream task_timed_out event
+			logging.Warn("[TaskTool] task polling timed out",
+				"task_id", taskID,
+				"timeout_minutes", timeoutMinutes)
 			return fmt.Sprintf("Task polling timed out after %d minutes. This may indicate the background task is stuck.", timeoutMinutes), nil
 		}
 	}

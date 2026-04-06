@@ -485,7 +485,7 @@ type KubernetesSandboxProvider struct {
 }
 
 type warmPoolEntry struct {
-	info      *SandboxInfo
+	info       *SandboxInfo
 	releasedAt time.Time
 }
 

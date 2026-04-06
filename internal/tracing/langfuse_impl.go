@@ -19,14 +19,14 @@ func init() {
 
 func createLangfuseHandler(cfg *LangfuseConfig) (callbacks.Handler, func(), error) {
 	handler, flush := langfuse.NewLangfuseHandler(&langfuse.Config{
-		Host:       cfg.Host,
-		PublicKey:  cfg.PublicKey,
-		SecretKey:  cfg.SecretKey,
-		Threads:    1,
-		FlushAt:    15,
+		Host:          cfg.Host,
+		PublicKey:     cfg.PublicKey,
+		SecretKey:     cfg.SecretKey,
+		Threads:       1,
+		FlushAt:       15,
 		FlushInterval: 500 * time.Millisecond,
-		SampleRate: 1.0,
-		MaxRetry:   3,
+		SampleRate:    1.0,
+		MaxRetry:      3,
 	})
 	return handler, flush, nil
 }

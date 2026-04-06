@@ -4,12 +4,12 @@ package slack
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 
 	"github.com/bookerbai/goclaw/internal/channels"
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/logging"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
@@ -26,6 +26,7 @@ type Channel struct {
 	cfg      config.SlackConfig
 	messages map[string][]slack.Message // ThreadID -> messages history
 	botID    string
+	wg       sync.WaitGroup // tracks active goroutines
 }
 
 // New creates a new Slack channel adapter.
@@ -68,7 +69,7 @@ func (c *Channel) Start(ctx context.Context, handler channels.MessageHandler) er
 		return fmt.Errorf("slack: failed to authenticate: %w", err)
 	}
 	c.botID = authTest.UserID
-	log.Printf("[Slack] Connected as %s (ID: %s)", authTest.User, c.botID)
+	logging.Info("[Slack] Connected", "user", authTest.User, "bot_id", c.botID)
 
 	// Create Socket Mode client
 	socket := socketmode.New(
@@ -102,9 +103,11 @@ func (c *Channel) runSocketMode(ctx context.Context) {
 		return
 	}
 
+	c.wg.Add(1)
 	go func() {
-		if err := socket.Run(); err != nil {
-			log.Printf("[Slack] Socket mode error: %v", err)
+		defer c.wg.Done()
+		if err := socket.Run(); err != nil && err != context.Canceled {
+			logging.Error("[Slack] Socket mode error", "error", err)
 		}
 	}()
 
@@ -115,11 +118,11 @@ func (c *Channel) runSocketMode(ctx context.Context) {
 		case evt := <-socket.Events:
 			switch evt.Type {
 			case socketmode.EventTypeConnecting:
-				log.Println("[Slack] Connecting...")
+				logging.Info("[Slack] Connecting...")
 			case socketmode.EventTypeConnectionError:
-				log.Println("[Slack] Connection error")
+				logging.Warn("[Slack] Connection error")
 			case socketmode.EventTypeConnected:
-				log.Println("[Slack] Connected!")
+				logging.Info("[Slack] Connected!")
 			case socketmode.EventTypeEventsAPI:
 				eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
 				if !ok {
@@ -127,7 +130,7 @@ func (c *Channel) runSocketMode(ctx context.Context) {
 				}
 				socket.Ack(*evt.Request)
 				if err := c.handleEventsAPI(ctx, eventsAPIEvent); err != nil {
-					log.Printf("[Slack] Error handling event: %v", err)
+					logging.Error("[Slack] Error handling event", "error", err)
 				}
 			}
 		}
@@ -223,20 +226,22 @@ func (c *Channel) handleAppMention(ctx context.Context, ev *slackevents.AppMenti
 // Stop stops the Slack Socket Mode.
 func (c *Channel) Stop(_ context.Context) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if !c.started {
+		c.mu.Unlock()
 		return nil
 	}
 
 	if c.cancel != nil {
 		c.cancel()
 	}
-
 	c.started = false
 	c.handler = nil
 	c.client = nil
 	c.socket = nil
+	c.mu.Unlock()
+
+	// Wait for goroutines to exit after releasing lock
+	c.wg.Wait()
 	return nil
 }
 

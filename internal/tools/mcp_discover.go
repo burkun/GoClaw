@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/logging"
 )
 
 // MCPToolDefinition represents a single tool from MCP tools/list.
@@ -71,7 +72,7 @@ func (c *MCPDiscoveryClient) DiscoverAllTools(ctx context.Context) ([]Discovered
 		tools, err := c.discoverServerTools(ctx, serverName, serverCfg)
 		if err != nil {
 			// Log error but continue with other servers.
-			fmt.Printf("[MCP Discovery] Failed to discover tools from %s: %v\n", serverName, err)
+			logging.Warn("[MCP Discovery] Failed to discover tools", "server", serverName, "error", err)
 			continue
 		}
 		allTools = append(allTools, tools...)
@@ -224,18 +225,22 @@ func (t *MCPSpecificTool) Execute(ctx context.Context, input string) (string, er
 }
 
 // BuildDiscoveredMCPTools discovers tools from all enabled MCP servers and returns them as Tools.
-func BuildDiscoveredMCPTools(cfg *config.AppConfig) []Tool {
+// If ctx is nil, a default timeout context is created.
+func BuildDiscoveredMCPToolsWithContext(ctx context.Context, cfg *config.AppConfig) []Tool {
 	if cfg == nil {
 		return nil
 	}
 
-	client := NewMCPDiscoveryClient(cfg)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	var cancel context.CancelFunc
+	if ctx == nil {
+		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+	}
 
+	client := NewMCPDiscoveryClient(cfg)
 	discovered, err := client.DiscoverAllTools(ctx)
 	if err != nil {
-		fmt.Printf("[MCP Discovery] Error discovering tools: %v\n", err)
+		logging.Error("[MCP Discovery] Error discovering tools", "error", err)
 		return nil
 	}
 
@@ -245,6 +250,12 @@ func BuildDiscoveredMCPTools(cfg *config.AppConfig) []Tool {
 	}
 
 	return tools
+}
+
+// BuildDiscoveredMCPTools discovers tools from all enabled MCP servers and returns them as Tools.
+// Deprecated: Use BuildDiscoveredMCPToolsWithContext for proper context propagation.
+func BuildDiscoveredMCPTools(cfg *config.AppConfig) []Tool {
+	return BuildDiscoveredMCPToolsWithContext(nil, cfg)
 }
 
 // Ensure MCPSpecificTool implements Tool interface.

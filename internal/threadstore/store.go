@@ -87,8 +87,8 @@ type Store interface {
 // -----------------------------------------------------------------------------
 
 const (
-	indexFileName    = "index.json"
-	stateFileName    = "state.json"
+	indexFileName     = "index.json"
+	stateFileName     = "state.json"
 	defaultThreadsDir = ".goclaw/threads"
 )
 

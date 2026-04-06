@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/bookerbai/goclaw/internal/agentconfig"
 	"github.com/bookerbai/goclaw/internal/config"
 	einoruntime "github.com/bookerbai/goclaw/internal/eino"
+	"github.com/bookerbai/goclaw/internal/logging"
 	basemw "github.com/bookerbai/goclaw/internal/middleware"
 	auditmw "github.com/bookerbai/goclaw/internal/middleware/audit"
 	clarificationmw "github.com/bookerbai/goclaw/internal/middleware/clarification"
@@ -250,11 +250,11 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 		if agentLoader.AgentExists(agentName) {
 			agentCfg, err := agentLoader.LoadConfig(agentName)
 			if err != nil {
-				log.Printf("[WARN] failed to load agent config for %s: %v, using default", agentName, err)
+				logging.Warn("failed to load agent config, using default", "agent", agentName, "error", err)
 			} else {
 				// Override model if specified
 				if agentCfg.Model != "" {
-					log.Printf("[INFO] agent %s using model: %s", agentName, agentCfg.Model)
+					logging.Info("agent using model", "agent", agentName, "model", agentCfg.Model)
 				}
 
 				// Store skills and tool groups for filtering
@@ -265,10 +265,10 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 			// Load SOUL.md
 			if soul, err := agentLoader.LoadSoul(agentName); err == nil {
 				agentSoul = soul
-				log.Printf("[INFO] loaded SOUL.md for agent %s (%d bytes)", agentName, len(soul))
+				logging.Info("loaded SOUL.md for agent", "agent", agentName, "bytes", len(soul))
 			}
 		} else {
-			log.Printf("[WARN] agent %s not found in file system, using default config", agentName)
+			logging.Warn("agent not found in file system, using default config", "agent", agentName)
 		}
 	}
 
@@ -346,7 +346,7 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 	if len(agentSkills) > 0 {
 		// Filter by per-agent skills
 		allowedTools = filterSkillsByName(loadedSkills, agentSkills)
-		log.Printf("[INFO] agent %s: filtered to %d skills: %v", agentName, len(agentSkills), agentSkills)
+		logging.Info("agent: filtered skills", "agent", agentName, "count", len(agentSkills), "skills", agentSkills)
 	}
 	if len(allowedTools) > 0 {
 		tools, err = filterToolsByAllowed(ctx, tools, allowedTools)
@@ -361,7 +361,7 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 		if err != nil {
 			return nil, fmt.Errorf("agent.NewWithName: apply tool groups failed: %w", err)
 		}
-		log.Printf("[INFO] agent %s: filtered to %d tool groups: %v", agentName, len(agentToolGroups), agentToolGroups)
+		logging.Info("agent: filtered tool groups", "agent", agentName, "count", len(agentToolGroups), "groups", agentToolGroups)
 	}
 
 	mws := buildMiddlewares(RunConfig{AgentName: agentName})
@@ -885,7 +885,7 @@ func buildSandboxProvider(appCfg *config.AppConfig) sandbox.SandboxProvider {
 		if appCfg != nil && appCfg.Sandbox.StrictDocker {
 			panic(fmt.Sprintf("sandbox.use=docker requested and strict_docker=true, but docker provider init failed: %v", err))
 		}
-		log.Printf("[WARN] sandbox.use=docker requested but docker provider init failed, falling back to local sandbox: %v", err)
+		logging.Warn("sandbox.use=docker requested but docker provider init failed, falling back to local sandbox", "error", err)
 	}
 	return localsandbox.NewLocalSandboxProvider(sbCfg, sbCfg.WorkDir, skillsPath)
 }

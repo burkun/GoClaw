@@ -15,6 +15,8 @@ import (
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/bookerbai/goclaw/internal/logging"
 )
 
 // EinoMiddlewareAdapter adapts a Middleware to adk.ChatModelAgentMiddleware.
@@ -82,8 +84,11 @@ func (a *EinoMiddlewareAdapter) AfterModelRewriteState(ctx context.Context, stat
 
 	if err := a.mw.AfterModel(ctx, mwState, resp); err != nil {
 		// After errors are non-fatal, log them but continue
-		// TODO: use proper logging
-		_ = err
+		logging.Warn("middleware AfterModel error (non-fatal)",
+			"middleware", a.mw.Name(),
+			"error", err,
+			"thread_id", mwState.ThreadID,
+		)
 	}
 
 	// Apply state changes back to adk state
@@ -103,7 +108,13 @@ func (a *EinoMiddlewareAdapter) AfterAgent(ctx context.Context, runCtx *adk.Chat
 	resp := toMiddlewareResponseFromADK(state)
 
 	// AfterAgent errors are non-fatal
-	_ = a.mw.AfterAgent(ctx, mwState, resp)
+	if err := a.mw.AfterAgent(ctx, mwState, resp); err != nil {
+		logging.Warn("middleware AfterAgent error (non-fatal)",
+			"middleware", a.mw.Name(),
+			"error", err,
+			"thread_id", mwState.ThreadID,
+		)
+	}
 
 	return nil
 }

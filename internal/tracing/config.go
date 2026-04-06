@@ -4,12 +4,13 @@ package tracing
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/callbacks"
+
+	"github.com/bookerbai/goclaw/internal/logging"
 )
 
 // TracingConfig holds configuration for all supported tracing providers.
@@ -185,7 +186,7 @@ func BuildHandlers() ([]*Handler, error) {
 	// Build Langfuse handler if configured
 	if cfg.Langfuse != nil && cfg.Langfuse.IsConfigured() {
 		if langfuseHandlerCreator == nil {
-			slog.Warn("langfuse tracing enabled but eino-ext/callbacks/langfuse not available. Install the dependency or disable LANGFUSE_TRACING.")
+			logging.Warn("langfuse tracing enabled but eino-ext/callbacks/langfuse not available. Install the dependency or disable LANGFUSE_TRACING.")
 		} else {
 			handler, flush, err := langfuseHandlerCreator(cfg.Langfuse)
 			if err != nil {
@@ -195,7 +196,7 @@ func BuildHandlers() ([]*Handler, error) {
 				Handler: handler,
 				Flush:   flush,
 			})
-			slog.Info("langfuse tracing enabled", "host", cfg.Langfuse.Host)
+			logging.Info("langfuse tracing enabled", "host", cfg.Langfuse.Host)
 		}
 	}
 
@@ -222,7 +223,7 @@ func AppendGlobalCallbacks() error {
 func FlushAll() {
 	cfg := GetTracingConfig()
 	if cfg.Langfuse != nil && cfg.Langfuse.IsConfigured() {
-		slog.Debug("flushing langfuse traces")
+		logging.Debug("flushing langfuse traces")
 	}
 }
 
@@ -233,24 +234,24 @@ func FlushAll() {
 // langfuseHandlerConfig mirrors the eino-ext langfuse.Config structure.
 // We define it locally to avoid a hard dependency on eino-ext.
 type langfuseHandlerConfig struct {
-	Host            string
-	PublicKey       string
-	SecretKey       string
-	Threads         int
-	Timeout         time.Duration
+	Host             string
+	PublicKey        string
+	SecretKey        string
+	Threads          int
+	Timeout          time.Duration
 	MaxTaskQueueSize int
-	FlushAt         int
-	FlushInterval   time.Duration
-	SampleRate      float64
-	LogMessage      string
-	MaskFunc        func(string) string
-	MaxRetry        uint64
-	Name            string
-	UserID          string
-	SessionID       string
-	Release         string
-	Tags            []string
-	Public          bool
+	FlushAt          int
+	FlushInterval    time.Duration
+	SampleRate       float64
+	LogMessage       string
+	MaskFunc         func(string) string
+	MaxRetry         uint64
+	Name             string
+	UserID           string
+	SessionID        string
+	Release          string
+	Tags             []string
+	Public           bool
 }
 
 // initLangfuseHandler creates a Langfuse handler when eino-ext is available.

@@ -8,9 +8,9 @@ package guardrail
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 
+	"github.com/bookerbai/goclaw/internal/logging"
 	"github.com/bookerbai/goclaw/internal/middleware"
 )
 
@@ -78,7 +78,7 @@ type GuardrailMiddleware struct {
 func NewGuardrailMiddleware(cfg Config) *GuardrailMiddleware {
 	// Ensure FailClosed defaults to true for safety.
 	if cfg.Enabled && !cfg.FailClosed {
-		slog.Warn("guardrail: fail_closed is false, provider errors will allow tool calls")
+		logging.Warn("guardrail: fail_closed is false, provider errors will allow tool calls")
 	}
 	return &GuardrailMiddleware{cfg: cfg}
 }
@@ -132,7 +132,7 @@ func (m *GuardrailMiddleware) WrapToolCall(ctx context.Context, state *middlewar
 	decision, err := m.evaluateWithProvider(ctx, req)
 	if err != nil {
 		// Provider error - handle based on fail_closed setting.
-		slog.Error("guardrail: provider evaluation error", "tool", toolCall.Name, "error", err)
+		logging.Error("guardrail: provider evaluation error", "tool", toolCall.Name, "error", err)
 		if m.cfg.FailClosed {
 			// Fail closed: deny the call.
 			return m.buildDeniedResult(toolCall, GuardrailDecision{
@@ -144,18 +144,18 @@ func (m *GuardrailMiddleware) WrapToolCall(ctx context.Context, state *middlewar
 			}), nil
 		}
 		// Fail open: allow the call with a warning.
-		slog.Warn("guardrail: fail_open is set, allowing tool call despite provider error", "tool", toolCall.Name)
+		logging.Warn("guardrail: fail_open is set, allowing tool call despite provider error", "tool", toolCall.Name)
 		return handler(ctx, toolCall)
 	}
 
 	// If allowed, execute the actual tool handler.
 	if decision.Allow {
-		slog.Debug("guardrail: tool call allowed", "tool", toolCall.Name, "policy", decision.PolicyID)
+		logging.Debug("guardrail: tool call allowed", "tool", toolCall.Name, "policy", decision.PolicyID)
 		return handler(ctx, toolCall)
 	}
 
 	// Denied: return an error ToolResult without executing the tool.
-	slog.Warn("guardrail: tool call denied",
+	logging.Warn("guardrail: tool call denied",
 		"tool", toolCall.Name,
 		"policy", decision.PolicyID,
 		"code", m.firstReasonCode(decision),
@@ -182,7 +182,7 @@ func (m *GuardrailMiddleware) buildRequest(state *middleware.State, toolCall *mi
 		AgentID:    m.cfg.Passport,
 		ThreadID:   threadID,
 		IsSubagent: isSubagent,
-		Timestamp:  strings.ReplaceAll(strings.ReplaceAll(
+		Timestamp: strings.ReplaceAll(strings.ReplaceAll(
 			strings.Split(fmt.Sprintf("%v", toolCall), " ")[0], "[", ""), "]", ""),
 	}
 }

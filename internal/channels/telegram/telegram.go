@@ -4,13 +4,13 @@ package telegram
 import (
 	"context"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/bookerbai/goclaw/internal/channels"
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/internal/logging"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
@@ -53,7 +53,7 @@ func (c *Channel) Start(ctx context.Context, handler channels.MessageHandler) er
 	}
 
 	bot.Debug = false
-	log.Printf("[Telegram] Authorized on account %s", bot.Self.UserName)
+	logging.Info("[Telegram] Authorized on account", "username", bot.Self.UserName)
 
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -94,7 +94,7 @@ func (c *Channel) pollUpdates(ctx context.Context) {
 				return
 			}
 			if err := c.handleUpdate(ctx, update); err != nil {
-				log.Printf("[Telegram] Error handling update: %v", err)
+				logging.Error("[Telegram] Error handling update", "error", err)
 			}
 		}
 	}

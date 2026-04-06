@@ -36,12 +36,12 @@ type imageSearchInput struct {
 
 // ImageSearchResult represents a single image search result.
 type ImageSearchResult struct {
-	Title       string `json:"title"`
-	ImageURL    string `json:"image_url"`
+	Title        string `json:"title"`
+	ImageURL     string `json:"image_url"`
 	ThumbnailURL string `json:"thumbnail_url"`
-	SourceURL   string `json:"source_url"`
-	Width       int    `json:"width,omitempty"`
-	Height      int    `json:"height,omitempty"`
+	SourceURL    string `json:"source_url"`
+	Width        int    `json:"width,omitempty"`
+	Height       int    `json:"height,omitempty"`
 }
 
 func (t *ImageSearchTool) Name() string { return "image_search" }
@@ -144,12 +144,12 @@ func (t *ImageSearchTool) searchDuckDuckGo(ctx context.Context, query string) ([
 			} `json:"Icon"`
 		} `json:"RelatedTopics"`
 		ImageResults []struct {
-			Text     string `json:"text"`
-			Image    string `json:"image"`
+			Text      string `json:"text"`
+			Image     string `json:"image"`
 			Thumbnail string `json:"thumbnail"`
-			URL      string `json:"url"`
-			Width    int    `json:"width"`
-			Height   int    `json:"height"`
+			URL       string `json:"url"`
+			Width     int    `json:"width"`
+			Height    int    `json:"height"`
 		} `json:"ImageResults"`
 	}
 

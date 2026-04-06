@@ -3,6 +3,8 @@ package channels
 import (
 	"context"
 	"sync"
+
+	"github.com/bookerbai/goclaw/internal/logging"
 )
 
 // OutboundHandler handles one outbound message event.
@@ -17,6 +19,9 @@ type MessageBus struct {
 	outboundMu          sync.RWMutex
 	outboundSubscribers map[int]OutboundHandler
 	outboundNextID      int
+
+	// wg tracks active outbound handler goroutines for graceful shutdown
+	wg sync.WaitGroup
 }
 
 // NewMessageBus creates an empty bus.
@@ -58,7 +63,8 @@ func (b *MessageBus) Publish(msg IncomingMessage) {
 		select {
 		case ch <- msg:
 		default:
-			// Drop when subscriber channel is full.
+			// Drop when subscriber channel is full and log for visibility
+			logging.Warn("[MessageBus] subscriber channel full, message dropped", "channel", msg.Channel, "chat_id", msg.ChatID)
 		}
 	}
 }
@@ -93,8 +99,18 @@ func (b *MessageBus) PublishOutbound(ctx context.Context, msg OutgoingMessage) {
 
 	for _, handler := range handlers {
 		h := handler
+		b.wg.Add(1)
 		go func() {
-			_ = h(ctx, msg)
+			defer b.wg.Done()
+			if err := h(ctx, msg); err != nil {
+				logging.Error("[MessageBus] outbound handler error", "error", err)
+			}
 		}()
 	}
+}
+
+// Wait waits for all outbound handler goroutines to complete.
+// This should be called during shutdown to ensure graceful termination.
+func (b *MessageBus) Wait() {
+	b.wg.Wait()
 }
