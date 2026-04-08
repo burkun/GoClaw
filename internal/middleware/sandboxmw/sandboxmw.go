@@ -16,6 +16,7 @@ import (
 	"github.com/bookerbai/goclaw/internal/logging"
 	"github.com/bookerbai/goclaw/internal/middleware"
 	"github.com/bookerbai/goclaw/internal/sandbox"
+	"github.com/bookerbai/goclaw/pkg/errors"
 )
 
 // SandboxMiddleware acquires a sandbox on BeforeAgent and releases it on AfterAgent.
@@ -43,12 +44,12 @@ func (m *SandboxMiddleware) BeforeAgent(ctx context.Context, state *middleware.S
 
 	sandboxID, err := m.provider.Acquire(ctx, state.ThreadID)
 	if err != nil {
-		return fmt.Errorf("sandboxmw: acquire failed: %w", err)
+		return errors.WrapInternalError(err, "sandboxmw: acquire failed")
 	}
 
 	sb := m.provider.Get(sandboxID)
 	if sb == nil {
-		return fmt.Errorf("sandboxmw: sandbox %s not found after acquire", sandboxID)
+		return errors.NotFoundError(fmt.Sprintf("sandbox %s after acquire", sandboxID))
 	}
 
 	if state.Extra == nil {

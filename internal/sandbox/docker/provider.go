@@ -24,6 +24,23 @@ import (
 	"github.com/bookerbai/goclaw/internal/sandbox"
 )
 
+// Default docker client creation function - can be overridden in tests
+var (
+	defaultNewDockerClient = func() (DockerClient, error) {
+		cli, err := dockerclient.NewClientWithOpts(
+			dockerclient.FromEnv,
+			dockerclient.WithAPIVersionNegotiation(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		return &dockerClientWrapper{
+			client:        cli,
+			isErrNotFound: dockerclient.IsErrNotFound,
+		}, nil
+	}
+)
+
 // Additional default configuration values for provider (specific to warm-pool)
 const (
 	defaultReplicas   = 3
@@ -43,7 +60,7 @@ type DockerSandboxProvider struct {
 	mu      sync.Mutex
 	cfg     sandbox.SandboxConfig
 	baseDir string // host root for thread volume directories
-	client  *dockerclient.Client
+	client  DockerClient
 
 	// Active sandboxes (in use by threads)
 	sandboxes map[string]*DockerSandbox // sandbox_id -> sandbox
@@ -76,6 +93,9 @@ type DockerSandboxProvider struct {
 
 	// Shutdown flag
 	shutdownCalled bool
+
+	// newClient is an optional function to create a DockerClient (for testing)
+	newClient func() (DockerClient, error)
 }
 
 // NewDockerSandboxProvider creates a DockerSandboxProvider with warm-pool support.
@@ -85,10 +105,7 @@ type DockerSandboxProvider struct {
 //   - ContainerTTL: idle timeout (default: 10 minutes, 0 to disable)
 //   - Replicas: max concurrent containers (default: 3)
 func NewDockerSandboxProvider(cfg sandbox.SandboxConfig, baseDir string) (*DockerSandboxProvider, error) {
-	cli, err := dockerclient.NewClientWithOpts(
-		dockerclient.FromEnv,
-		dockerclient.WithAPIVersionNegotiation(),
-	)
+	cli, err := newDefaultDockerClient()
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
@@ -125,6 +142,7 @@ func NewDockerSandboxProvider(cfg sandbox.SandboxConfig, baseDir string) (*Docke
 		replicas:        replicas,
 		idleTimeout:     idleTimeout,
 		stopWatchdog:    cancel,
+		newClient:       newDefaultDockerClient,
 	}
 
 	// Start idle checker if enabled
@@ -270,7 +288,7 @@ func (p *DockerSandboxProvider) acquireInternal(ctx context.Context, threadID st
 
 	// Container discovery: another process may have created the container
 	inspect, err := p.client.ContainerInspect(ctx, sandboxID)
-	if err == nil && inspect.State.Running {
+	if err == nil && inspect.State != nil && inspect.State.Running {
 		// Container exists and is running - reclaim it
 		threadBaseDir := filepath.Join(p.baseDir, "threads", threadID, "user-data")
 		sb := &DockerSandbox{
@@ -600,6 +618,11 @@ func (p *DockerSandboxProvider) cleanupIdleSandboxes(ctx context.Context) {
 	for _, id := range activeEvict {
 		_ = p.destroySandbox(ctx, id)
 	}
+}
+
+// newDefaultDockerClient creates a new real Docker client
+func newDefaultDockerClient() (DockerClient, error) {
+	return defaultNewDockerClient()
 }
 
 // Ensure DockerSandboxProvider satisfies sandbox.SandboxProvider at compile time.

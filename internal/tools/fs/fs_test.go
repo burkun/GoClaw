@@ -386,3 +386,525 @@ func TestWriteFile_ConcurrentAppend_NoDataLoss(t *testing.T) {
 		t.Fatalf("expected %d lines, got %d; content=%q", workers, len(lines), content)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ReadFileTool method tests
+// ---------------------------------------------------------------------------
+
+func TestReadFileTool_Name(t *testing.T) {
+	tool := &fs.ReadFileTool{}
+	if tool.Name() != "read_file" {
+		t.Errorf("expected name 'read_file', got %q", tool.Name())
+	}
+}
+
+func TestReadFileTool_Description(t *testing.T) {
+	tool := &fs.ReadFileTool{}
+	if tool.Description() == "" {
+		t.Error("expected non-empty description")
+	}
+}
+
+func TestReadFileTool_InputSchema(t *testing.T) {
+	tool := &fs.ReadFileTool{}
+	schema := tool.InputSchema()
+	if len(schema) == 0 {
+		t.Error("expected non-empty input schema")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// WriteFileTool method tests
+// ---------------------------------------------------------------------------
+
+func TestWriteFileTool_Name(t *testing.T) {
+	tool := &fs.WriteFileTool{}
+	if tool.Name() != "write_file" {
+		t.Errorf("expected name 'write_file', got %q", tool.Name())
+	}
+}
+
+func TestWriteFileTool_Description(t *testing.T) {
+	tool := &fs.WriteFileTool{}
+	if tool.Description() == "" {
+		t.Error("expected non-empty description")
+	}
+}
+
+func TestWriteFileTool_InputSchema(t *testing.T) {
+	tool := &fs.WriteFileTool{}
+	schema := tool.InputSchema()
+	if len(schema) == 0 {
+		t.Error("expected non-empty input schema")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// EditFileTool tests
+// ---------------------------------------------------------------------------
+
+func TestEditFileTool_Name(t *testing.T) {
+	tool := &fs.EditFileTool{}
+	if tool.Name() != "edit_file" {
+		t.Errorf("expected name 'edit_file', got %q", tool.Name())
+	}
+}
+
+func TestEditFileTool_Description(t *testing.T) {
+	tool := &fs.EditFileTool{}
+	if tool.Description() == "" {
+		t.Error("expected non-empty description")
+	}
+}
+
+func TestEditFileTool_InputSchema(t *testing.T) {
+	tool := &fs.EditFileTool{}
+	schema := tool.InputSchema()
+	if len(schema) == 0 {
+		t.Error("expected non-empty input schema")
+	}
+}
+
+func TestEditFileTool_Execute_Success(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.EditFileTool{Paths: paths}
+
+	// Write initial file
+	hostFile := filepath.Join(paths.WorkspacePath, "edit.txt")
+	writeHostFile(t, hostFile, "Hello World\n")
+
+	input := makeInput(t, map[string]any{
+		"description": "edit file",
+		"path":        "/mnt/user-data/workspace/edit.txt",
+		"old_str":     "World",
+		"new_str":     "GoClaw",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if got != "OK" {
+		t.Errorf("Execute: got %q, want OK", got)
+	}
+
+	// Verify content
+	content := readHostFile(t, hostFile)
+	if content != "Hello GoClaw\n" {
+		t.Errorf("content: got %q, want %q", content, "Hello GoClaw\n")
+	}
+}
+
+func TestEditFileTool_Execute_ReplaceAll(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.EditFileTool{Paths: paths}
+
+	hostFile := filepath.Join(paths.WorkspacePath, "replace.txt")
+	writeHostFile(t, hostFile, "foo foo foo\n")
+
+	input := makeInput(t, map[string]any{
+		"description": "replace all",
+		"path":        "/mnt/user-data/workspace/replace.txt",
+		"old_str":     "foo",
+		"new_str":     "bar",
+		"replace_all": true,
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if got != "OK" {
+		t.Errorf("Execute: got %q, want OK", got)
+	}
+
+	content := readHostFile(t, hostFile)
+	if content != "bar bar bar\n" {
+		t.Errorf("content: got %q", content)
+	}
+}
+
+func TestEditFileTool_Execute_OldStrNotFound(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.EditFileTool{Paths: paths}
+
+	hostFile := filepath.Join(paths.WorkspacePath, "notfound.txt")
+	writeHostFile(t, hostFile, "Hello World\n")
+
+	input := makeInput(t, map[string]any{
+		"description": "edit file",
+		"path":        "/mnt/user-data/workspace/notfound.txt",
+		"old_str":     "NotExist",
+		"new_str":     "New",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if len(got) < 5 || got[:5] != "Error" {
+		t.Errorf("expected error string, got %q", got)
+	}
+}
+
+func TestEditFileTool_Execute_MultipleWithoutReplaceAll(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.EditFileTool{Paths: paths}
+
+	hostFile := filepath.Join(paths.WorkspacePath, "multiple.txt")
+	writeHostFile(t, hostFile, "foo foo foo\n")
+
+	input := makeInput(t, map[string]any{
+		"description": "edit file",
+		"path":        "/mnt/user-data/workspace/multiple.txt",
+		"old_str":     "foo",
+		"new_str":     "bar",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if len(got) < 5 || got[:5] != "Error" {
+		t.Errorf("expected error string for multiple matches, got %q", got)
+	}
+}
+
+func TestEditFileTool_Execute_FileNotFound(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.EditFileTool{Paths: paths}
+
+	input := makeInput(t, map[string]any{
+		"description": "edit missing file",
+		"path":        "/mnt/user-data/workspace/missing.txt",
+		"old_str":     "old",
+		"new_str":     "new",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if len(got) < 5 || got[:5] != "Error" {
+		t.Errorf("expected error string, got %q", got)
+	}
+}
+
+func TestEditFileTool_Execute_InvalidJSON(t *testing.T) {
+	tool := &fs.EditFileTool{}
+	_, err := tool.Execute(context.Background(), `{invalid json`)
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestEditFileTool_Execute_PathTraversal(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.EditFileTool{Paths: paths}
+
+	input := makeInput(t, map[string]any{
+		"description": "traversal attempt",
+		"path":        "/mnt/user-data/workspace/../../etc/passwd",
+		"old_str":     "old",
+		"new_str":     "new",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if len(got) < 5 || got[:5] != "Error" {
+		t.Errorf("expected error string for path traversal, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ListDirTool tests
+// ---------------------------------------------------------------------------
+
+func TestListDirTool_Name(t *testing.T) {
+	tool := &fs.ListDirTool{}
+	if tool.Name() != "list_dir" {
+		t.Errorf("expected name 'list_dir', got %q", tool.Name())
+	}
+}
+
+func TestListDirTool_Description(t *testing.T) {
+	tool := &fs.ListDirTool{}
+	if tool.Description() == "" {
+		t.Error("expected non-empty description")
+	}
+}
+
+func TestListDirTool_InputSchema(t *testing.T) {
+	tool := &fs.ListDirTool{}
+	schema := tool.InputSchema()
+	if len(schema) == 0 {
+		t.Error("expected non-empty input schema")
+	}
+}
+
+func TestListDirTool_Execute_Success(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.ListDirTool{Paths: paths}
+
+	// Create test structure
+	writeHostFile(t, filepath.Join(paths.WorkspacePath, "file1.txt"), "content1")
+	writeHostFile(t, filepath.Join(paths.WorkspacePath, "file2.txt"), "content2")
+	os.MkdirAll(filepath.Join(paths.WorkspacePath, "subdir"), 0o755)
+	writeHostFile(t, filepath.Join(paths.WorkspacePath, "subdir", "file3.txt"), "content3")
+
+	input := makeInput(t, map[string]any{
+		"description": "list workspace",
+		"path":        "/mnt/user-data/workspace",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+
+	// Check output contains expected items
+	if !strings.Contains(got, "file1.txt") {
+		t.Error("expected output to contain file1.txt")
+	}
+	if !strings.Contains(got, "file2.txt") {
+		t.Error("expected output to contain file2.txt")
+	}
+	if !strings.Contains(got, "subdir/") {
+		t.Error("expected output to contain subdir/")
+	}
+}
+
+func TestListDirTool_Execute_EmptyDirectory(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.ListDirTool{Paths: paths}
+
+	input := makeInput(t, map[string]any{
+		"description": "list empty workspace",
+		"path":        "/mnt/user-data/workspace",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if got != "(empty)" {
+		t.Errorf("expected '(empty)', got %q", got)
+	}
+}
+
+func TestListDirTool_Execute_DirectoryNotFound(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.ListDirTool{Paths: paths}
+
+	input := makeInput(t, map[string]any{
+		"description": "list missing directory",
+		"path":        "/mnt/user-data/workspace/notexist",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if len(got) < 5 || got[:5] != "Error" {
+		t.Errorf("expected error string, got %q", got)
+	}
+}
+
+func TestListDirTool_Execute_InvalidJSON(t *testing.T) {
+	tool := &fs.ListDirTool{}
+	_, err := tool.Execute(context.Background(), `{invalid json`)
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestListDirTool_Execute_PathTraversal(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.ListDirTool{Paths: paths}
+
+	input := makeInput(t, map[string]any{
+		"description": "traversal attempt",
+		"path":        "/mnt/user-data/workspace/../../etc",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if len(got) < 5 || got[:5] != "Error" {
+		t.Errorf("expected error string for path traversal, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// maskHostPaths tests
+// ---------------------------------------------------------------------------
+
+func TestMaskHostPaths(t *testing.T) {
+	// Verify the VirtualPathPrefix constant
+	if fs.VirtualPathPrefix != "/mnt/user-data" {
+		t.Errorf("VirtualPathPrefix: got %q, want /mnt/user-data", fs.VirtualPathPrefix)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// pathThreadID tests
+// ---------------------------------------------------------------------------
+
+func TestPathThreadID(t *testing.T) {
+	// Test through WriteFileTool behavior
+	paths1, cleanup1 := newTestPaths(t)
+	defer cleanup1()
+	paths1.ThreadID = "custom-thread"
+
+	tool := &fs.WriteFileTool{Paths: paths1}
+	input := makeInput(t, map[string]any{
+		"description": "test",
+		"path":        "/mnt/user-data/workspace/test.txt",
+		"content":     "test",
+	})
+
+	_, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Errorf("Execute failed: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional ReadFileTool tests
+// ---------------------------------------------------------------------------
+
+func TestReadFileTool_Execute_InvalidJSON(t *testing.T) {
+	tool := &fs.ReadFileTool{}
+	_, err := tool.Execute(context.Background(), `{invalid json`)
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestReadFileTool_Execute_PermissionDenied(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("skipping as root")
+	}
+
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.ReadFileTool{Paths: paths}
+
+	// Create a file with no read permissions
+	hostFile := filepath.Join(paths.WorkspacePath, "noperm.txt")
+	writeHostFile(t, hostFile, "secret")
+	os.Chmod(hostFile, 0o000)
+
+	input := makeInput(t, map[string]any{
+		"description": "read no perm",
+		"path":        "/mnt/user-data/workspace/noperm.txt",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if len(got) < 5 || got[:5] != "Error" {
+		t.Errorf("expected error string, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional WriteFileTool tests
+// ---------------------------------------------------------------------------
+
+func TestWriteFileTool_Execute_InvalidJSON(t *testing.T) {
+	tool := &fs.WriteFileTool{}
+	_, err := tool.Execute(context.Background(), `{invalid json`)
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestWriteFileTool_Execute_CreateDirectories(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	tool := &fs.WriteFileTool{Paths: paths}
+
+	input := makeInput(t, map[string]any{
+		"description": "write nested",
+		"path":        "/mnt/user-data/workspace/nested/deep/file.txt",
+		"content":     "nested content",
+	})
+
+	got, err := tool.Execute(context.Background(), input)
+	if err != nil {
+		t.Fatalf("Execute: unexpected error: %v", err)
+	}
+	if got != "OK" {
+		t.Errorf("Execute: got %q, want OK", got)
+	}
+
+	// Verify file was created
+	hostFile := filepath.Join(paths.WorkspacePath, "nested", "deep", "file.txt")
+	content := readHostFile(t, hostFile)
+	if content != "nested content" {
+		t.Errorf("content: got %q", content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// validateResolvedPath edge cases
+// ---------------------------------------------------------------------------
+
+func TestResolveVirtualPath_EdgeCases(t *testing.T) {
+	paths, cleanup := newTestPaths(t)
+	defer cleanup()
+
+	// Test exact path match (no trailing slash)
+	got, err := fs.ResolveVirtualPath("/mnt/user-data/workspace", paths)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if got != paths.WorkspacePath {
+		t.Errorf("got %q, want %q", got, paths.WorkspacePath)
+	}
+
+	// Test uploads
+	got, err = fs.ResolveVirtualPath("/mnt/user-data/uploads/test.txt", paths)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !filepath.HasPrefix(got, paths.UploadsPath) {
+		t.Errorf("got %q, expected under %q", got, paths.UploadsPath)
+	}
+
+	// Test outputs
+	got, err = fs.ResolveVirtualPath("/mnt/user-data/outputs/test.txt", paths)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !filepath.HasPrefix(got, paths.OutputsPath) {
+		t.Errorf("got %q, expected under %q", got, paths.OutputsPath)
+	}
+}

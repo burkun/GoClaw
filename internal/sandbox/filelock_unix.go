@@ -4,10 +4,11 @@
 package sandbox
 
 import (
-	"fmt"
 	"os"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/bookerbai/goclaw/pkg/errors"
 )
 
 // tryAcquireFileLockPlatform acquires an exclusive lock on Unix/Linux/macOS using flock.
@@ -16,7 +17,7 @@ func tryAcquireFileLockPlatform(file *os.File) error {
 	// LOCK_NB: non-blocking (we handle blocking in the caller)
 	err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 	if err != nil {
-		return fmt.Errorf("flock: %w", err)
+		return errors.WrapInternalError(err, "flock")
 	}
 	return nil
 }
@@ -25,7 +26,7 @@ func tryAcquireFileLockPlatform(file *os.File) error {
 func releaseFileLockPlatform(file *os.File) error {
 	err := unix.Flock(int(file.Fd()), unix.LOCK_UN)
 	if err != nil {
-		return fmt.Errorf("unlock flock: %w", err)
+		return errors.WrapInternalError(err, "unlock flock")
 	}
 	return nil
 }

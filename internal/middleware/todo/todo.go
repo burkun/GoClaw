@@ -93,25 +93,11 @@ func (t *TodoMiddleware) Name() string { return "TodoMiddleware" }
 // BeforeModel runs before model invocation and handles two concerns:
 //
 // A. Tool injection (always when PlanMode is true):
-//  1. If state.PlanMode is false, return nil (no-op).
-//  2. Find or create the system message in state.Messages.
-//  3. Append writeToolsAnnotation to the system message content so the model
-//     knows write_todos is available.
 //
 // B. Context-loss reminder:
-//  1. If state.Todos is empty, skip.
-//  2. Check whether any recent message in state.Messages contains a
-//     write_todos tool call (todosInMessages). If yes, skip.
-//  3. Check whether a reminder message is already present (reminderInMessages).
-//     If yes, skip (avoid duplicate injections).
-//  4. Format the current Todos as a bullet list.
-//  5. Inject a HumanMessage (role="human", name="todo_reminder") with the
-//     formatted reminderTemplate content.
 func (t *TodoMiddleware) BeforeModel(ctx context.Context, state *middleware.State) error {
 	// --- Part A: tool annotation ---
 	if state.PlanMode {
-		// TODO: find system message and append writeToolsAnnotation.
-		//       Create a system message if none exists.
 		injectAnnotation(state)
 	}
 

@@ -2,11 +2,12 @@ package summarize
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/bookerbai/goclaw/pkg/errors"
 )
 
 // EinoSummarizer adapts an Eino BaseChatModel to Summarizer.
@@ -22,7 +23,7 @@ func NewEinoSummarizer(chatModel model.BaseChatModel) *EinoSummarizer {
 // Summarize implements Summarizer.
 func (s *EinoSummarizer) Summarize(ctx context.Context, history string) (string, error) {
 	if s == nil || s.chatModel == nil {
-		return "", fmt.Errorf("summarizer: chat model is nil")
+		return "", errors.ConfigError("summarizer: chat model is nil")
 	}
 	resp, err := s.chatModel.Generate(ctx, []*schema.Message{
 		schema.SystemMessage("Summarize conversation context while preserving decisions, constraints, and user preferences."),
@@ -32,7 +33,7 @@ func (s *EinoSummarizer) Summarize(ctx context.Context, history string) (string,
 		return "", err
 	}
 	if resp == nil {
-		return "", fmt.Errorf("summarizer: empty model response")
+		return "", errors.InternalError("summarizer: empty model response")
 	}
 	return strings.TrimSpace(resp.Content), nil
 }

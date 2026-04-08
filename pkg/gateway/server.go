@@ -99,6 +99,9 @@ func (s *Server) registerMiddleware() {
 	// Structured logger: logs method, path, status, latency for every request.
 	s.router.Use(gin.Logger())
 
+	// Prometheus metrics: collect HTTP request metrics.
+	s.router.Use(handlers.PrometheusMiddleware())
+
 	// CORS: allow all origins in development; use allowlist when configured.
 	corsConfig := cors.Config{
 		AllowAllOrigins:  true,
@@ -237,10 +240,17 @@ func (s *Server) registerRoutes() {
 		lg.POST("/runs/stream", langgraphH.StreamRunStandalone)
 	}
 
-	// Health check endpoint.
-	s.router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "healthy", "service": "goclaw-gateway"})
-	})
+	// Health and metrics endpoints.
+	metricsH := handlers.NewMetricsHandler()
+	healthH := handlers.NewHealthHandler()
+
+	// Prometheus metrics endpoint.
+	s.router.GET("/metrics", metricsH.PrometheusHandler())
+
+	// Health check endpoints.
+	s.router.GET("/health", healthH.Health)
+	s.router.GET("/ready", healthH.Ready)
+	s.router.GET("/live", healthH.Live)
 }
 
 func buildChannelsManager(cfg *config.AppConfig) *channels.Manager {

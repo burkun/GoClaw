@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "lastUpdated": "2026-04-08T03:03:31Z",
+  "user": {
+    "workContext": {
+      "summary": "",
+      "updatedAt": ""
+    },
+    "personalContext": {
+      "summary": "",
+      "updatedAt": ""
+    },
+    "topOfMind": {
+      "summary": "",
+      "updatedAt": ""
+    }
+  },
+  "history": {
+    "recentMonths": {
+      "summary": "",
+      "updatedAt": ""
+    },
+    "earlierContext": {
+      "summary": "",
+      "updatedAt": ""
+    },
+    "longTermBackground": {
+      "summary": "",
+      "updatedAt": ""
+    }
+  },
+  "facts": []
+}

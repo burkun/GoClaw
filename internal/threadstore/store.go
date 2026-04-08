@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/bookerbai/goclaw/pkg/metrics"
 )
 
 // ThreadMetadata represents the lightweight metadata stored in the index.
@@ -96,7 +98,8 @@ const (
 type FileStore struct {
 	baseDir string
 	mu      sync.RWMutex
-	index   *threadIndex
+	index   *threadIndex // Legacy index for JSON persistence
+	idx     *ThreadIndex // High-performance in-memory index
 }
 
 type threadIndex struct {
@@ -111,6 +114,7 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 
 	fs := &FileStore{
 		baseDir: baseDir,
+		idx:     NewThreadIndex(),
 	}
 
 	// Ensure directory exists
@@ -122,6 +126,9 @@ func NewFileStore(baseDir string) (*FileStore, error) {
 	if err := fs.loadIndex(); err != nil {
 		return nil, fmt.Errorf("load index: %w", err)
 	}
+
+	// Rebuild high-performance index from loaded data
+	fs.idx.Rebuild(fs.index.Threads)
 
 	return fs, nil
 }
@@ -171,12 +178,15 @@ func (fs *FileStore) Create(meta *ThreadMetadata) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	// Check if already exists
-	for _, t := range fs.index.Threads {
-		if t.ThreadID == meta.ThreadID {
-			return fmt.Errorf("thread %s already exists", meta.ThreadID)
-		}
+	// Check if already exists using O(1) lookup
+	if _, exists := fs.idx.Get(meta.ThreadID); exists {
+		return fmt.Errorf("thread %s already exists", meta.ThreadID)
 	}
+
+	// Update active threads metric.
+	defer func() {
+		metrics.SetActiveThreads(float64(len(fs.index.Threads)))
+	}()
 
 	// Create thread directory
 	threadDir := fs.threadDir(meta.ThreadID)
@@ -196,11 +206,16 @@ func (fs *FileStore) Create(meta *ThreadMetadata) error {
 		meta.Status = "idle"
 	}
 
-	// Add to index
+	// Add to legacy index (for persistence)
 	fs.index.Threads = append(fs.index.Threads, meta)
+
+	// Add to high-performance index (for queries)
+	fs.idx.Add(meta)
 
 	// Save index
 	if err := fs.saveIndex(); err != nil {
+		// Rollback: remove from index on error.
+		fs.index.Threads = fs.index.Threads[:len(fs.index.Threads)-1]
 		return fmt.Errorf("save index: %w", err)
 	}
 
@@ -219,17 +234,16 @@ func (fs *FileStore) Create(meta *ThreadMetadata) error {
 }
 
 // Get retrieves thread metadata by ID.
+// Optimized: O(1) lookup using hash index.
 func (fs *FileStore) Get(threadID string) (*ThreadMetadata, error) {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 
-	for _, t := range fs.index.Threads {
-		if t.ThreadID == threadID {
-			return t, nil
-		}
+	meta, exists := fs.idx.Get(threadID)
+	if !exists {
+		return nil, fmt.Errorf("thread %s not found", threadID)
 	}
-
-	return nil, fmt.Errorf("thread %s not found", threadID)
+	return meta, nil
 }
 
 // GetState retrieves full thread state.
@@ -255,26 +269,37 @@ func (fs *FileStore) GetState(threadID string) (*ThreadState, error) {
 }
 
 // Update updates thread metadata.
+// Optimized: O(1) lookup using hash index.
 func (fs *FileStore) Update(threadID string, meta *ThreadMetadata) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	// Find and update in index
+	// Check existence using O(1) lookup
+	oldMeta, exists := fs.idx.Get(threadID)
+	if !exists {
+		return fmt.Errorf("thread %s not found", threadID)
+	}
+
+	// Preserve creation time
+	meta.ThreadID = threadID
+	meta.CreatedAt = oldMeta.CreatedAt
+	meta.UpdatedAt = time.Now().UnixMilli()
+
+	// Update legacy index
 	found := false
 	for i, t := range fs.index.Threads {
 		if t.ThreadID == threadID {
-			meta.ThreadID = threadID
-			meta.CreatedAt = t.CreatedAt // Preserve creation time
-			meta.UpdatedAt = time.Now().UnixMilli()
 			fs.index.Threads[i] = meta
 			found = true
 			break
 		}
 	}
-
 	if !found {
-		return fmt.Errorf("thread %s not found", threadID)
+		return fmt.Errorf("thread %s not found in legacy index", threadID)
 	}
+
+	// Update high-performance index
+	fs.idx.Update(threadID, meta)
 
 	// Save index
 	if err := fs.saveIndex(); err != nil {
@@ -285,26 +310,32 @@ func (fs *FileStore) Update(threadID string, meta *ThreadMetadata) error {
 }
 
 // Delete removes a thread.
+// Optimized: O(1) existence check using hash index.
 func (fs *FileStore) Delete(threadID string) error {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
-	// Remove from index
-	found := false
-	newThreads := make([]*ThreadMetadata, 0, len(fs.index.Threads))
-	for _, t := range fs.index.Threads {
-		if t.ThreadID == threadID {
-			found = true
-			continue
-		}
-		newThreads = append(newThreads, t)
-	}
-
-	if !found {
+	// Check existence using O(1) lookup
+	if _, exists := fs.idx.Get(threadID); !exists {
 		return fmt.Errorf("thread %s not found", threadID)
 	}
 
+	// Remove from legacy index
+	newThreads := make([]*ThreadMetadata, 0, len(fs.index.Threads))
+	for _, t := range fs.index.Threads {
+		if t.ThreadID != threadID {
+			newThreads = append(newThreads, t)
+		}
+	}
 	fs.index.Threads = newThreads
+
+	// Remove from high-performance index
+	fs.idx.Delete(threadID)
+
+	// Update active threads metric.
+	defer func() {
+		metrics.SetActiveThreads(float64(len(fs.index.Threads)))
+	}()
 
 	// Save index
 	if err := fs.saveIndex(); err != nil {
@@ -317,43 +348,14 @@ func (fs *FileStore) Delete(threadID string) error {
 }
 
 // Search returns threads matching the query.
+// Optimized: Uses indexed search for O(k) performance where k is result size.
 func (fs *FileStore) Search(query SearchQuery) ([]*ThreadMetadata, int, error) {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 
-	var results []*ThreadMetadata
-
-	for _, t := range fs.index.Threads {
-		// Filter by status
-		if query.Status != "" && t.Status != query.Status {
-			continue
-		}
-
-		results = append(results, t)
-	}
-
-	total := len(results)
-
-	// Apply pagination
-	offset := query.Offset
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > len(results) {
-		offset = len(results)
-	}
-
-	limit := query.Limit
-	if limit <= 0 {
-		limit = len(results)
-	}
-
-	end := offset + limit
-	if end > len(results) {
-		end = len(results)
-	}
-
-	return results[offset:end], total, nil
+	// Use high-performance indexed search
+	results, total := fs.idx.Search(query)
+	return results, total, nil
 }
 
 // SaveState persists full thread state.
@@ -384,11 +386,10 @@ func (fs *FileStore) saveStateLocked(state *ThreadState) error {
 }
 
 // List returns all threads (convenience method).
+// Optimized: Returns pre-sorted list from index.
 func (fs *FileStore) List() ([]*ThreadMetadata, error) {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 
-	result := make([]*ThreadMetadata, len(fs.index.Threads))
-	copy(result, fs.index.Threads)
-	return result, nil
+	return fs.idx.List(), nil
 }

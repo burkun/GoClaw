@@ -1,0 +1,24 @@
+config_version: 0
+log_level: ""
+models: []
+tool_groups: []
+tools: []
+sandbox:
+    use: ""
+memory:
+    enabled: false
+    injection_enabled: false
+skills: {}
+title:
+    enabled: false
+summarization:
+    enabled: false
+token_usage:
+    enabled: false
+guardrails:
+    enabled: false
+    fail_closed: false
+subagents: {}
+agents:
+    nonexistent:
+        enabled: true

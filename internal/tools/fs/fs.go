@@ -245,17 +245,6 @@ func (t *ReadFileTool) InputSchema() json.RawMessage {
 }
 
 // Execute reads the file at the virtual path and returns its content.
-//
-// TODO: implementation steps
-//  1. json.Unmarshal input into readFileInput; return error on bad JSON.
-//  2. Call ResolveVirtualPath(in.Path, t.Paths) to get the host path.
-//  3. Call os.ReadFile(hostPath) to read content.
-//  4. If in.StartLine and in.EndLine are set, split by "\n" and slice
-//     [StartLine-1 : EndLine].
-//  5. Apply a max-chars head-truncation guard (default 50 000 chars).
-//  6. Return the (possibly truncated) content string.
-//  7. On FileNotFoundError → return "Error: file not found: <virtual path>".
-//  8. On PermissionError   → return "Error: permission denied: <virtual path>".
 func (t *ReadFileTool) Execute(_ context.Context, input string) (string, error) {
 	var in readFileInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
@@ -355,15 +344,6 @@ func (t *WriteFileTool) InputSchema() json.RawMessage {
 }
 
 // Execute writes content to the resolved host path.
-//
-// TODO: implementation steps
-//  1. json.Unmarshal input into writeFileInput.
-//  2. Call ResolveVirtualPath(in.Path, t.Paths).
-//  3. Call ensureDir(filepath.Dir(hostPath)).
-//  4. If in.Append, open with os.O_APPEND|os.O_CREATE|os.O_WRONLY;
-//     otherwise use os.WriteFile with mode 0o644.
-//  5. On success return "OK".
-//  6. Map OS errors to user-facing strings (PermissionError, IsADirectory, etc.).
 func (t *WriteFileTool) Execute(_ context.Context, input string) (string, error) {
 	var in writeFileInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
@@ -456,17 +436,6 @@ func (t *EditFileTool) InputSchema() json.RawMessage {
 }
 
 // Execute performs the str_replace operation on the file.
-//
-// TODO: implementation steps
-//  1. json.Unmarshal input.
-//  2. ResolveVirtualPath.
-//  3. os.ReadFile to get current content.
-//  4. If in.OldStr not in content → return error "old_str not found in file".
-//  5. If !in.ReplaceAll and strings.Count(content, in.OldStr) > 1 → return
-//     error "old_str appears N times; use replace_all=true or make old_str unique".
-//  6. strings.Replace(content, in.OldStr, in.NewStr, replaceCount).
-//  7. os.WriteFile the updated content.
-//  8. Return "OK".
 func (t *EditFileTool) Execute(_ context.Context, input string) (string, error) {
 	var in editFileInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
@@ -573,16 +542,6 @@ func (t *ListDirTool) InputSchema() json.RawMessage {
 }
 
 // Execute lists the directory at the virtual path.
-//
-// TODO: implementation steps
-//  1. json.Unmarshal input.
-//  2. ResolveVirtualPath.
-//  3. os.ReadDir(hostPath) to get top-level entries.
-//  4. For each entry that is itself a directory, os.ReadDir one level deeper.
-//  5. Format output as an indented tree (e.g. "dir/\n  file.txt").
-//  6. Return "(empty)" when the directory contains no entries.
-//  7. Map FileNotFoundError, PermissionError to user-facing error strings.
-//  8. maskHostPaths on the output before returning.
 func (t *ListDirTool) Execute(_ context.Context, input string) (string, error) {
 	var in listDirInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {

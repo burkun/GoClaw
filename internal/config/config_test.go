@@ -497,3 +497,340 @@ func TestSingleton(t *testing.T) {
 	_, err = GetAppConfig()
 	assert.Error(t, err, "GetAppConfig after reset should fail without a real config file")
 }
+
+// ---------------------------------------------------------------------------
+// TestGetToolConfig
+// ---------------------------------------------------------------------------
+
+func TestGetToolConfig(t *testing.T) {
+	cfg := &AppConfig{
+		Tools: []ToolConfig{
+			{Name: "web_search", Group: "web", Use: "goclaw/internal/tools/websearch:WebSearchTool"},
+			{Name: "read_file", Group: "file", Use: "goclaw/internal/tools/fs:ReadFileTool"},
+		},
+	}
+
+	// Test finding existing tool
+	tool := cfg.GetToolConfig("web_search")
+	require.NotNil(t, tool)
+	assert.Equal(t, "web_search", tool.Name)
+	assert.Equal(t, "web", tool.Group)
+
+	// Test finding another tool
+	tool = cfg.GetToolConfig("read_file")
+	require.NotNil(t, tool)
+	assert.Equal(t, "read_file", tool.Name)
+
+	// Test non-existent tool
+	tool = cfg.GetToolConfig("nonexistent")
+	assert.Nil(t, tool)
+}
+
+func TestGetToolConfig_EmptyTools(t *testing.T) {
+	cfg := &AppConfig{
+		Tools: []ToolConfig{},
+	}
+
+	tool := cfg.GetToolConfig("any_tool")
+	assert.Nil(t, tool)
+}
+
+// ---------------------------------------------------------------------------
+// TestDefaultModel_EmptyModels
+// ---------------------------------------------------------------------------
+
+func TestDefaultModel_EmptyModels(t *testing.T) {
+	cfg := &AppConfig{
+		Models: []ModelConfig{},
+	}
+
+	model := cfg.DefaultModel()
+	assert.Nil(t, model, "DefaultModel should return nil for empty Models list")
+}
+
+func TestDefaultModel_SingleModel(t *testing.T) {
+	cfg := &AppConfig{
+		Models: []ModelConfig{
+			{Name: "gpt-4o", Use: "openai", Model: "gpt-4o"},
+		},
+	}
+
+	model := cfg.DefaultModel()
+	require.NotNil(t, model)
+	assert.Equal(t, "gpt-4o", model.Name)
+}
+
+func TestDefaultModel_MultipleModels(t *testing.T) {
+	cfg := &AppConfig{
+		Models: []ModelConfig{
+			{Name: "gpt-4o", Use: "openai", Model: "gpt-4o"},
+			{Name: "claude-3", Use: "anthropic", Model: "claude-3-opus"},
+		},
+	}
+
+	model := cfg.DefaultModel()
+	require.NotNil(t, model)
+	assert.Equal(t, "gpt-4o", model.Name, "DefaultModel should return the first model")
+}
+
+// ---------------------------------------------------------------------------
+// TestGetEnabledPlugins
+// ---------------------------------------------------------------------------
+
+func TestGetEnabledPlugins(t *testing.T) {
+	cfg := &PluginsConfig{
+		Enabled: true,
+		Plugins: map[string]PluginConfig{
+			"enabled-plugin": {
+				Enabled: true,
+				Path:    "/path/to/enabled",
+			},
+			"disabled-plugin": {
+				Enabled: false,
+				Path:    "/path/to/disabled",
+			},
+			"another-enabled": {
+				Enabled: true,
+				Path:    "/path/to/another",
+			},
+		},
+	}
+
+	enabled := cfg.GetEnabledPlugins()
+	require.Len(t, enabled, 2)
+	assert.Contains(t, enabled, "enabled-plugin")
+	assert.Contains(t, enabled, "another-enabled")
+	assert.NotContains(t, enabled, "disabled-plugin")
+}
+
+func TestGetEnabledPlugins_AllDisabled(t *testing.T) {
+	cfg := &PluginsConfig{
+		Enabled: true,
+		Plugins: map[string]PluginConfig{
+			"plugin1": {Enabled: false},
+			"plugin2": {Enabled: false},
+		},
+	}
+
+	enabled := cfg.GetEnabledPlugins()
+	assert.Empty(t, enabled)
+}
+
+func TestGetEnabledPlugins_AllEnabled(t *testing.T) {
+	cfg := &PluginsConfig{
+		Enabled: true,
+		Plugins: map[string]PluginConfig{
+			"plugin1": {Enabled: true},
+			"plugin2": {Enabled: true},
+		},
+	}
+
+	enabled := cfg.GetEnabledPlugins()
+	assert.Len(t, enabled, 2)
+}
+
+func TestGetEnabledPlugins_EmptyPlugins(t *testing.T) {
+	cfg := &PluginsConfig{
+		Enabled: true,
+		Plugins: map[string]PluginConfig{},
+	}
+
+	enabled := cfg.GetEnabledPlugins()
+	assert.Empty(t, enabled)
+}
+
+// ---------------------------------------------------------------------------
+// TestSetLogger
+// ---------------------------------------------------------------------------
+
+func TestSetLogger(t *testing.T) {
+	// SetLogger is deprecated and is a no-op, but we test it for backward compatibility
+	SetLogger(nil) // Should not panic
+	// Function just returns without doing anything
+}
+
+// ---------------------------------------------------------------------------
+// TestReloadAppConfig
+// ---------------------------------------------------------------------------
+
+func TestReloadAppConfig(t *testing.T) {
+	yaml := `
+config_version: 1
+log_level: info
+
+models:
+  - name: test-model
+    use: openai
+    model: gpt-4o
+    api_key: sk-test
+
+sandbox:
+  use: local
+
+memory:
+  enabled: false
+  injection_enabled: false
+`
+
+	path := writeTemp(t, yaml)
+
+	// First load
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "info", cfg.LogLevel)
+
+	// Set as global config
+	SetAppConfig(cfg)
+
+	// Modify the file
+	updated := `
+config_version: 2
+log_level: debug
+
+models:
+  - name: test-model
+    use: openai
+    model: gpt-4o
+    api_key: sk-test
+
+sandbox:
+  use: local
+
+memory:
+  enabled: false
+  injection_enabled: false
+`
+	require.NoError(t, os.WriteFile(path, []byte(updated), 0o644))
+
+	// Force reload
+	newCfg, err := ReloadAppConfig(path)
+	require.NoError(t, err)
+	assert.Equal(t, "debug", newCfg.LogLevel)
+	assert.Equal(t, 2, newCfg.ConfigVersion)
+}
+
+// ---------------------------------------------------------------------------
+// TestGetAppConfig_EdgeCases
+// ---------------------------------------------------------------------------
+
+func TestGetAppConfig_FirstLoad(t *testing.T) {
+	ResetAppConfig()
+	defer ResetAppConfig()
+
+	yaml := `
+config_version: 1
+log_level: info
+
+models:
+  - name: test-model
+    use: openai
+    model: gpt-4o
+    api_key: sk-test
+
+sandbox:
+  use: local
+
+memory:
+  enabled: false
+  injection_enabled: false
+`
+
+	path := writeTemp(t, yaml)
+
+	// Set GOCLAW_CONFIG_PATH to point to our test config
+	t.Setenv("GOCLAW_CONFIG_PATH", path)
+
+	cfg, err := GetAppConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "info", cfg.LogLevel)
+}
+
+func TestGetAppConfig_Cached(t *testing.T) {
+	ResetAppConfig()
+	defer ResetAppConfig()
+
+	yaml := `
+config_version: 1
+log_level: info
+
+models:
+  - name: test-model
+    use: openai
+    model: gpt-4o
+    api_key: sk-test
+
+sandbox:
+  use: local
+
+memory:
+  enabled: false
+  injection_enabled: false
+`
+
+	path := writeTemp(t, yaml)
+	t.Setenv("GOCLAW_CONFIG_PATH", path)
+
+	// First load
+	cfg1, err := GetAppConfig()
+	require.NoError(t, err)
+
+	// Second load should return cached version (same instance)
+	cfg2, err := GetAppConfig()
+	require.NoError(t, err)
+	assert.Equal(t, cfg1, cfg2, "Should return cached config")
+}
+
+func TestGetAppConfig_ErrorNoConfig(t *testing.T) {
+	defer ResetAppConfig()
+
+	// Ensure no config file exists
+	_, err := GetAppConfig()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config.yaml not found")
+}
+
+// ---------------------------------------------------------------------------
+// TestResolvePath_EdgeCases
+// ---------------------------------------------------------------------------
+
+func TestResolvePath_WithEnvVar(t *testing.T) {
+	yaml := `
+config_version: 1
+log_level: info
+
+models:
+  - name: test-model
+    use: openai
+    model: gpt-4o
+    api_key: sk-test
+
+sandbox:
+  use: local
+
+memory:
+  enabled: false
+  injection_enabled: false
+`
+
+	path := writeTemp(t, yaml)
+	t.Setenv("GOCLAW_CONFIG_PATH", path)
+
+	resolved, err := resolvePath("")
+	require.NoError(t, err)
+	assert.Equal(t, path, resolved)
+}
+
+func TestResolvePath_EnvVarNotFound(t *testing.T) {
+	t.Setenv("GOCLAW_CONFIG_PATH", "/nonexistent/path/config.yaml")
+
+	_, err := resolvePath("")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "GOCLAW_CONFIG_PATH")
+}
+
+func TestResolvePath_ExplicitNotFound(t *testing.T) {
+	_, err := resolvePath("/nonexistent/config.yaml")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "file not found")
+}

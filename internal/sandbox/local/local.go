@@ -144,6 +144,15 @@ func (s *LocalSandbox) virtualToReal(virtualPath string) (string, error) {
 
 // checkSymlinkEscape verifies that the real path does not escape via symlinks.
 // It resolves symlinks and checks if the resolved path is still inside allowed directories.
+//
+// SECURITY FIX: This function returns the evaluated (resolved) path instead of the
+// original realPath to prevent TOCTOU (Time-Of-Check-Time-Of-Use) race conditions.
+// By returning the resolved path, all subsequent file operations use the path that
+// was actually verified to be inside the allowed directories. This prevents an
+// attacker from modifying the symlink between the check and the use.
+//
+// For non-existent paths (write operations), we verify the nearest existing ancestor
+// and return the cleaned realPath since no symlink exists yet to resolve.
 func (s *LocalSandbox) checkSymlinkEscape(realPath string) (string, error) {
 	allowedBase := canonicalAllowedRoot(s.baseDir)
 	allowedSkills := ""
@@ -165,7 +174,9 @@ func (s *LocalSandbox) checkSymlinkEscape(realPath string) (string, error) {
 	evaluated, err := filepath.EvalSymlinks(realPath)
 	if err == nil {
 		if isAllowed(evaluated) {
-			return realPath, nil
+			// SECURITY: Return the evaluated path to prevent TOCTOU race condition.
+			// This ensures all file operations use the verified safe path.
+			return evaluated, nil
 		}
 		return "", fmt.Errorf("access denied: symlink escapes sandbox boundary")
 	}
@@ -186,10 +197,14 @@ func (s *LocalSandbox) checkSymlinkEscape(realPath string) (string, error) {
 		if !isAllowed(evalParent) {
 			return "", fmt.Errorf("access denied: symlink escape detected in parent directory")
 		}
-		return realPath, nil
+		// For non-existent paths, return the cleaned realPath since there's no
+		// symlink to resolve yet. The ancestor check above ensures the path
+		// will be created in a safe location.
+		return filepath.Clean(realPath), nil
 	}
 
-	return realPath, nil
+	// Fallback for edge cases (e.g., root directory)
+	return filepath.Clean(realPath), nil
 }
 
 func canonicalAllowedRoot(path string) string {
@@ -203,28 +218,41 @@ func canonicalAllowedRoot(path string) string {
 
 // realToVirtual translates a real host path back to its /mnt/user-data/... or /mnt/skills/... virtual form.
 // Used for masking host paths in output returned to agents.
+//
+// Note: realPath may be a symlink-resolved path (e.g., /private/var instead of /var on macOS).
+// We need to compare against both the original base path and its canonical (resolved) form.
 func (s *LocalSandbox) realToVirtual(realPath string) string {
 	// Check skills path first (higher priority for masking)
 	if s.skillsPath != "" {
 		skillsBase := filepath.Clean(s.skillsPath)
+		skillsCanonical := canonicalAllowedRoot(s.skillsPath)
 		clean := filepath.Clean(realPath)
-		if clean == skillsBase {
+		if clean == skillsBase || clean == skillsCanonical {
 			return sandbox.VirtualSkillsPathPrefix
 		}
 		if strings.HasPrefix(clean, skillsBase+string(os.PathSeparator)) {
 			rel := strings.TrimPrefix(clean, skillsBase+string(os.PathSeparator))
 			return sandbox.VirtualSkillsPathPrefix + "/" + rel
 		}
+		if strings.HasPrefix(clean, skillsCanonical+string(os.PathSeparator)) {
+			rel := strings.TrimPrefix(clean, skillsCanonical+string(os.PathSeparator))
+			return sandbox.VirtualSkillsPathPrefix + "/" + rel
+		}
 	}
 
 	// Check user-data path
 	base := filepath.Clean(s.baseDir)
+	canonical := canonicalAllowedRoot(s.baseDir)
 	clean := filepath.Clean(realPath)
-	if clean == base {
+	if clean == base || clean == canonical {
 		return sandbox.VirtualPathPrefix
 	}
 	if strings.HasPrefix(clean, base+string(os.PathSeparator)) {
 		rel := strings.TrimPrefix(clean, base+string(os.PathSeparator))
+		return sandbox.VirtualPathPrefix + "/" + rel
+	}
+	if strings.HasPrefix(clean, canonical+string(os.PathSeparator)) {
+		rel := strings.TrimPrefix(clean, canonical+string(os.PathSeparator))
 		return sandbox.VirtualPathPrefix + "/" + rel
 	}
 	return realPath
@@ -232,10 +260,6 @@ func (s *LocalSandbox) realToVirtual(realPath string) string {
 
 // rejectPathTraversal returns an error if the path contains ".." segments.
 func rejectPathTraversal(path string) error {
-	// TODO:
-	//  1. Replace backslashes with forward slashes for normalisation.
-	//  2. Split on "/" and look for ".." segments.
-	//  3. Return a PermissionError if any ".." segment is found.
 	normalised := strings.ReplaceAll(path, "\\", "/")
 	for _, seg := range strings.Split(normalised, "/") {
 		if seg == ".." {
@@ -248,9 +272,6 @@ func rejectPathTraversal(path string) error {
 // isInsideDir reports whether candidate is inside (or equal to) the dir root.
 // Both paths must be absolute and filepath.Clean'd.
 func isInsideDir(candidate, dir string) bool {
-	// TODO:
-	//  1. Ensure dir ends without trailing slash, append os.PathSeparator.
-	//  2. Return candidate == dir || strings.HasPrefix(candidate, dir+sep).
 	cleanCandidate := filepath.Clean(candidate)
 	cleanDir := filepath.Clean(dir)
 	return cleanCandidate == cleanDir ||
@@ -265,10 +286,6 @@ func isSkillsVirtualPath(virtualPath string) bool {
 
 // isDeniedCommand checks whether the given command matches a denylist entry.
 func isDeniedCommand(command string, denied []string) bool {
-	// TODO:
-	//  1. Trim leading whitespace from command.
-	//  2. For each pattern in denied, check strings.HasPrefix(command, pattern).
-	//  3. Return true if any match is found.
 	trimmed := strings.TrimSpace(command)
 	for _, pattern := range denied {
 		if strings.HasPrefix(trimmed, pattern) {
@@ -281,11 +298,6 @@ func isDeniedCommand(command string, denied []string) bool {
 // isAllowedCommand checks whether command is permitted by the allowlist.
 // If allowedCommands is empty, no shell exec is permitted.
 func isAllowedCommand(command string, allowed []string) bool {
-	// TODO:
-	//  1. If allowed is nil/empty, return false (exec disabled).
-	//  2. Trim leading whitespace from command.
-	//  3. Extract the first token (command name) by splitting on whitespace.
-	//  4. Return true if any allowlist entry equals the first token.
 	if len(allowed) == 0 {
 		return false
 	}
@@ -307,17 +319,6 @@ func isAllowedCommand(command string, allowed []string) bool {
 // The command is validated against the denylist and allowlist before execution.
 // The working directory is set to the thread's workspace directory.
 func (s *LocalSandbox) Execute(ctx context.Context, command string) (sandbox.ExecuteResult, error) {
-	// TODO:
-	//  1. Check isDeniedCommand; return PermissionError result if matched.
-	//  2. Check isAllowedCommand; return PermissionError result if not allowed.
-	//  3. Compute exec timeout: use s.cfg.ExecTimeout or defaultExecTimeout.
-	//  4. Create a context with the timeout, derived from the input ctx.
-	//  5. Build exec.CommandContext("bash", "-c", command).
-	//  6. Set Cmd.Dir to s.baseDir+"/workspace".
-	//  7. Set a restricted Cmd.Env (PATH, HOME, no sensitive vars).
-	//  8. Capture stdout and stderr via bytes.Buffer.
-	//  9. Run the command and collect ExitCode from exec.ExitError if needed.
-	// 10. Return ExecuteResult with Stdout, Stderr, ExitCode.
 	denied := append(defaultDeniedCommands, s.cfg.DeniedCommands...)
 	if isDeniedCommand(command, denied) {
 		return sandbox.ExecuteResult{
@@ -341,7 +342,6 @@ func (s *LocalSandbox) Execute(ctx context.Context, command string) (sandbox.Exe
 
 	workspaceDir := filepath.Join(s.baseDir, "workspace")
 	// Ensure workspace directory exists.
-	// TODO: use os.MkdirAll to create workspaceDir before running cmd.
 	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
 		return sandbox.ExecuteResult{Error: fmt.Errorf("failed to create workspace dir: %w", err)}, nil
 	}
@@ -467,12 +467,6 @@ func (s *LocalSandbox) writeFileLocked(ctx context.Context, virtualPath string, 
 
 // ListDir lists files and directories up to maxDepth levels deep under virtualPath.
 func (s *LocalSandbox) ListDir(ctx context.Context, virtualPath string, maxDepth int) ([]sandbox.FileInfo, error) {
-	// TODO:
-	//  1. Translate virtualPath to real path.
-	//  2. Walk the directory up to maxDepth levels.
-	//  3. For each entry, compute its virtual path using realToVirtual.
-	//  4. Build a FileInfo from os.FileInfo and the virtual path.
-	//  5. Return the slice.
 	realPath, err := s.virtualToReal(virtualPath)
 	if err != nil {
 		return nil, err

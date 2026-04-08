@@ -11,6 +11,8 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/bookerbai/goclaw/pkg/errors"
 )
 
 // SectionUpdate represents a single section update with shouldUpdate flag.
@@ -99,7 +101,7 @@ func (u *LLMMemoryUpdater) ExtractMemoryUpdate(
 	correctionDetected bool,
 ) (*MemoryUpdate, error) {
 	if u.chatModel == nil {
-		return nil, fmt.Errorf("memory updater: chat model is nil")
+		return nil, errors.ConfigError("memory updater: chat model is nil")
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, u.timeout)
@@ -366,7 +368,7 @@ func parseMemoryUpdate(raw string, minConfidence float64) (*MemoryUpdate, error)
 
 	var update MemoryUpdate
 	if err := json.Unmarshal([]byte(clean), &update); err != nil {
-		return nil, fmt.Errorf("parse memory update: %w", err)
+		return nil, errors.WrapInternalError(err, "parse memory update")
 	}
 
 	// Filter new facts by confidence.

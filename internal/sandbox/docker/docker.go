@@ -34,10 +34,10 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
-	dockerclient "github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 
 	"github.com/bookerbai/goclaw/internal/sandbox"
+	"github.com/bookerbai/goclaw/pkg/errors"
 )
 
 // defaultContainerNamePrefix is prepended to thread IDs when no custom prefix is configured.
@@ -57,7 +57,7 @@ type DockerSandbox struct {
 	threadID    string
 	containerID string
 	baseDir     string // host-side base for this thread's user-data volumes
-	client      *dockerclient.Client
+	client      DockerClient
 	cfg         sandbox.SandboxConfig
 	lastUsed    time.Time
 	mu          sync.Mutex
@@ -88,10 +88,6 @@ func containerName(cfg sandbox.SandboxConfig, threadID string) string {
 // equivalent path inside the container. For docker sandboxes the virtual paths
 // are directly mounted so no translation is needed beyond a basic validation.
 func virtualToContainerPath(virtualPath string) (string, error) {
-	// TODO:
-	//  1. Check virtualPath starts with sandbox.VirtualPathPrefix or "/mnt/skills".
-	//  2. Reject ".." segments via rejectPathTraversal.
-	//  3. Return virtualPath as-is (it maps directly to the container mount point).
 	if err := rejectPathTraversal(virtualPath); err != nil {
 		return "", err
 	}
@@ -99,7 +95,7 @@ func virtualToContainerPath(virtualPath string) (string, error) {
 		strings.HasPrefix(virtualPath, "/mnt/skills") {
 		return virtualPath, nil
 	}
-	return "", fmt.Errorf("path %q is outside allowed virtual prefix", virtualPath)
+	return "", errors.PermissionError(fmt.Sprintf("path %q is outside allowed virtual prefix", virtualPath))
 }
 
 // rejectPathTraversal returns an error if the path contains ".." segments.
@@ -107,7 +103,7 @@ func rejectPathTraversal(path string) error {
 	normalised := strings.ReplaceAll(path, "\\", "/")
 	for _, seg := range strings.Split(normalised, "/") {
 		if seg == ".." {
-			return fmt.Errorf("access denied: path traversal detected")
+			return errors.PermissionError("access denied: path traversal detected")
 		}
 	}
 	return nil
@@ -140,12 +136,12 @@ func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.Ex
 	}
 	execID, err := s.client.ContainerExecCreate(execCtx, s.containerID, execCfg)
 	if err != nil {
-		return sandbox.ExecuteResult{Error: fmt.Errorf("exec create: %w", err)}, nil
+		return sandbox.ExecuteResult{Error: errors.WrapInternalError(err, "exec create")}, nil
 	}
 
 	resp, err := s.client.ContainerExecAttach(execCtx, execID.ID, types.ExecStartCheck{})
 	if err != nil {
-		return sandbox.ExecuteResult{Error: fmt.Errorf("exec attach: %w", err)}, nil
+		return sandbox.ExecuteResult{Error: errors.WrapInternalError(err, "exec attach")}, nil
 	}
 	defer resp.Close()
 
@@ -208,7 +204,7 @@ func (s *DockerSandbox) ReadFile(ctx context.Context, virtualPath string, startL
 		return "", err
 	}
 	if result.ExitCode != 0 {
-		return "", fmt.Errorf("read file %q: %s", virtualPath, result.Stderr)
+		return "", errors.InternalError(fmt.Sprintf("read file %q: %s", virtualPath, result.Stderr))
 	}
 	return result.Stdout, nil
 }
@@ -241,17 +237,13 @@ func (s *DockerSandbox) writeFileLocked(ctx context.Context, virtualPath string,
 		return execErr
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("write file %q: %s", virtualPath, result.Stderr)
+		return errors.InternalError(fmt.Sprintf("write file %q: %s", virtualPath, result.Stderr))
 	}
 	return nil
 }
 
 // ListDir lists files inside the container up to maxDepth levels deep.
 func (s *DockerSandbox) ListDir(ctx context.Context, virtualPath string, maxDepth int) ([]sandbox.FileInfo, error) {
-	// TODO:
-	//  1. virtualToContainerPath.
-	//  2. Execute find command: find {path} -maxdepth {maxDepth} -printf "%y %s %T@ %P\n".
-	//  3. Parse each line to build []FileInfo with Path = virtualPath + "/" + relative.
 	containerPath, err := virtualToContainerPath(virtualPath)
 	if err != nil {
 		return nil, err
@@ -268,13 +260,12 @@ func (s *DockerSandbox) ListDir(ctx context.Context, virtualPath string, maxDept
 		return nil, execErr
 	}
 	if result.ExitCode != 0 {
-		return nil, fmt.Errorf("list dir %q: %s", virtualPath, result.Stderr)
+		return nil, errors.InternalError(fmt.Sprintf("list dir %q: %s", virtualPath, result.Stderr))
 	}
 
 	var infos []sandbox.FileInfo
-	// TODO: Parse result.Stdout lines into FileInfo structs.
+	// Parse result.Stdout lines into FileInfo structs.
 	// Each line format: {type}\t{size}\t{epoch_seconds.ns}\t{relative_path}
-	// where type is 'f' for file or 'd' for directory.
 	for _, line := range strings.Split(strings.TrimSpace(result.Stdout), "\n") {
 		if line == "" {
 			continue
@@ -330,7 +321,7 @@ func (s *DockerSandbox) Glob(ctx context.Context, virtualPath string, pattern st
 		return nil, false, execErr
 	}
 	if result.ExitCode != 0 {
-		return nil, false, fmt.Errorf("glob %q: %s", virtualPath, result.Stderr)
+		return nil, false, errors.InternalError(fmt.Sprintf("glob %q: %s", virtualPath, result.Stderr))
 	}
 
 	// Parse results and apply pattern matching.
@@ -396,7 +387,7 @@ func (s *DockerSandbox) Grep(ctx context.Context, virtualPath string, pattern st
 	}
 	// Exit code 1 means no matches, which is OK.
 	if result.ExitCode != 0 && result.ExitCode != 1 {
-		return nil, false, fmt.Errorf("grep %q: %s", virtualPath, result.Stderr)
+		return nil, false, errors.InternalError(fmt.Sprintf("grep %q: %s", virtualPath, result.Stderr))
 	}
 
 	// Parse results: format is "./path/to/file:line_number:content"
@@ -466,7 +457,7 @@ func (s *DockerSandbox) strReplaceLocked(ctx context.Context, virtualPath string
 		return err
 	}
 	if !strings.Contains(content, oldStr) {
-		return fmt.Errorf("str_replace: string to replace not found in %q", virtualPath)
+		return errors.NotFoundError(fmt.Sprintf("string to replace in %q", virtualPath))
 	}
 	n := 1
 	if replaceAll {
@@ -501,7 +492,7 @@ func (s *DockerSandbox) updateFileLocked(ctx context.Context, virtualPath string
 		return execErr
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("update file %q: %s", virtualPath, result.Stderr)
+		return errors.InternalError(fmt.Sprintf("update file %q: %s", virtualPath, result.Stderr))
 	}
 	return nil
 }
@@ -515,14 +506,14 @@ func (s *DockerSandbox) virtualToHostPath(virtualPath string) (string, error) {
 		return filepath.Clean(s.baseDir), nil
 	}
 	if !strings.HasPrefix(virtualPath, prefix+"/") {
-		return "", fmt.Errorf("path %q is outside allowed virtual prefix %s", virtualPath, prefix)
+		return "", errors.PermissionError(fmt.Sprintf("path %q is outside allowed virtual prefix %s", virtualPath, prefix))
 	}
 	rel := strings.TrimPrefix(virtualPath, prefix+"/")
 	host := filepath.Join(s.baseDir, rel)
 	host = filepath.Clean(host)
 	base := filepath.Clean(s.baseDir)
 	if host != base && !strings.HasPrefix(host, base+string(os.PathSeparator)) {
-		return "", fmt.Errorf("access denied: path traversal detected")
+		return "", errors.PermissionError("access denied: path traversal detected")
 	}
 	return host, nil
 }
@@ -652,15 +643,15 @@ func resolveEnvValue(value string) string {
 func (s *DockerSandbox) ensureContainerRunning(ctx context.Context) error {
 	inspect, err := s.client.ContainerInspect(ctx, s.containerID)
 	if err != nil {
-		if dockerclient.IsErrNotFound(err) {
+		if s.client.IsErrNotFound(err) {
 			return s.createContainer(ctx)
 		}
-		return fmt.Errorf("inspect container %q: %w", s.containerID, err)
+		return errors.WrapInternalError(err, fmt.Sprintf("inspect container %q", s.containerID))
 	}
 	// If container exists but is not running, start it.
 	if !inspect.State.Running {
 		if err := s.client.ContainerStart(ctx, s.containerID, container.StartOptions{}); err != nil {
-			return fmt.Errorf("start existing container %q: %w", s.containerID, err)
+		return errors.WrapInternalError(err, fmt.Sprintf("start existing container %q", s.containerID))
 		}
 	}
 	return nil
@@ -668,22 +659,13 @@ func (s *DockerSandbox) ensureContainerRunning(ctx context.Context) error {
 
 // createContainer creates a new Docker container for this sandbox.
 func (s *DockerSandbox) createContainer(ctx context.Context) error {
-	// TODO:
-	//  1. Prepare host-side volume directories (os.MkdirAll workspace/uploads/outputs).
-	//  2. Build []mount.Mount for workspace, uploads, outputs (bind mounts, rw),
-	//     and optionally skills (bind mount, ro).
-	//  3. Build container.Config{Image, Env, WorkingDir, ...}.
-	//  4. Build container.HostConfig{Resources: {CPUQuota, Memory}, Mounts, NetworkMode}.
-	//  5. client.ContainerCreate(ctx, &config, &hostConfig, nil, nil, containerName).
-	//  6. client.ContainerStart.
-	//  7. Store returned container ID in s.containerID.
 	workspacePath := filepath.Join(s.baseDir, "workspace")
 	uploadsPath := filepath.Join(s.baseDir, "uploads")
 	outputsPath := filepath.Join(s.baseDir, "outputs")
 
 	for _, dir := range []string{workspacePath, uploadsPath, outputsPath} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create volume dir %q: %w", dir, err)
+		return errors.WrapInternalError(err, fmt.Sprintf("create volume dir %q", dir))
 		}
 	}
 
@@ -707,7 +689,7 @@ func (s *DockerSandbox) createContainer(ctx context.Context) error {
 			continue
 		}
 		if err := os.MkdirAll(hostPath, 0o755); err != nil {
-			return fmt.Errorf("create mount dir %q: %w", hostPath, err)
+		return errors.WrapInternalError(err, fmt.Sprintf("create mount dir %q", hostPath))
 		}
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,
@@ -744,12 +726,12 @@ func (s *DockerSandbox) createContainer(ctx context.Context) error {
 	name := s.id
 	resp, err := s.client.ContainerCreate(ctx, dockerCfg, hostCfg, nil, nil, name)
 	if err != nil {
-		return fmt.Errorf("create container %q: %w", name, err)
+		return errors.WrapInternalError(err, fmt.Sprintf("create container %q", name))
 	}
 	s.containerID = resp.ID
 
 	if err := s.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return fmt.Errorf("start container %q: %w", name, err)
+		return errors.WrapInternalError(err, fmt.Sprintf("start container %q", name))
 	}
 	return nil
 }

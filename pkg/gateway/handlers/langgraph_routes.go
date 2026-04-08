@@ -15,6 +15,7 @@ import (
 
 	"github.com/bookerbai/goclaw/internal/agent"
 	"github.com/bookerbai/goclaw/internal/config"
+	"github.com/bookerbai/goclaw/pkg/metrics"
 )
 
 // LangGraphHandler serves the LangGraph SDK compatible API endpoints.
@@ -367,6 +368,15 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 
 	// Run the agent.
 	runCtx, cancel := context.WithCancel(c.Request.Context())
+
+	// Record metrics: increment active runs.
+	metrics.SetActiveRuns(float64(len(h.runs) + 1))
+	defer metrics.SetActiveRuns(float64(len(h.runs)))
+
+	// Track agent run duration for metrics.
+	runStartTime := time.Now()
+	var runStatus string
+
 	h.registerRun(runID, lgRunHandle{
 		ThreadID:     threadID,
 		RunID:        runID,
@@ -375,6 +385,15 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 		Cancel:       cancel,
 	})
 	defer h.unregisterRun(runID)
+
+	// Ensure metrics are recorded on exit.
+	defer func() {
+		runDuration := time.Since(runStartTime)
+		if runStatus == "" {
+			runStatus = "success"
+		}
+		metrics.RecordAgentRun(agentName, runDuration, runStatus)
+	}()
 
 	var eventChan <-chan agent.Event
 	var err error

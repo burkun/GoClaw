@@ -199,15 +199,15 @@ func toMiddlewareStateFromADK(adkState *adk.ChatModelAgentState) *State {
 		state.Messages = append(state.Messages, messageToMap(msg))
 	}
 
-	// Extract additional state from session values or extra
-	// TODO: Implement full state extraction
-
+	// Note: ThreadID, Title, and other state fields should be set by the caller
+	// since adk.ChatModelAgentState only contains Messages.
 	return state
 }
 
 func applyMiddlewareStateToADK(mwState *State, adkState *adk.ChatModelAgentState) {
-	// Convert middleware state back to adk state
-	// TODO: Implement full state synchronization
+	// Note: adk.ChatModelAgentState only contains Messages.
+	// ThreadID, Title, and other state must be managed separately by the caller.
+	// This function is a no-op placeholder for potential future extensions.
 }
 
 func toMiddlewareResponseFromADK(adkState *adk.ChatModelAgentState) *Response {
@@ -220,7 +220,17 @@ func toMiddlewareResponseFromADK(adkState *adk.ChatModelAgentState) *Response {
 		lastMsg := adkState.Messages[len(adkState.Messages)-1]
 		if lastMsg.Role == schema.Assistant {
 			resp.FinalMessage = lastMsg.Content
-			// TODO: Extract tool calls from message
+			// Extract tool calls from message
+			if len(lastMsg.ToolCalls) > 0 {
+				for _, tc := range lastMsg.ToolCalls {
+					resp.ToolCalls = append(resp.ToolCalls, map[string]any{
+						"id":       tc.ID,
+						"name":     tc.Function.Name,
+						"input":    tc.Function.Arguments,
+						"response": "",
+					})
+				}
+			}
 		}
 	}
 

@@ -307,3 +307,26 @@ subagents:
 #     enabled: false
 #     bot_token: $TELEGRAM_BOT_TOKEN
 #     allowed_users: []             # empty = allow all users
+
+# ============================================================================
+# Plugins Configuration
+# ============================================================================
+# Configure the plugin system for extending GoClaw with custom tools and middlewares.
+
+# plugins:
+#   enabled: true
+#   directory: "./plugins"  # base directory for plugin discovery
+#   plugins:
+#     # Example: echo plugin
+#     echo-plugin:
+#       enabled: true
+#       config:
+#         prefix: "[Echo] "
+#         suffix: ""
+#
+#     # Example: custom analytics plugin
+#     analytics:
+#       enabled: true
+#       config:
+#         endpoint: "https://analytics.example.com/api"
+#         api_key: $ANALYTICS_API_KEY

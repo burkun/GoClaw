@@ -4,10 +4,11 @@
 package sandbox
 
 import (
-	"fmt"
 	"os"
 	"syscall"
 	"unsafe"
+
+	"github.com/bookerbai/goclaw/pkg/errors"
 )
 
 var (
@@ -38,7 +39,7 @@ func tryAcquireFileLockPlatform(file *os.File) error {
 	)
 
 	if ret == 0 {
-		return fmt.Errorf("LockFileEx failed: %w", err)
+		return errors.WrapInternalError(err, "LockFileEx failed")
 	}
 	return nil
 }
@@ -55,7 +56,7 @@ func releaseFileLockPlatform(file *os.File) error {
 	)
 
 	if ret == 0 {
-		return fmt.Errorf("UnlockFile failed: %w", err)
+		return errors.WrapInternalError(err, "UnlockFile failed")
 	}
 	return nil
 }

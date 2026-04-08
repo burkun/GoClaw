@@ -37,3 +37,15 @@ title:
 
 summarization:
   enabled: false
+
+# 插件系统配置
+plugins:
+  enabled: false  # 启用插件系统
+  directory: "./plugins"  # 插件目录
+  plugins:
+    # 示例：echo插件配置
+    echo-plugin:
+      enabled: false
+      config:
+        prefix: "[Echo] "
+        suffix: ""

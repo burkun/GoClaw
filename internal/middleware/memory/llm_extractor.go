@@ -3,12 +3,13 @@ package memory
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+
+	"github.com/bookerbai/goclaw/pkg/errors"
 )
 
 // EinoFactExtractor uses an Eino chat model to extract structured memory facts.
@@ -33,7 +34,7 @@ func NewEinoFactExtractor(chatModel model.BaseChatModel, minConfidence float64) 
 // Extract implements FactExtractor.
 func (e *EinoFactExtractor) Extract(messages []map[string]any, correctionDetected bool) ([]Fact, error) {
 	if e == nil || e.chatModel == nil {
-		return nil, fmt.Errorf("memory extractor: chat model is nil")
+		return nil, errors.ConfigError("memory extractor: chat model is nil")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
@@ -143,7 +144,7 @@ func parseMemoryFactsOutput(raw string) ([]Fact, error) {
 
 	var facts []Fact
 	if err := json.Unmarshal([]byte(clean), &facts); err != nil {
-		return nil, fmt.Errorf("memory extractor: parse facts json: %w", err)
+		return nil, errors.WrapInternalError(err, "memory extractor: parse facts json")
 	}
 	return facts, nil
 }

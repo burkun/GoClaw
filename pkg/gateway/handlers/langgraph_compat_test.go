@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/bookerbai/goclaw/internal/agent"
@@ -254,5 +255,114 @@ func TestLangGraphEventConverter_MessagesMode(t *testing.T) {
 	// In messages mode, the event type should be "messages", not "values".
 	if events[0].Event != "messages" {
 		t.Errorf("expected event type 'messages', got %q", events[0].Event)
+	}
+}
+
+func TestWriteLangGraphSSE(t *testing.T) {
+	var buf bytes.Buffer
+	event := LangGraphSSEEvent{
+		Event: "values",
+		Data: LangGraphValuesEvent{
+			Messages: []LangGraphMessage{
+				{Type: "ai", Content: "test"},
+			},
+		},
+	}
+
+	err := WriteLangGraphSSE(&buf, event)
+	if err != nil {
+		t.Fatalf("WriteLangGraphSSE failed: %v", err)
+	}
+
+	output := buf.String()
+	if !bytes.Contains([]byte(output), []byte("event: values")) {
+		t.Errorf("expected event type in output, got %s", output)
+	}
+}
+
+func TestWriteSSEHeartbeat(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteSSEHeartbeat(&buf)
+	if err != nil {
+		t.Fatalf("WriteSSEHeartbeat failed: %v", err)
+	}
+
+	output := buf.String()
+	if !bytes.Contains([]byte(output), []byte(": heartbeat")) {
+		t.Errorf("expected heartbeat comment in output, got %s", output)
+	}
+}
+
+func TestLangGraphEventConverter_ThinkingContent(t *testing.T) {
+	converter := NewLangGraphEventConverter("thread-1", "run-1", "values")
+
+	ev := agent.Event{
+		Type:      agent.EventMessageDelta,
+		ThreadID:  "thread-1",
+		Timestamp: 1000,
+		Payload: agent.MessageDeltaPayload{
+			Content:    "thinking...",
+			IsThinking: true,
+		},
+	}
+
+	events := converter.Convert(ev)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	data, ok := events[0].Data.(LangGraphValuesEvent)
+	if !ok {
+		t.Fatalf("expected LangGraphValuesEvent, got %T", events[0].Data)
+	}
+
+	// Thinking content should be in additional_kwargs
+	if len(data.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(data.Messages))
+	}
+}
+
+func TestLangGraphEventConverter_UnknownEventType(t *testing.T) {
+	converter := NewLangGraphEventConverter("thread-1", "run-1", "values")
+
+	ev := agent.Event{
+		Type:      "unknown_type",
+		ThreadID:  "thread-1",
+		Timestamp: 1000,
+	}
+
+	events := converter.Convert(ev)
+	// Unknown events should return empty slice
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events for unknown type, got %d", len(events))
+	}
+}
+
+func TestLangGraphEventConverter_TaskCompleted(t *testing.T) {
+	converter := NewLangGraphEventConverter("thread-1", "run-1", "values")
+
+	ev := agent.Event{
+		Type:      agent.EventTaskCompleted,
+		ThreadID:  "thread-1",
+		Timestamp: 1000,
+		Payload: agent.TaskPayload{
+			TaskID:  "task-1",
+			Subject: "Done",
+			Status:  "completed",
+		},
+	}
+
+	events := converter.Convert(ev)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	data, ok := events[0].Data.(LangGraphCustomEvent)
+	if !ok {
+		t.Fatalf("expected LangGraphCustomEvent, got %T", events[0].Data)
+	}
+
+	if data.Type != "task_completed" {
+		t.Errorf("expected type 'task_completed', got %q", data.Type)
 	}
 }

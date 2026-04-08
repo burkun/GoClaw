@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/bookerbai/goclaw/internal/config"
 )
@@ -85,5 +88,121 @@ func TestListModels_Mapping(t *testing.T) {
 	}
 	if !m.HasGeminiAPIKey {
 		t.Fatalf("expected has_gemini_api_key=true")
+	}
+}
+
+func TestGetModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewModelsHandler(&config.AppConfig{Models: []config.ModelConfig{
+		{Name: "gpt-4", Model: "gpt-4-turbo"},
+	}})
+
+	router := gin.New()
+	router.GET("/models/:id", h.GetModel)
+
+	req := httptest.NewRequest(http.MethodGet, "/models/gpt-4", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetModel_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewModelsHandler(&config.AppConfig{Models: []config.ModelConfig{}})
+
+	router := gin.New()
+	router.GET("/models/:id", h.GetModel)
+
+	req := httptest.NewRequest(http.MethodGet, "/models/nonexistent", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+}
+
+func TestGetModel_MissingID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewModelsHandler(&config.AppConfig{})
+
+	rr := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rr)
+	c.Request = httptest.NewRequest(http.MethodGet, "/models/", nil)
+	h.GetModel(c)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestGetModel_NilConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewModelsHandler(nil)
+
+	rr := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rr)
+	c.Params = gin.Params{{Key: "id", Value: "gpt-4"}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/models/gpt-4", nil)
+	h.GetModel(c)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+}
+
+func TestValidateModel_MissingID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewModelsHandler(nil)
+
+	rr := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rr)
+	c.Request = httptest.NewRequest(http.MethodPost, "/models//validate", nil)
+	h.ValidateModel(c)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
+	}
+}
+
+func TestValidateModel_NilConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewModelsHandler(nil)
+
+	rr := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rr)
+	c.Params = gin.Params{{Key: "id", Value: "gpt-4"}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/models/gpt-4/validate", strings.NewReader("{}"))
+	h.ValidateModel(c)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rr.Code)
+	}
+}
+
+func TestValidateModel_NotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewModelsHandler(&config.AppConfig{Models: []config.ModelConfig{}})
+
+	rr := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rr)
+	c.Params = gin.Params{{Key: "id", Value: "nonexistent"}}
+	c.Request = httptest.NewRequest(http.MethodPost, "/models/nonexistent/validate", strings.NewReader("{}"))
+	h.ValidateModel(c)
+
+	// Model not found returns 404
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
+	}
+
+	var resp ModelValidateResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal: %v", err)
+	}
+	if resp.Valid {
+		t.Fatal("expected valid=false for not found model")
 	}
 }

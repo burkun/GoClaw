@@ -3,10 +3,13 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 	"github.com/eino-contrib/jsonschema"
+
+	"github.com/bookerbai/goclaw/pkg/metrics"
 )
 
 // EinoInvokableToolAdapter 将 GoClaw Tool 适配为 Eino InvokableTool。
@@ -39,10 +42,22 @@ func (a *EinoInvokableToolAdapter) Info(ctx context.Context) (*schema.ToolInfo, 
 	return info, nil
 }
 
-// InvokableRun 透传到原始 Tool.Execute。
+// InvokableRun 透传到原始 Tool.Execute，并记录指标。
 func (a *EinoInvokableToolAdapter) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 	_ = opts
-	return a.inner.Execute(ctx, argumentsInJSON)
+	start := time.Now()
+	toolName := a.inner.Name()
+
+	result, err := a.inner.Execute(ctx, argumentsInJSON)
+
+	duration := time.Since(start)
+	status := "success"
+	if err != nil {
+		status = "error"
+	}
+	metrics.RecordToolExecution(toolName, duration, status)
+
+	return result, err
 }
 
 // AdaptToEinoTool 将单个 Tool 转换为 Eino tool.BaseTool。

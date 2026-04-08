@@ -119,12 +119,9 @@ func TestLeadAgent_planMode(t *testing.T) {
 
 // TestBuildMiddlewares_empty verifies that buildMiddlewares does not panic with
 // a zero-value RunConfig and returns a non-nil slice.
-//
-// TODO: tighten assertions once middleware implementations exist.
 func TestBuildMiddlewares_empty(t *testing.T) {
 	mws := buildMiddlewares(RunConfig{})
-	// nil is acceptable until middleware constructors are implemented.
-	_ = mws
+	_ = mws // middleware chain may be nil for empty config
 }
 
 func TestFilterToolsByAllowed(t *testing.T) {
@@ -255,131 +252,6 @@ func TestErrorCodeConstants(t *testing.T) {
 	}
 }
 
-// TestIsToolError verifies that tool error detection works correctly.
-func TestIsToolError(t *testing.T) {
-	tests := []struct {
-		name    string
-		msg     *schema.Message
-		wantErr bool
-	}{
-		{
-			name:    "nil message",
-			msg:     nil,
-			wantErr: false,
-		},
-		{
-			name:    "non-tool message",
-			msg:     schema.UserMessage("hello"),
-			wantErr: false,
-		},
-		{
-			name:    "tool message with success",
-			msg:     schema.ToolMessage("operation completed successfully", "call_001"),
-			wantErr: false,
-		},
-		{
-			name:    "tool message with error prefix",
-			msg:     schema.ToolMessage("error: command failed", "call_002"),
-			wantErr: true,
-		},
-		{
-			name:    "tool message with ERROR uppercase",
-			msg:     schema.ToolMessage("ERROR: invalid input", "call_003"),
-			wantErr: true,
-		},
-		{
-			name:    "tool message with failed",
-			msg:     schema.ToolMessage("failed to open file", "call_004"),
-			wantErr: true,
-		},
-		{
-			name:    "tool message with whitespace",
-			msg:     schema.ToolMessage("  error: timeout", "call_005"),
-			wantErr: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isToolError(tt.msg)
-			if got != tt.wantErr {
-				t.Errorf("isToolError(%v) = %v, want %v", tt.msg, got, tt.wantErr)
-			}
-		})
-	}
-}
+// Note: TestIsToolError moved to executor_test.go for comprehensive coverage
 
-// TestConvertAgentEvent_ToolWithError verifies that tool events correctly
-// mark the is_error flag based on the tool message content.
-func TestConvertAgentEvent_ToolWithError(t *testing.T) {
-	// Create a tool message that represents an error result.
-	toolMsg := schema.ToolMessage("error: bash: permission denied", "call_001")
-	toolMsg.ToolName = "bash"
-
-	// convertAgentEvent extracts the tool message directly from the output.
-	// For this test, we verify that isToolError correctly detects errors.
-	// We'll test convertAgentEvent indirectly by verifying isToolError first,
-	// then ensure it's integrated in the conversion function.
-
-	// Verify isToolError detects the error correctly.
-	if !isToolError(toolMsg) {
-		t.Error("isToolError should detect 'error:' prefix")
-	}
-
-	// Verify a successful tool message is not marked as error.
-	okMsg := schema.ToolMessage("success: command executed", "call_002")
-	okMsg.ToolName = "bash"
-	if isToolError(okMsg) {
-		t.Error("isToolError should not mark successful message as error")
-	}
-}
-
-func TestToTaskEvent_StatusMapping(t *testing.T) {
-	ts := int64(123)
-
-	cases := []struct {
-		name    string
-		status  string
-		wantTyp EventType
-	}{
-		{name: "queued maps to started", status: "queued", wantTyp: EventTaskStarted},
-		{name: "in_progress maps to running", status: "in_progress", wantTyp: EventTaskRunning},
-		{name: "completed maps to completed", status: "completed", wantTyp: EventTaskCompleted},
-		{name: "failed maps to failed", status: "failed", wantTyp: EventTaskFailed},
-		{name: "timed_out maps to failed", status: "timed_out", wantTyp: EventTaskFailed},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			raw := `{"task_id":"t1","subject":"demo","status":"` + tc.status + `"}`
-			ev := toTaskEvent("thread-1", raw, ts)
-			if ev == nil {
-				t.Fatalf("expected non-nil task event")
-			}
-			if ev.Type != tc.wantTyp {
-				t.Fatalf("unexpected event type: got=%s want=%s", ev.Type, tc.wantTyp)
-			}
-			if ev.Timestamp != ts {
-				t.Fatalf("timestamp mismatch: got=%d want=%d", ev.Timestamp, ts)
-			}
-			payload, ok := ev.Payload.(TaskPayload)
-			if !ok {
-				t.Fatalf("payload type mismatch: %T", ev.Payload)
-			}
-			if payload.TaskID != "t1" || payload.Status != tc.status {
-				t.Fatalf("payload mismatch: %+v", payload)
-			}
-		})
-	}
-}
-
-func TestToTaskEvent_InvalidPayload(t *testing.T) {
-	if ev := toTaskEvent("thread-1", "not-json", 1); ev != nil {
-		t.Fatalf("expected nil for invalid json")
-	}
-	if ev := toTaskEvent("thread-1", `{"status":"queued"}`, 1); ev != nil {
-		t.Fatalf("expected nil when task_id missing")
-	}
-	if ev := toTaskEvent("thread-1", `{"task_id":"t1"}`, 1); ev != nil {
-		t.Fatalf("expected nil when status missing")
-	}
-}
+// Note: TestToTaskEvent_StatusMapping and TestToTaskEvent_InvalidPayload moved to executor_test.go

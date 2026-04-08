@@ -12,11 +12,12 @@ package sandbox
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/bookerbai/goclaw/pkg/errors"
 )
 
 // FileLockMode determines the lock implementation to use.
@@ -102,7 +103,7 @@ type CrossProcessFileLock struct {
 // If lockDir doesn't exist, it will be created.
 func NewCrossProcessFileLock(lockDir string) (*CrossProcessFileLock, error) {
 	if err := os.MkdirAll(lockDir, 0755); err != nil {
-		return nil, fmt.Errorf("create lock directory: %w", err)
+		return nil, errors.WrapInternalError(err, "create lock directory")
 	}
 	return &CrossProcessFileLock{lockDir: lockDir}, nil
 }
@@ -119,7 +120,7 @@ func (cpl *CrossProcessFileLock) Acquire(ctx context.Context, filePath string) (
 	// Open or create lock file
 	file, err := os.OpenFile(lockFileName, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("open lock file: %w", err)
+		return nil, errors.WrapInternalError(err, "open lock file")
 	}
 
 	// Try to acquire lock with context support
@@ -132,7 +133,7 @@ func (cpl *CrossProcessFileLock) Acquire(ctx context.Context, filePath string) (
 	case err := <-acquired:
 		if err != nil {
 			file.Close()
-			return nil, fmt.Errorf("acquire lock: %w", err)
+			return nil, errors.WrapInternalError(err, "acquire lock")
 		}
 		// Lock acquired successfully
 		return func() {
