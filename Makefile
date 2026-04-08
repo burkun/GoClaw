@@ -7,7 +7,7 @@ PKGS := ./...
 OUT_DIR := bin
 BIN_PATH := $(OUT_DIR)/$(APP_NAME)
 
-.PHONY: help run build build-bin test test-middleware fmt vet tidy clean
+.PHONY: help run build build-bin test test-cover test-middleware fmt vet tidy clean
 
 help:
 	@printf "可用目标:\n"
@@ -15,6 +15,7 @@ help:
 	@printf "  make build            # 编译所有包\n"
 	@printf "  make build-bin        # 生成可执行文件到 bin/\n"
 	@printf "  make test             # 运行全部测试\n"
+	@printf "  make test-cover       # 运行测试并生成覆盖率报告\n"
 	@printf "  make test-middleware  # 仅运行 middleware 测试\n"
 	@printf "  make fmt              # 格式化 Go 代码\n"
 	@printf "  make vet              # 运行 go vet\n"
@@ -33,6 +34,18 @@ build-bin:
 
 test:
 	$(GO) test $(PKGS)
+
+test-cover:
+	@rm -f coverage.out
+	$(GO) test -coverprofile=coverage.out -covermode=atomic $(PKGS) 2>/dev/null || true
+	@if [ -f coverage.out ]; then \
+		$(GO) tool cover -func=coverage.out | tail -1; \
+		echo "\n覆盖率报告已生成: coverage.out"; \
+		echo "运行 'go tool cover -html=coverage.out -o coverage.html' 查看详细报告"; \
+	else \
+		echo "覆盖率报告生成失败"; \
+		exit 1; \
+	fi
 
 test-middleware:
 	$(GO) test ./internal/middleware/...
