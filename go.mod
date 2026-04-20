@@ -4,8 +4,8 @@ go 1.25.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	github.com/cloudwego/eino v0.7.13
-	github.com/cloudwego/eino-ext/callbacks/langfuse v0.0.0-20260331071634-4f359694d2d9
+	github.com/cloudwego/eino v0.8.11
+	github.com/cloudwego/eino-ext/callbacks/langfuse v0.0.0-20260416081055-0ebab92e14f2
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/docker/docker v27.5.1+incompatible
 	github.com/eino-contrib/jsonschema v1.0.3
@@ -35,7 +35,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
-	github.com/cloudwego/eino-ext/libs/acl/langfuse v0.0.0-20251124083837-ce2e7e196f9f // indirect
+	github.com/cloudwego/eino-ext/libs/acl/langfuse v0.0.0-20260416081055-0ebab92e14f2 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.17 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect

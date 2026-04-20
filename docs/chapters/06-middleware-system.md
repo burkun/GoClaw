@@ -5,10 +5,10 @@
 中间件是 Agent 执行流水线的核心扩展点。每个中间件可以在特定阶段注入自定义逻辑，形成洋葱模型：
 
 ```
-请求 ──► BeforeAgent ──► Before ──► 模型调用 ──► After ──► AfterAgent ──► 响应
-           │              │                          │            │
-           │              │                          │            │
-           └──────────────┴──────────────────────────┴────────────┘
+请求 ──► BeforeAgent ──► BeforeModel ──► 模型调用 ──► AfterModel ──► AfterAgent ──► 响应
+           │                │                            │              │
+           │                │                            │              │
+           └────────────────┴────────────────────────────┴──────────────┘
                               每个中间件可以拦截和修改
 ```
 
@@ -17,8 +17,8 @@
 | 钩子 | 执行时机 | 执行次数 | 顺序 | 用途 |
 |------|---------|---------|------|------|
 | BeforeAgent | Agent 运行开始 | 1次 | 顺序 | 创建目录、获取资源 |
-| Before | 模型调用前 | 多次 | 顺序 | 注入记忆、权限检查 |
-| After | 模型调用后 | 多次 | 逆序 | 排队更新、记录日志 |
+| BeforeModel | 模型调用前 | 多次 | 顺序 | 注入记忆、权限检查 |
+| AfterModel | 模型调用后 | 多次 | 逆序 | 排队更新、记录日志 |
 | AfterAgent | Agent 运行结束 | 1次 | 逆序 | 释放资源、触发任务 |
 | WrapToolCall | 工具执行时 | 每次调用 | 顺序 | 拦截、审计、重试 |
 
@@ -63,7 +63,9 @@
 
 ## 6.5　中间件详解
 
-### ThreadDataMiddleware
+按执行顺序排列（共 18 层）：
+
+### 1. ThreadDataMiddleware
 
 **职责**：创建线程目录结构
 
@@ -74,7 +76,18 @@
 2. 创建 `workspace/`、`uploads/`、`outputs/` 子目录
 3. 将路径存入 State.Extra 供后续使用
 
-### SandboxMiddleware
+### 2. UploadsMiddleware
+
+**职责**：注入已上传文件列表
+
+**钩子**：BeforeAgent
+
+**逻辑**：
+1. 扫描 `uploads/` 目录
+2. 将文件列表注入到用户消息开头
+3. 格式化为 Markdown 列表
+
+### 3. SandboxMiddleware
 
 **职责**：管理沙箱生命周期
 
@@ -84,44 +97,20 @@
 - BeforeAgent：调用 Provider.Acquire() 获取沙箱，存入 State.Extra
 - AfterAgent：调用 Provider.Release() 释放沙箱
 
-### MemoryMiddleware
+### 4. DanglingToolCallMiddleware
 
-**职责**：长期记忆的注入和更新
+**职责**：处理中断导致的悬空工具调用
 
-**钩子**：Before / After
+**钩子**：BeforeModel
 
-**逻辑**：
-- Before：
-  1. 从存储加载记忆
-  2. 获取 Top 15 事实
-  3. 格式化并注入到系统提示词
-- After：
-  1. 过滤消息（只保留用户输入和最终响应）
-  2. 排队异步更新
-
-### TitleMiddleware
-
-**职责**：自动生成对话标题
-
-**钩子**：After
+**场景**：模型请求调用工具，但用户中断了对话
 
 **逻辑**：
-1. 检查是否已有标题
-2. 检查是否首次完整交互（有用户消息和助手响应）
-3. 调用 LLM 生成简短标题
-4. 截断到最大字符数
+1. 查找最后一条 AI 消息的 tool_calls
+2. 检查是否有对应的 tool 响应消息
+3. 为未响应的调用添加占位 ToolMessage
 
-### TodoMiddleware
-
-**职责**：计划模式支持
-
-**钩子**：BeforeAgent / After
-
-**逻辑**：
-- BeforeAgent：如果是计划模式，注册 `write_todos` 工具
-- After：合并 todos 状态更新到 State
-
-### GuardrailMiddleware
+### 5. GuardrailMiddleware
 
 **职责**：工具调用守卫
 
@@ -132,64 +121,135 @@
 - Deny：返回错误，阻止执行
 - Ask：需要用户确认（当前实现为拒绝）
 
-### ClarificationMiddleware
+### 6. SandboxAuditMiddleware
 
-**职责**：拦截澄清请求
+**职责**：沙箱操作审计日志
 
-**钩子**：WrapToolCall
-
-**逻辑**：
-1. 检测工具名是否为 `ask_clarification`
-2. 如果是，设置标记 `clarification_requested`
-3. 返回特殊结果，不实际执行工具
-
-### DanglingToolCallMiddleware
-
-**职责**：处理中断导致的悬空工具调用
-
-**钩子**：Before
-
-**场景**：模型请求调用工具，但用户中断了对话
+**钩子**：All hooks
 
 **逻辑**：
-1. 查找最后一条 AI 消息的 tool_calls
-2. 检查是否有对应的 tool 响应消息
-3. 为未响应的调用添加占位 ToolMessage
+- 记录所有沙箱命令执行
+- 记录文件读写操作
+- 用于安全审计和调试
 
-### SubagentLimitMiddleware
+### 7. SummarizationMiddleware
+
+**职责**：上下文压缩
+
+**钩子**：BeforeModel
+
+**触发条件**：
+- Token 数超过阈值比例（默认 0.8）
+- 或消息数超过限制
+
+**逻辑**：
+1. 保留系统消息和最近 N 条消息
+2. 调用 LLM 对历史消息生成摘要
+3. 用摘要替换被压缩的消息
+
+### 8. TodoMiddleware
+
+**职责**：计划模式支持
+
+**钩子**：BeforeAgent / AfterModel
+
+**逻辑**：
+- BeforeAgent：如果是计划模式，注册 `write_todos` 工具
+- AfterModel：合并 todos 状态更新到 State
+
+### 9. TitleMiddleware
+
+**职责**：自动生成对话标题
+
+**钩子**：AfterModel
+
+**逻辑**：
+1. 检查是否已有标题
+2. 检查是否首次完整交互（有用户消息和助手响应）
+3. 调用 LLM 生成简短标题
+4. 截断到最大字符数
+
+### 10. MemoryMiddleware
+
+**职责**：长期记忆的注入和更新
+
+**钩子**：BeforeModel / AfterModel
+
+**逻辑**：
+- BeforeModel：
+  1. 从存储加载记忆
+  2. 获取 Top 15 事实
+  3. 格式化并注入到系统提示词
+- AfterModel：
+  1. 过滤消息（只保留用户输入和最终响应）
+  2. 排队异步更新
+
+### 11. ViewImageMiddleware
+
+**职责**：图片注入（多模态模型）
+
+**钩子**：BeforeModel
+
+**逻辑**：
+1. 检查 State.ViewedImages
+2. 将 base64 图片注入到最后一条用户消息
+3. 支持多图、多格式（PNG/JPEG/GIF/WebP）
+
+### 12. SubagentLimitMiddleware
 
 **职责**：限制并发子代理数量
 
-**钩子**：After
+**钩子**：AfterModel
 
 **逻辑**：
 1. 统计 AI 响应中的 `task` 工具调用数量
 2. 如果超过限制，裁剪多余的调用
 3. 确保不会同时启动过多子代理
 
-### LoopDetectionMiddleware
+### 13. LoopDetectionMiddleware
 
 **职责**：检测无限循环
 
-**钩子**：After
+**钩子**：AfterModel
 
 **检测条件**：
 - 相同工具连续调用超过 N 次
 - 相同参数重复调用
 - 无进展的循环
 
-### LLMErrorMiddleware
+### 14. DeferredToolFilterMiddleware
+
+**职责**：过滤延迟工具
+
+**钩子**：BeforeModel
+
+**逻辑**：
+1. 检查 State.DeferredTools
+2. 从可用工具列表中移除延迟工具
+3. 防止模型重复调用已延迟的工具
+
+### 15. TokenUsageMiddleware
+
+**职责**：Token 使用统计
+
+**钩子**：AfterModel
+
+**逻辑**：
+- 记录每次模型调用的 token 数
+- 累计统计并暴露指标
+
+### 16. LLMErrorMiddleware
 
 **职责**：LLM 调用错误处理
 
-**钩子**：After
+**钩子**：AfterModel
 
 **逻辑**：
 - 检测 LLM 返回的错误
 - 根据错误类型决定是否重试
 - 配置最大重试次数
 
-### ToolErrorMiddleware
+### 17. ToolErrorMiddleware
 
 **职责**：工具执行错误处理
 
@@ -200,6 +260,17 @@
 - 格式化错误信息返回给模型
 - 允许模型根据错误调整策略
 
+### 18. ClarificationMiddleware
+
+**职责**：拦截澄清请求
+
+**钩子**：WrapToolCall
+
+**逻辑**：
+1. 检测工具名是否为 `ask_clarification`
+2. 如果是，设置标记 `clarification_requested`
+3. 返回特殊结果，不实际执行工具
+
 ## 6.6　中间件执行流
 
 ```
@@ -207,25 +278,33 @@ BeforeAgent (顺序)
     │
     ├── ThreadData: 创建目录
     ├── Uploads: 注入文件列表
-    ├── Sandbox: 获取沙箱
-    └── Guardrail: 初始化策略
+    └── Sandbox: 获取沙箱
     │
     ▼
 迭代循环
     │
-    ├── Before (顺序)
+    ├── BeforeModel (顺序)
     │   ├── Dangling: 修复悬空调用
+    │   ├── Summarization: 压缩上下文
+    │   ├── Todo: 注册工具
     │   ├── Memory: 注入记忆
-    │   └── ViewImage: 注入图片
+    │   ├── ViewImage: 注入图片
+    │   ├── DeferredToolFilter: 过滤工具
+    │   └── (其他 BeforeModel hooks)
     │
     ├── 模型调用
     │
     ├── 工具执行 (WrapToolCall 包装)
     │   ├── Guardrail: 检查权限
-    │   ├── Clarification: 拦截澄清
-    │   └── ToolError: 错误处理
+    │   ├── SandboxAudit: 记录审计
+    │   ├── ToolError: 错误处理
+    │   └── Clarification: 拦截澄清
     │
-    └── After (逆序)
+    └── AfterModel (逆序)
+        ├── SubagentLimit: 限制并发
+        ├── LoopDetection: 检测循环
+        ├── TokenUsage: 统计 token
+        ├── LLMError: 错误重试
         ├── Title: 生成标题
         ├── Memory: 排队更新
         └── Todo: 更新任务
@@ -248,15 +327,33 @@ AfterAgent (逆序)
 
 ### 需要实现的接口
 
+```go
+type Middleware interface {
+    Name() string
+    BeforeAgent(ctx context.Context, state *State) error
+    BeforeModel(ctx context.Context, state *State) error
+    AfterModel(ctx context.Context, state *State, resp *Response) error
+    AfterAgent(ctx context.Context, state *State, resp *Response) error
+    WrapToolCall(ctx context.Context, state *State, call *ToolCall, handler ToolHandler) (*ToolResult, error)
+}
 ```
-Name() string                    // 返回中间件名称
-BeforeAgent(ctx, state) error    // Agent 开始前
-Before(ctx, state) error         // 模型调用前
-After(ctx, state, response) error // 模型调用后
-AfterAgent(ctx, state, response) error // Agent 结束后
-WrapToolCall(ctx, state, toolCall, handler) (result, error) // 工具包装
+
+### 快捷方式：嵌入 MiddlewareWrapper
+
+```go
+type MyMiddleware struct {
+    middleware.MiddlewareWrapper  // 提供默认空实现
+}
+
+func (m *MyMiddleware) Name() string { return "MyMiddleware" }
+
+// 只重写需要的钩子
+func (m *MyMiddleware) BeforeModel(ctx context.Context, state *middleware.State) error {
+    // 自定义逻辑
+    return nil
+}
 ```
 
 ### 注册方式
 
-在 `buildMiddlewares()` 函数中按正确位置插入。
+在 `internal/middleware/builder/builder.go` 的 `BuildMiddlewaresFromBuilder()` 函数中按正确位置插入。
