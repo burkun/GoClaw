@@ -28,12 +28,20 @@ func (s *stubModel) Stream(ctx context.Context, input []*schema.Message, opts ..
 	return schema.StreamReaderFromArray([]*schema.Message{schema.AssistantMessage("ok", nil)}), nil
 }
 
+func (s *stubModel) BindTools(tools []*schema.ToolInfo) error { return nil }
+
+func (s *stubModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return s, nil
+}
+
+var _ model.ToolCallingChatModel = (*stubModel)(nil)
+
 func TestCreateChatModel_UsesDefaultModelAndBuilder(t *testing.T) {
 	ResetProviderBuilders()
 	t.Cleanup(ResetProviderBuilders)
 
 	called := false
-	RegisterProviderBuilder("openai", func(ctx context.Context, cfg config.ModelConfig, opts BuildOptions) (model.BaseChatModel, error) {
+	RegisterProviderBuilder("openai", func(ctx context.Context, cfg config.ModelConfig, opts BuildOptions) (model.ToolCallingChatModel, error) {
 		called = true
 		require.Equal(t, "gpt-4o", cfg.Name)
 		// Note: ThinkingEnabled is false because model doesn't have SupportsThinking=true
@@ -81,7 +89,7 @@ func TestCreateChatModel_PropagatesBuilderError(t *testing.T) {
 	ResetProviderBuilders()
 	t.Cleanup(ResetProviderBuilders)
 
-	RegisterProviderBuilder("openai", func(ctx context.Context, cfg config.ModelConfig, opts BuildOptions) (model.BaseChatModel, error) {
+	RegisterProviderBuilder("openai", func(ctx context.Context, cfg config.ModelConfig, opts BuildOptions) (model.ToolCallingChatModel, error) {
 		return nil, errors.New("boom")
 	})
 

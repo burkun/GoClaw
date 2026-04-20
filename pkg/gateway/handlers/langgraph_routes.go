@@ -15,6 +15,7 @@ import (
 
 	"goclaw/internal/agent"
 	"goclaw/internal/config"
+	"goclaw/internal/threadstore"
 	"goclaw/pkg/metrics"
 )
 
@@ -25,6 +26,7 @@ type LangGraphHandler struct {
 	cfg    *config.AppConfig
 	agent  agent.LeadAgent
 	agents map[string]agent.LeadAgent // P1 fix: 支持多agent
+	store  threadstore.Store           // Thread persistence for multi-turn context
 
 	runsMu sync.RWMutex
 	runs   map[string]lgRunHandle
@@ -40,20 +42,37 @@ type lgRunHandle struct {
 
 // NewLangGraphHandler creates a handler for LangGraph-compatible endpoints.
 func NewLangGraphHandler(cfg *config.AppConfig, a agent.LeadAgent) *LangGraphHandler {
+	store, _ := threadstore.NewFileStore("")
 	return &LangGraphHandler{
 		cfg:   cfg,
 		agent: a,
+		store: store,
 		runs:  make(map[string]lgRunHandle),
 	}
 }
 
 // NewLangGraphHandlerWithAgents creates a handler with multiple agents (P1 fix).
 func NewLangGraphHandlerWithAgents(cfg *config.AppConfig, a agent.LeadAgent, agents map[string]agent.LeadAgent) *LangGraphHandler {
+	store, _ := threadstore.NewFileStore("")
 	return &LangGraphHandler{
 		cfg:    cfg,
 		agent:  a,
 		agents: agents,
+		store:  store,
 		runs:   make(map[string]lgRunHandle),
+	}
+}
+
+// NewLangGraphHandlerWithStore creates a handler with an explicit thread store.
+func NewLangGraphHandlerWithStore(cfg *config.AppConfig, a agent.LeadAgent, store threadstore.Store) *LangGraphHandler {
+	if store == nil {
+		store, _ = threadstore.NewFileStore("")
+	}
+	return &LangGraphHandler{
+		cfg:   cfg,
+		agent: a,
+		store: store,
+		runs:  make(map[string]lgRunHandle),
 	}
 }
 
@@ -320,6 +339,30 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 		Messages: make([]*schema.Message, 0),
 	}
 
+	// Load historical messages from thread store for multi-turn context.
+	if h.store != nil {
+		if existingState, err := h.store.GetState(threadID); err == nil && existingState != nil {
+			for _, mr := range existingState.Messages {
+				var msg *schema.Message
+				switch mr.Role {
+				case "human":
+					msg = schema.UserMessage(mr.Content)
+				case "assistant", "ai":
+					msg = schema.AssistantMessage(mr.Content, nil)
+				case "system":
+					msg = schema.SystemMessage(mr.Content)
+				case "tool":
+					msg = schema.ToolMessage(mr.Content, "")
+				default:
+					msg = schema.UserMessage(mr.Content)
+				}
+				if msg != nil {
+					state.Messages = append(state.Messages, msg)
+				}
+			}
+		}
+	}
+
 	// Extract messages from input if present.
 	if input, ok := req.Input.(map[string]any); ok {
 		if msgs, ok := input["messages"].([]any); ok {
@@ -446,6 +489,9 @@ streamLoop:
 			break streamLoop
 		}
 	}
+
+	// Persist thread state for multi-turn context.
+	h.saveThreadMessages(threadID, state.Messages, converter.messages)
 }
 
 // StreamRunStandalone handles POST /runs/stream (without thread_id).
@@ -512,6 +558,72 @@ func (h *LangGraphHandler) getRun(runID string) (lgRunHandle, bool) {
 	defer h.runsMu.RUnlock()
 	r, ok := h.runs[runID]
 	return r, ok
+}
+
+// saveThreadMessages persists the combined message history to thread store.
+func (h *LangGraphHandler) saveThreadMessages(threadID string, initialMsgs []*schema.Message, converterMsgs []LangGraphMessage) {
+	if h.store == nil {
+		return
+	}
+
+	// Build combined message list: initial messages + new messages from converter
+	allMsgs := make([]threadstore.MessageRecord, 0)
+
+	// Add initial messages
+	for _, m := range initialMsgs {
+		role := "human"
+		switch m.Role {
+		case schema.Assistant:
+			role = "assistant"
+		case schema.System:
+			role = "system"
+		case schema.Tool:
+			role = "tool"
+		}
+		allMsgs = append(allMsgs, threadstore.MessageRecord{
+			Role:      role,
+			Content:   m.Content,
+			CreatedAt: time.Now().UnixMilli(),
+		})
+	}
+
+	// Add new messages from converter (AI responses and tool results)
+	for _, m := range converterMsgs {
+		content := ""
+		switch v := m.Content.(type) {
+		case string:
+			content = v
+		}
+		if content == "" {
+			continue
+		}
+		allMsgs = append(allMsgs, threadstore.MessageRecord{
+			Role:      m.Type,
+			Content:   content,
+			CreatedAt: time.Now().UnixMilli(),
+		})
+	}
+
+	// Create or update thread state
+	now := time.Now().UnixMilli()
+	threadState := &threadstore.ThreadState{
+		ThreadID:  threadID,
+		Status:    "idle",
+		Messages:  allMsgs,
+		UpdatedAt: now,
+	}
+
+	// Check if thread exists, create metadata if not
+	if existingMeta, _ := h.store.Get(threadID); existingMeta == nil {
+		_ = h.store.Create(&threadstore.ThreadMetadata{
+			ThreadID:  threadID,
+			Status:    "idle",
+			CreatedAt: now,
+			UpdatedAt: now,
+		})
+	}
+
+	_ = h.store.SaveState(threadState)
 }
 
 // parseLangGraphMessage converts a LangGraph message map to schema.Message.
