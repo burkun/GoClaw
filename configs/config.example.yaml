@@ -16,6 +16,18 @@
 config_version: 1
 
 # ============================================================================
+# Server Configuration
+# ============================================================================
+server:
+  address: ":8001"
+  # CORS origins for frontend integration (e.g., DeerFlow)
+  # When empty, allows all origins in development mode.
+  cors_origins:
+    - "http://localhost:3000"      # DeerFlow frontend (Next.js)
+    - "http://localhost:5173"      # Vite dev server
+    # - "https://your-frontend.com" # Production frontend
+
+# ============================================================================
 # Logging
 # ============================================================================
 # Log level for goclaw modules (debug / info / warning / error)
