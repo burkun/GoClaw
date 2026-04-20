@@ -24,4 +24,9 @@ Thumbs.db
 *.tmp
 *.log
 tmp/
+
+# Binary
 goclaw
+
+# Config (use config.yaml.example instead)
+config.yaml

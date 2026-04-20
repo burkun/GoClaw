@@ -1,0 +1,51 @@
+# GoClaw 配置示例
+# 复制此文件为 config.yaml 并填入实际值
+
+config_version: 1
+log_level: info
+
+# 服务器配置
+server:
+  address: ":8001"
+
+# 模型配置
+models:
+  - name: glm
+    display_name: GLM47
+    use: openai
+    model: glm-4.7
+    api_key: YOUR_API_KEY_HERE
+    max_tokens: 20000
+    base_url: https://open.bigmodel.cn/api/paas/v4
+
+# Agents配置（通过API动态创建）
+# agents:
+#   researcher:
+#     enabled: true
+#     description: "Research agent for testing"
+
+# 沙箱配置
+sandbox:
+  use: local
+  allow_host_bash: true  # 启用 bash 工具
+
+# 可选功能
+memory:
+  enabled: false
+
+title:
+  enabled: false
+
+summarization:
+  enabled: false
+
+# 插件系统配置
+plugins:
+  enabled: false
+  directory: "./plugins"
+  plugins:
+    echo-plugin:
+      enabled: false
+      config:
+        prefix: "[Echo] "
+        suffix: ""
