@@ -16,16 +16,18 @@ import (
 	telegramch "goclaw/internal/channels/telegram"
 	"goclaw/internal/config"
 	"goclaw/internal/logging"
+	skillsruntime "goclaw/internal/skills"
 	"goclaw/internal/tracing"
 	"goclaw/pkg/gateway/handlers"
 )
 
 // Server holds all dependencies for the HTTP gateway.
 type Server struct {
-	router *gin.Engine
-	cfg    *config.AppConfig
-	agent  agent.LeadAgent
-	agents map[string]agent.LeadAgent // P1 fix: 支持多agent
+	router        *gin.Engine
+	cfg           *config.AppConfig
+	agent         agent.LeadAgent
+	agents        map[string]agent.LeadAgent // P1 fix: 支持多agent
+	skillsHandler *handlers.SkillsHandler
 }
 
 // New creates a new Server with the given config and agent.
@@ -33,11 +35,25 @@ type Server struct {
 func New(cfg *config.AppConfig, leadAgent agent.LeadAgent) *Server {
 	router := gin.New()
 
+	// Load skills registry
+	skillsRegistry := skillsruntime.NewRegistry()
+	skillLoader := skillsruntime.NewLoader()
+	loadedSkills, err := skillLoader.Load(cfg.Skills.Path, cfg.Extensions)
+	if err != nil {
+		logging.Warn("failed to load skills for API handler", "error", err)
+	}
+	for _, sk := range loadedSkills {
+		if err := skillsRegistry.Register(sk); err != nil {
+			logging.Warn("failed to register skill", "name", sk.Metadata.Name, "error", err)
+		}
+	}
+
 	s := &Server{
-		router: router,
-		cfg:    cfg,
-		agent:  leadAgent,
-		agents: map[string]agent.LeadAgent{"default": leadAgent}, // 向后兼容
+		router:        router,
+		cfg:           cfg,
+		agent:         leadAgent,
+		agents:        map[string]agent.LeadAgent{"default": leadAgent}, // 向后兼容
+		skillsHandler: handlers.NewSkillsHandler(cfg, skillsRegistry),
 	}
 
 	// Initialize tracing (Langfuse, etc.) if configured
@@ -55,11 +71,25 @@ func New(cfg *config.AppConfig, leadAgent agent.LeadAgent) *Server {
 func NewWithAgents(cfg *config.AppConfig, defaultAgent agent.LeadAgent, agents map[string]agent.LeadAgent) *Server {
 	router := gin.New()
 
+	// Load skills registry
+	skillsRegistry := skillsruntime.NewRegistry()
+	skillLoader := skillsruntime.NewLoader()
+	loadedSkills, err := skillLoader.Load(cfg.Skills.Path, cfg.Extensions)
+	if err != nil {
+		logging.Warn("failed to load skills for API handler", "error", err)
+	}
+	for _, sk := range loadedSkills {
+		if err := skillsRegistry.Register(sk); err != nil {
+			logging.Warn("failed to register skill", "name", sk.Metadata.Name, "error", err)
+		}
+	}
+
 	s := &Server{
-		router: router,
-		cfg:    cfg,
-		agent:  defaultAgent,
-		agents: agents,
+		router:        router,
+		cfg:           cfg,
+		agent:         defaultAgent,
+		agents:        agents,
+		skillsHandler: handlers.NewSkillsHandler(cfg, skillsRegistry),
 	}
 
 	s.registerMiddleware()
@@ -126,7 +156,7 @@ func (s *Server) registerRoutes() {
 	uploadsH := handlers.NewUploadsHandler(s.cfg)
 	memoryH := handlers.NewMemoryHandler(s.cfg)
 	mcpH := handlers.NewMCPHandler(s.cfg)
-	skillsH := handlers.NewSkillsHandler(s.cfg, nil) // registry injected separately if needed
+	skillsH := s.skillsHandler
 	artifactsH := handlers.NewArtifactsHandler(s.cfg, "")
 	suggestionsH := handlers.NewSuggestionsHandler(s.cfg)
 	agentsH := handlers.NewAgentsHandler(s.cfg)
