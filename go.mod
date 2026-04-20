@@ -9,6 +9,7 @@ require (
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/docker/docker v27.5.1+incompatible
 	github.com/eino-contrib/jsonschema v1.0.3
+	github.com/fatih/color v1.19.0
 	github.com/gin-contrib/cors v1.7.7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
@@ -65,6 +66,7 @@ require (
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/meguminnnnnnnnn/go-openai v0.1.2 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
