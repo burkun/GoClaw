@@ -114,6 +114,7 @@ func (t *WebSearchTool) InputSchema() json.RawMessage {
 }
 
 // Execute calls the Tavily Search API and returns JSON-formatted results.
+// Falls back to DuckDuckGo if Tavily API key is not configured.
 func (t *WebSearchTool) Execute(ctx context.Context, input string) (string, error) {
 	var in webSearchInput
 	if err := json.Unmarshal([]byte(input), &in); err != nil {
@@ -125,7 +126,8 @@ func (t *WebSearchTool) Execute(ctx context.Context, input string) (string, erro
 		return "", fmt.Errorf("web_search: query is required")
 	}
 	if t.cfg.TavilyAPIKey == "" {
-		return "Error: TAVILY_API_KEY is not configured.", nil
+		// Fallback to DuckDuckGo when Tavily API key is not configured
+		return t.executeDuckDuckGo(ctx, query)
 	}
 
 	payload := map[string]any{
@@ -359,6 +361,118 @@ func (t *WebFetchTool) executeJinaReader(ctx context.Context, rawURL string) (st
 		content = content[:maxChars] + "\n... (truncated)"
 	}
 	return content, nil
+}
+
+// ---------------------------------------------------------------------------
+// DuckDuckGo Search – Fallback when Tavily is not configured
+// ---------------------------------------------------------------------------
+
+// executeDuckDuckGo searches using DuckDuckGo HTML search.
+// This is a fallback when Tavily API key is not available.
+func (t *WebSearchTool) executeDuckDuckGo(ctx context.Context, query string) (string, error) {
+	searchURL := "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(query)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
+	if err != nil {
+		return fmt.Sprintf("Error: cannot build request: %v", err), nil
+	}
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; GoClaw/1.0)")
+
+	resp, err := newHTTPClient(t.cfg.Timeout).Do(req)
+	if err != nil {
+		return fmt.Sprintf("Error: DuckDuckGo request failed: %v", err), nil
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Sprintf("Error: failed to read DuckDuckGo response: %v", err), nil
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Sprintf("Error: DuckDuckGo returned status %d", resp.StatusCode), nil
+	}
+
+	results := t.parseDuckDuckGoHTML(string(respBody))
+	if len(results) == 0 {
+		return "No search results found.", nil
+	}
+
+	maxResults := clampInt(t.cfg.MaxSearchResults, 1, 20)
+	if len(results) > maxResults {
+		results = results[:maxResults]
+	}
+
+	encoded, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("Error: cannot encode search results: %v", err), nil
+	}
+	return string(encoded), nil
+}
+
+// parseDuckDuckGoHTML extracts search results from DuckDuckGo HTML response.
+func (t *WebSearchTool) parseDuckDuckGoHTML(html string) []SearchResult {
+	var results []SearchResult
+	resultPattern := `<a class="result__a" href="`
+
+	for len(results) < 20 {
+		idx := strings.Index(html, resultPattern)
+		if idx == -1 {
+			break
+		}
+		html = html[idx+len(resultPattern):]
+
+		endURL := strings.Index(html, `"`)
+		if endURL == -1 {
+			continue
+		}
+		resultURL := html[:endURL]
+
+		// DuckDuckGo redirect URL - extract actual URL
+		if strings.Contains(resultURL, "uddg=") {
+			if u, err := url.QueryUnescape(resultURL[strings.Index(resultURL, "uddg=")+5:]); err == nil {
+				resultURL = u
+			}
+		}
+
+		titleStart := strings.Index(html, `>`)
+		if titleStart == -1 {
+			continue
+		}
+		html = html[titleStart+1:]
+		titleEnd := strings.Index(html, `</a>`)
+		if titleEnd == -1 {
+			continue
+		}
+		title := strings.TrimSpace(html[:titleEnd])
+		html = html[titleEnd+4:]
+
+		// Look for snippet
+		snippet := ""
+		snippetIdx := strings.Index(html, `<a class="result__snippet"`)
+		if snippetIdx != -1 && snippetIdx < 300 {
+			snippetHTML := html[snippetIdx:]
+			snippetStart := strings.Index(snippetHTML, `>`)
+			if snippetStart != -1 {
+				snippetHTML = snippetHTML[snippetStart+1:]
+				snippetEnd := strings.Index(snippetHTML, `</a>`)
+				if snippetEnd != -1 {
+					snippet = strings.TrimSpace(snippetHTML[:snippetEnd])
+					snippet = strings.ReplaceAll(snippet, "<b>", "")
+					snippet = strings.ReplaceAll(snippet, "</b>", "")
+				}
+			}
+		}
+
+		if title != "" && resultURL != "" {
+			results = append(results, SearchResult{
+				Title:   title,
+				URL:     resultURL,
+				Snippet: snippet,
+			})
+		}
+	}
+	return results
 }
 
 func clampInt(v, minV, maxV int) int {

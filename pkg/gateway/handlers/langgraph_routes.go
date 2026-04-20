@@ -626,10 +626,34 @@ func (h *LangGraphHandler) saveThreadMessages(threadID string, initialMsgs []*sc
 	_ = h.store.SaveState(threadState)
 }
 
+// parseContent extracts text content from various formats.
+// LangGraph SDK may send content as:
+// - string: "hello"
+// - array: [{"type":"text","text":"hello"}]
+// - array with multiple parts: [{"type":"text","text":"hello"},{"type":"image_url","image_url":{...}}]
+func parseContent(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		var parts []string
+		for _, item := range v {
+			if itemMap, ok := item.(map[string]any); ok {
+				if text, ok := itemMap["text"].(string); ok && text != "" {
+					parts = append(parts, text)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return ""
+	}
+}
+
 // parseLangGraphMessage converts a LangGraph message map to schema.Message.
 func parseLangGraphMessage(m map[string]any) *schema.Message {
 	role, _ := m["type"].(string)
-	content, _ := m["content"].(string)
+	content := parseContent(m["content"])
 
 	switch role {
 	case "human":
