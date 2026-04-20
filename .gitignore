@@ -37,4 +37,5 @@ extensions_config.json
 **/memory.json
 
 # Skills directory (user data)
-skills/
+skills/*
+!skills/README.md

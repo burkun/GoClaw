@@ -1,0 +1,37 @@
+{
+  "$schema": "https://goclaw.dev/schemas/extensions_config.json",
+  "mcpServers": {
+    "filesystem": {
+      "enabled": true,
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/workspace"],
+      "env": {
+        "NODE_OPTIONS": "--max-old-space-size=4096"
+      }
+    },
+    "api-server": {
+      "enabled": false,
+      "type": "http",
+      "url": "https://api.example.com/mcp",
+      "oauth": {
+        "token_url": "https://auth.example.com/token",
+        "grant_type": "client_credentials",
+        "client_id": "$CLIENT_ID",
+        "client_secret": "$CLIENT_SECRET"
+      }
+    },
+    "sse-server": {
+      "enabled": false,
+      "type": "sse",
+      "url": "https://sse.example.com/mcp"
+    }
+  },
+  "skills": {
+    "my-skill": {
+      "enabled": true,
+      "description": "自定义技能描述",
+      "tools": ["allowed_tool_1", "allowed_tool_2"]
+    }
+  }
+}
