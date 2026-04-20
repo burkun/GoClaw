@@ -45,3 +45,11 @@ docs/node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 docs/package-lock.json
+
+# Frontend (web/) build artifacts
+web/node_modules/
+web/.next/
+web/out/
+web/.env.local
+web/pnpm-lock.yaml
+
