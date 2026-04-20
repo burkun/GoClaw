@@ -28,7 +28,12 @@ func adaptMiddleware(mw Middleware) adk.AgentMiddleware {
 	return adk.AgentMiddleware{
 		BeforeChatModel: func(ctx context.Context, state *adk.ChatModelAgentState) error {
 			mwState := toMiddlewareState(state)
-			return mw.BeforeModel(ctx, mwState)
+			if err := mw.BeforeModel(ctx, mwState); err != nil {
+				return err
+			}
+			// Write back modified state to adk state
+			applyMiddlewareStateToAdk(mwState, state)
+			return nil
 		},
 		AfterChatModel: func(ctx context.Context, state *adk.ChatModelAgentState) error {
 			mwState := toMiddlewareState(state)
@@ -220,6 +225,40 @@ func messageToMap(msg *schema.Message) map[string]any {
 		m["tool_calls"] = toolCalls
 	}
 	return m
+}
+
+// applyMiddlewareStateToAdk writes back modified middleware state to adk state.
+// This is critical for memory injection which modifies Messages.
+func applyMiddlewareStateToAdk(mwState *State, adkState *adk.ChatModelAgentState) {
+	if mwState == nil || adkState == nil {
+		return
+	}
+
+	// Convert modified messages back to adk state
+	adkState.Messages = make([]*schema.Message, 0, len(mwState.Messages))
+	for _, msg := range mwState.Messages {
+		role, _ := msg["role"].(string)
+		content, _ := msg["content"].(string)
+
+		var schemaRole schema.RoleType
+		switch role {
+		case "system":
+			schemaRole = schema.System
+		case "user", "human":
+			schemaRole = schema.User
+		case "assistant", "ai":
+			schemaRole = schema.Assistant
+		case "tool":
+			schemaRole = schema.Tool
+		default:
+			schemaRole = schema.User
+		}
+
+		adkState.Messages = append(adkState.Messages, &schema.Message{
+			Role:    schemaRole,
+			Content: content,
+		})
+	}
 }
 
 type middlewareStateKey struct{}
