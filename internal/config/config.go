@@ -688,4 +688,3 @@ func (p *PluginsConfig) GetEnabledPlugins() map[string]PluginConfig {
 	}
 	return result
 }
-

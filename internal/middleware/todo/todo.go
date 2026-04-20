@@ -160,11 +160,7 @@ func (t *TodoMiddleware) AfterModel(ctx context.Context, state *middleware.State
 		}
 
 		// Convert to state.Todos format.
-		newTodos := make([]map[string]any, 0, len(payload.Todos))
-		for _, t := range payload.Todos {
-			newTodos = append(newTodos, t)
-		}
-		state.Todos = newTodos
+		state.Todos = append([]map[string]any{}, payload.Todos...)
 		break
 	}
 	return nil

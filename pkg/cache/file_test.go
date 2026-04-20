@@ -13,10 +13,10 @@ import (
 
 func TestNewFileCache(t *testing.T) {
 	tests := []struct {
-		name     string
-		baseDir  string
-		maxSize  int64
-		wantErr  bool
+		name    string
+		baseDir string
+		maxSize int64
+		wantErr bool
 	}{
 		{"default_values", "", 0, false},
 		{"custom_baseDir", filepath.Join(os.TempDir(), "test-cache-1"), 50 * 1024 * 1024, false},
@@ -340,7 +340,7 @@ func TestFileCache_Eviction(t *testing.T) {
 
 	// Verify eviction happened (check stats instead of callback)
 	stats, _ := cache.Stats(ctx)
-	
+
 	// The cache should have evicted items to stay under limit
 	// With 200 byte limit, we can only store 1-2 items
 	if stats.TotalItems > 3 {

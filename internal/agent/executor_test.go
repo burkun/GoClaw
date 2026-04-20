@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/adk"
-	"github.com/cloudwego/eino/compose"
 	lctool "github.com/cloudwego/eino/components/tool"
+	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
 	"goclaw/internal/agent/subagents"
@@ -607,7 +607,7 @@ func TestParseViewedImages_MapViewedImageData(t *testing.T) {
 func TestParseViewedImages_MapAny(t *testing.T) {
 	input := map[string]any{
 		"/path/to/image.png": map[string]any{
-			"base64":   "abc123",
+			"base64":    "abc123",
 			"mime_type": "image/png",
 		},
 	}
@@ -622,10 +622,10 @@ func TestParseViewedImages_MapAny(t *testing.T) {
 func TestParseViewedImages_InvalidItems(t *testing.T) {
 	input := map[string]any{
 		"/valid.png": map[string]any{
-			"base64":   "abc",
+			"base64":    "abc",
 			"mime_type": "image/png",
 		},
-		"/invalid": "not a map",
+		"/invalid":      "not a map",
 		"/also_invalid": 42,
 	}
 
@@ -791,10 +791,10 @@ func TestFromLegacyMessage_AssistantWithName(t *testing.T) {
 
 func TestFromLegacyMessage_Tool(t *testing.T) {
 	input := map[string]any{
-		"role":          "tool",
-		"content":       "result",
-		"tool_call_id":  "call_1",
-		"tool_name":     "read_file",
+		"role":         "tool",
+		"content":      "result",
+		"tool_call_id": "call_1",
+		"tool_name":    "read_file",
 	}
 	result := fromLegacyMessage(input)
 
@@ -1231,45 +1231,45 @@ func createMessageVariant(msg *schema.Message) *adk.MessageVariant {
 
 func TestPrepareRunMessages_TableDriven(t *testing.T) {
 	tests := []struct {
-		name         string
-		messages     []*schema.Message
-		cfg          RunConfig
-		expectCount  int
+		name          string
+		messages      []*schema.Message
+		cfg           RunConfig
+		expectCount   int
 		firstIsSystem bool
 	}{
 		{
-			name:         "empty messages no hints",
-			messages:     nil,
-			cfg:          RunConfig{},
-			expectCount:  1,
+			name:          "empty messages no hints",
+			messages:      nil,
+			cfg:           RunConfig{},
+			expectCount:   1,
 			firstIsSystem: false,
 		},
 		{
-			name:         "empty messages with plan mode",
-			messages:     nil,
-			cfg:          RunConfig{IsPlanMode: true},
-			expectCount:  2,
+			name:          "empty messages with plan mode",
+			messages:      nil,
+			cfg:           RunConfig{IsPlanMode: true},
+			expectCount:   2,
 			firstIsSystem: true,
 		},
 		{
-			name:         "with messages no hints",
-			messages:     []*schema.Message{schema.UserMessage("Hello")},
-			cfg:          RunConfig{},
-			expectCount:  1,
+			name:          "with messages no hints",
+			messages:      []*schema.Message{schema.UserMessage("Hello")},
+			cfg:           RunConfig{},
+			expectCount:   1,
 			firstIsSystem: false,
 		},
 		{
-			name:         "with messages with plan mode",
-			messages:     []*schema.Message{schema.UserMessage("Hello")},
-			cfg:          RunConfig{IsPlanMode: true},
-			expectCount:  2,
+			name:          "with messages with plan mode",
+			messages:      []*schema.Message{schema.UserMessage("Hello")},
+			cfg:           RunConfig{IsPlanMode: true},
+			expectCount:   2,
 			firstIsSystem: true,
 		},
 		{
-			name:         "with messages with subagent",
-			messages:     []*schema.Message{schema.UserMessage("Hello")},
-			cfg:          RunConfig{SubagentEnabled: true},
-			expectCount:  2,
+			name:          "with messages with subagent",
+			messages:      []*schema.Message{schema.UserMessage("Hello")},
+			cfg:           RunConfig{SubagentEnabled: true},
+			expectCount:   2,
 			firstIsSystem: true,
 		},
 	}
@@ -1603,7 +1603,7 @@ func TestRun_WithCheckpointID(t *testing.T) {
 	ctx := context.Background()
 	state := &ThreadState{}
 	cfg := RunConfig{
-		ThreadID:    "thread-1",
+		ThreadID:     "thread-1",
 		CheckpointID: "cp-123",
 	}
 

@@ -12,9 +12,9 @@ func TestNewCacheMonitor(t *testing.T) {
 	cache := NewMemoryCache(100)
 
 	tests := []struct {
-		name        string
-		interval    time.Duration
-		expected    time.Duration
+		name     string
+		interval time.Duration
+		expected time.Duration
 	}{
 		{"default_interval", 0, 30 * time.Second},
 		{"custom_interval", 1 * time.Second, 1 * time.Second},

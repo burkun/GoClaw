@@ -229,7 +229,7 @@ func TestGuessMIMEType(t *testing.T) {
 		{"test.webp", "image/webp"},
 		{"test.svg", "image/svg+xml"},
 		{"test.unknown", "image/png"}, // default
-		{"", "image/png"},              // default
+		{"", "image/png"},             // default
 	}
 
 	for _, tt := range tests {
@@ -246,10 +246,10 @@ func TestIsValidBase64Image(t *testing.T) {
 		valid bool
 	}{
 		{"", false},
-		{"aGVsbG8=", true},      // valid base64
+		{"aGVsbG8=", true}, // valid base64
 		{"YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=", true}, // valid
-		{"!invalid", false},    // invalid chars
-		{"YWJj ZGVm", false},    // space not valid
+		{"!invalid", false},                            // invalid chars
+		{"YWJj ZGVm", false},                           // space not valid
 	}
 
 	for _, tt := range tests {

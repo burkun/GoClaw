@@ -298,5 +298,5 @@ func newMockPluginWithID(id int) *mockPlugin {
 }
 
 func pluginName(id int) string {
-	return string(rune('a' + id%26)) + string(rune('a'+(id/26)%26)) + string(rune('a'+(id/26/26)%26))
+	return string(rune('a'+id%26)) + string(rune('a'+(id/26)%26)) + string(rune('a'+(id/26/26)%26))
 }

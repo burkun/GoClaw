@@ -239,14 +239,14 @@ func TestDefaultWebToolConfig(t *testing.T) {
 // TestNewWebSearchTool tests WebSearchTool constructor
 func TestNewWebSearchTool(t *testing.T) {
 	tests := []struct {
-		name           string
-		cfg            WebToolConfig
+		name            string
+		cfg             WebToolConfig
 		expectedTimeout time.Duration
 		expectedMax     int
 	}{
 		{
-			name:           "zero values use defaults",
-			cfg:            WebToolConfig{},
+			name:            "zero values use defaults",
+			cfg:             WebToolConfig{},
 			expectedTimeout: 10 * time.Second,
 			expectedMax:     5,
 		},
@@ -285,14 +285,14 @@ func TestNewWebSearchTool(t *testing.T) {
 // TestNewWebFetchTool tests WebFetchTool constructor
 func TestNewWebFetchTool(t *testing.T) {
 	tests := []struct {
-		name           string
-		cfg            WebToolConfig
+		name            string
+		cfg             WebToolConfig
 		expectedTimeout time.Duration
 		expectedMax     int
 	}{
 		{
-			name:           "zero values use defaults",
-			cfg:            WebToolConfig{},
+			name:            "zero values use defaults",
+			cfg:             WebToolConfig{},
 			expectedTimeout: 10 * time.Second,
 			expectedMax:     4096,
 		},

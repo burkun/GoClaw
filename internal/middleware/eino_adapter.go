@@ -4,7 +4,6 @@ package middleware
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/compose"
@@ -263,10 +262,6 @@ func applyMiddlewareStateToAdk(mwState *State, adkState *adk.ChatModelAgentState
 
 type middlewareStateKey struct{}
 
-func withMiddlewareState(ctx context.Context, state *State) context.Context {
-	return context.WithValue(ctx, middlewareStateKey{}, state)
-}
-
 func extractStateFromContext(ctx context.Context) *State {
 	if state, ok := ctx.Value(middlewareStateKey{}).(*State); ok {
 		return state
@@ -285,73 +280,4 @@ func middlewareToolOutputToString(output any) string {
 		return string(bs)
 	}
 	return ""
-}
-
-func applyCommandOutputToState(state *State, output string) (string, bool) {
-	trimmed := strings.TrimSpace(output)
-	if trimmed == "" {
-		return "", false
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
-		return "", false
-	}
-	typ, _ := payload["type"].(string)
-	if !strings.EqualFold(strings.TrimSpace(typ), "command") {
-		return "", false
-	}
-
-	update, _ := payload["update"].(map[string]any)
-	if update == nil {
-		return "", false
-	}
-
-	if state != nil {
-		pendingUpdates := map[string]any{}
-		if artifacts, ok := update["artifacts"]; ok {
-			switch vv := artifacts.(type) {
-			case []string:
-				pendingUpdates["artifacts"] = vv
-			case []any:
-				list := make([]string, 0, len(vv))
-				for _, item := range vv {
-					if s, ok := item.(string); ok {
-						list = append(list, s)
-					}
-				}
-				pendingUpdates["artifacts"] = list
-			}
-		}
-		if viewedImages, ok := update["viewed_images"]; ok {
-			pendingUpdates["viewed_images"] = viewedImages
-		}
-		if len(pendingUpdates) > 0 {
-			ApplyReducers(state, pendingUpdates)
-		}
-	}
-
-	message := "ok"
-	if rawMessages, ok := update["messages"]; ok {
-		switch msgs := rawMessages.(type) {
-		case []any:
-			for _, item := range msgs {
-				if mm, ok := item.(map[string]any); ok {
-					if content, ok := mm["content"].(string); ok && strings.TrimSpace(content) != "" {
-						message = content
-						break
-					}
-				}
-			}
-		case []map[string]any:
-			for _, mm := range msgs {
-				if content, ok := mm["content"].(string); ok && strings.TrimSpace(content) != "" {
-					message = content
-					break
-				}
-			}
-		}
-	}
-
-	return message, true
 }

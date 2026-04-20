@@ -343,10 +343,10 @@ func TestShellQuote(t *testing.T) {
 // TestContainerName tests container name generation
 func TestContainerName(t *testing.T) {
 	tests := []struct {
-		name       string
-		cfg        sandbox.SandboxConfig
-		threadID   string
-		expected   string
+		name     string
+		cfg      sandbox.SandboxConfig
+		threadID string
+		expected string
 	}{
 		{
 			name:     "default prefix",
@@ -456,7 +456,7 @@ func TestGlobToRegexpDocker(t *testing.T) {
 			path:    "a/b/c/file.go",
 			match:   true,
 		},
-		
+
 		{
 			name:    "single star no slash match",
 			pattern: "*.go",

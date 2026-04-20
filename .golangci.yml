@@ -1,0 +1,102 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosimple
+    - gofmt
+    - goimports
+
+linters-settings:
+  errcheck:
+    check-blank: false
+    check-type-assertions: false
+    exclude-functions:
+      - fmt:*
+      - io:Close
+      - io:Write
+      - os:Remove
+      - os:RemoveAll
+      - os:MkdirAll
+      - os:Chmod
+      - (*encoding/json.Encoder).Encode
+      - (*os.File).Close
+      - (*github.com/gin-gonic/gin.Context).JSON
+
+  gofmt:
+    simplify: true
+
+  goimports:
+    local-prefixes: goclaw
+
+  govet:
+    disable:
+      - fieldalignment  # 内存优化建议，非必须
+
+  staticcheck:
+    checks: ["-SA1019", "-SA9003"]  # 忽略废弃警告和空分支警告
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - unused
+
+    - path: example.*\.go
+      linters:
+        - errcheck
+
+    - path: mock.*\.go
+      linters:
+        - unused
+        - errcheck
+
+    # Kubernetes sandbox is placeholder for future implementation
+    - path: internal/sandbox/kubernetes/
+      linters:
+        - unused
+
+    # Tracing langfuse init is for future use
+    - path: internal/tracing/config.go
+      linters:
+        - unused
+
+    # Docker mock/test helpers
+    - path: internal/sandbox/docker/mock_docker_client.go
+      linters:
+        - unused
+    - path: internal/sandbox/docker/docker_client.go
+      linters:
+        - unused
+    - path: internal/sandbox/docker/docker.go
+      linters:
+        - errcheck
+
+    # MCP stdio bridge has unused helper for future use
+    - path: internal/tools/mcp_stdio_bridge.go
+      linters:
+        - unused
+
+    # Subagent task tool has unused fallback functions
+    - path: internal/agent/subagents/task_tool.go
+      linters:
+        - unused
+    - path: internal/agent/subagents/agent_worker.go
+      linters:
+        - unused
+
+    # Sandbox filelock has unused field for potential future use
+    - path: internal/sandbox/filelock.go
+      linters:
+        - unused
+
+  max-issues-per-linter: 50
+  max-same-issues: 10
+  new: false

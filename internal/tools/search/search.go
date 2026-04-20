@@ -250,8 +250,6 @@ func formatGlobResults(root string, matches []string, truncated bool) string {
 	return b.String()
 }
 
-var errStopWalk = fmt.Errorf("stop walk")
-
 func clampMax(input, configured, def, upper int) int {
 	v := input
 	if v <= 0 {

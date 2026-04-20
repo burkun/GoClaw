@@ -28,21 +28,21 @@ type MockDockerClient struct {
 	ExecSessions map[string]*MockExecSession
 
 	// Call tracking
-	ContainerCreateCalls   []ContainerCreateCall
-	ContainerStartCalls    []string
-	ContainerStopCalls     []string
-	ContainerRemoveCalls   []string
-	ContainerInspectCalls  []string
-	ContainerExecCreateCalls []ContainerExecCreateCall
-	ContainerExecAttachCalls []string
+	ContainerCreateCalls      []ContainerCreateCall
+	ContainerStartCalls       []string
+	ContainerStopCalls        []string
+	ContainerRemoveCalls      []string
+	ContainerInspectCalls     []string
+	ContainerExecCreateCalls  []ContainerExecCreateCall
+	ContainerExecAttachCalls  []string
 	ContainerExecInspectCalls []string
 
 	// Error simulation
-	ErrContainerCreate   error
-	ErrContainerStart    error
-	ErrContainerStop     error
-	ErrContainerRemove   error
-	ErrContainerInspect  error
+	ErrContainerCreate      error
+	ErrContainerStart       error
+	ErrContainerStop        error
+	ErrContainerRemove      error
+	ErrContainerInspect     error
 	ErrContainerExecCreate  error
 	ErrContainerExecAttach  error
 	ErrContainerExecInspect error
@@ -68,13 +68,13 @@ type MockContainer struct {
 
 // MockExecSession represents a mock exec session
 type MockExecSession struct {
-	ID         string
+	ID          string
 	ContainerID string
-	Config     types.ExecConfig
-	ExitCode   int
-	Stdout     string
-	Stderr     string
-	Running    bool
+	Config      types.ExecConfig
+	ExitCode    int
+	Stdout      string
+	Stderr      string
+	Running     bool
 }
 
 // ContainerCreateCall records a ContainerCreate call
@@ -454,14 +454,14 @@ func (a mockAddr) String() string  { return "127.0.0.1:0" }
 // mockConn implements net.Conn for testing
 type mockConn struct{}
 
-func (c *mockConn) Read(b []byte) (n int, err error)       { return 0, io.EOF }
-func (c *mockConn) Write(b []byte) (n int, err error)      { return len(b), nil }
-func (c *mockConn) Close() error                           { return nil }
-func (c *mockConn) LocalAddr() net.Addr                    { return mockAddr{} }
-func (c *mockConn) RemoteAddr() net.Addr                   { return mockAddr{} }
-func (c *mockConn) SetDeadline(t time.Time) error          { return nil }
-func (c *mockConn) SetReadDeadline(t time.Time) error      { return nil }
-func (c *mockConn) SetWriteDeadline(t time.Time) error     { return nil }
+func (c *mockConn) Read(b []byte) (n int, err error)   { return 0, io.EOF }
+func (c *mockConn) Write(b []byte) (n int, err error)  { return len(b), nil }
+func (c *mockConn) Close() error                       { return nil }
+func (c *mockConn) LocalAddr() net.Addr                { return mockAddr{} }
+func (c *mockConn) RemoteAddr() net.Addr               { return mockAddr{} }
+func (c *mockConn) SetDeadline(t time.Time) error      { return nil }
+func (c *mockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (c *mockConn) SetWriteDeadline(t time.Time) error { return nil }
 
 // Helper functions
 func generateContainerID(counter int) string {

@@ -16,8 +16,8 @@ func TestInit_DefaultLevel(t *testing.T) {
 
 func TestInit_Levels(t *testing.T) {
 	tests := []struct {
-		level    string
-		wantLvl  slog.Level
+		level   string
+		wantLvl slog.Level
 	}{
 		{"debug", slog.LevelDebug},
 		{"DEBUG", slog.LevelDebug},

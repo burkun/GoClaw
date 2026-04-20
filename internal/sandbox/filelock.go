@@ -137,7 +137,7 @@ func (cpl *CrossProcessFileLock) Acquire(ctx context.Context, filePath string) (
 		}
 		// Lock acquired successfully
 		return func() {
-			cpl.releaseFileLock(file)
+			_ = cpl.releaseFileLock(file) // 清理操作，忽略错误
 			file.Close()
 		}, nil
 	case <-ctx.Done():

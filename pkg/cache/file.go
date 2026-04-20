@@ -13,11 +13,11 @@ import (
 
 // FileCache 文件缓存实现 (L2)
 type FileCache struct {
-	baseDir   string
-	stats     *fileStats
-	mu        sync.RWMutex
-	maxSize   int64 // 最大缓存大小(字节)
-	onEvict   func(key string, value interface{})
+	baseDir string
+	stats   *fileStats
+	mu      sync.RWMutex
+	maxSize int64 // 最大缓存大小(字节)
+	onEvict func(key string, value interface{})
 }
 
 type fileStats struct {

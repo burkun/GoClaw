@@ -139,12 +139,12 @@ func TestFilterMessagesForMemory(t *testing.T) {
 
 func TestDeriveFactsFromMessages(t *testing.T) {
 	tests := []struct {
-		name              string
-		messages          []map[string]any
-		correction        bool
-		expectFacts       bool
-		minFacts          int
-		expectCorrection  bool
+		name             string
+		messages         []map[string]any
+		correction       bool
+		expectFacts      bool
+		minFacts         int
+		expectCorrection bool
 	}{
 		{
 			name:        "empty messages",

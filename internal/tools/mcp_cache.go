@@ -14,11 +14,11 @@ import (
 
 // MCPCacheManager MCP配置缓存管理器
 type MCPCacheManager struct {
-	cache        cache.Cache
-	defaultTTL   time.Duration
-	autoRefresh  bool
-	refreshChan  chan string
-	stopChan     chan struct{}
+	cache       cache.Cache
+	defaultTTL  time.Duration
+	autoRefresh bool
+	refreshChan chan string
+	stopChan    chan struct{}
 }
 
 // MCPCacheConfig 缓存配置
@@ -52,11 +52,11 @@ func NewMCPCacheManager(cfg MCPCacheConfig) *MCPCacheManager {
 	multiCache := cache.NewMultiLevelCache(memoryCache, fileCache, 2)
 
 	mgr := &MCPCacheManager{
-		cache:        multiCache,
-		defaultTTL:   cfg.DefaultTTL,
-		autoRefresh:  cfg.AutoRefresh,
-		refreshChan:  make(chan string, 100),
-		stopChan:     make(chan struct{}),
+		cache:       multiCache,
+		defaultTTL:  cfg.DefaultTTL,
+		autoRefresh: cfg.AutoRefresh,
+		refreshChan: make(chan string, 100),
+		stopChan:    make(chan struct{}),
 	}
 
 	// 启动自动刷新goroutine

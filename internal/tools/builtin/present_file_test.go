@@ -181,8 +181,8 @@ func TestSanitizeFilename_EdgeCases(t *testing.T) {
 		input    string
 		nonEmpty bool
 	}{
-		{"", true},            // empty -> "artifact"
-		{".", true},           // dot -> "artifact"
+		{"", true},  // empty -> "artifact"
+		{".", true}, // dot -> "artifact"
 		{"../path/file.txt", true},
 		{"normal.txt", true},
 		{"file<>:\"|?*.txt", true},

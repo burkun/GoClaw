@@ -3,10 +3,11 @@ package agent
 import (
 	"context"
 
-	"github.com/cloudwego/eino/adk"
-	lctool "github.com/cloudwego/eino/components/tool"
 	einoruntime "goclaw/internal/eino"
 	skillsruntime "goclaw/internal/skills"
+
+	"github.com/cloudwego/eino/adk"
+	lctool "github.com/cloudwego/eino/components/tool"
 )
 
 // LeadAgent defines the interface for a lead agent.
@@ -23,4 +24,3 @@ type leadAgent struct {
 	runner      *einoruntime.Runner
 	skills      *skillsruntime.Registry
 }
-

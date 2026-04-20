@@ -165,7 +165,7 @@ func TestClassifyError_ErrorTypes(t *testing.T) {
 	// Test that retriable status codes work correctly
 	// Note: getErrorTypeName returns the Go type name, not a custom name
 	// So we test the status code path instead which is more reliable
-	
+
 	tests := []struct {
 		name          string
 		err           error
@@ -656,7 +656,7 @@ type mockStatusCodeError struct {
 	statusCode int
 }
 
-func (e *mockStatusCodeError) Error() string { return "status code error" }
+func (e *mockStatusCodeError) Error() string   { return "status code error" }
 func (e *mockStatusCodeError) StatusCode() int { return e.statusCode }
 
 // mockStatusError is a mock error with Status method.
@@ -665,7 +665,7 @@ type mockStatusError struct {
 }
 
 func (e *mockStatusError) Error() string { return "status error" }
-func (e *mockStatusError) Status() int { return e.status }
+func (e *mockStatusError) Status() int   { return e.status }
 
 // mockCodeError is a mock error with Code method.
 type mockCodeError struct {
@@ -680,7 +680,7 @@ type mockErrorCodeError struct {
 	code string
 }
 
-func (e *mockErrorCodeError) Error() string  { return "error code error" }
+func (e *mockErrorCodeError) Error() string     { return "error code error" }
 func (e *mockErrorCodeError) ErrorCode() string { return e.code }
 
 // mockNamedError is a mock error with a specific type name.

@@ -10,6 +10,7 @@ import (
 	"goclaw/internal/channels"
 	"goclaw/internal/config"
 	"goclaw/internal/logging"
+
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"

@@ -21,16 +21,16 @@ import (
 	"goclaw/internal/middleware/threaddata"
 	"goclaw/internal/middleware/todo"
 	"goclaw/internal/middleware/tool"
-	"goclaw/internal/middleware/uploads"
 	"goclaw/internal/middleware/ui"
+	"goclaw/internal/middleware/uploads"
 	"goclaw/internal/sandbox"
 	"goclaw/pkg/errors"
 )
 
 // BuilderConfig 包含构建 middleware 所需的所有配置
 type BuilderConfig struct {
-	AppConfig    *config.AppConfig
-	ModelName    string
+	AppConfig *config.AppConfig
+	ModelName string
 
 	// Sandbox provider
 	SandboxProvider sandbox.SandboxProvider

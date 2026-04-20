@@ -651,7 +651,7 @@ func (s *DockerSandbox) ensureContainerRunning(ctx context.Context) error {
 	// If container exists but is not running, start it.
 	if !inspect.State.Running {
 		if err := s.client.ContainerStart(ctx, s.containerID, container.StartOptions{}); err != nil {
-		return errors.WrapInternalError(err, fmt.Sprintf("start existing container %q", s.containerID))
+			return errors.WrapInternalError(err, fmt.Sprintf("start existing container %q", s.containerID))
 		}
 	}
 	return nil
@@ -665,7 +665,7 @@ func (s *DockerSandbox) createContainer(ctx context.Context) error {
 
 	for _, dir := range []string{workspacePath, uploadsPath, outputsPath} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-		return errors.WrapInternalError(err, fmt.Sprintf("create volume dir %q", dir))
+			return errors.WrapInternalError(err, fmt.Sprintf("create volume dir %q", dir))
 		}
 	}
 
@@ -689,7 +689,7 @@ func (s *DockerSandbox) createContainer(ctx context.Context) error {
 			continue
 		}
 		if err := os.MkdirAll(hostPath, 0o755); err != nil {
-		return errors.WrapInternalError(err, fmt.Sprintf("create mount dir %q", hostPath))
+			return errors.WrapInternalError(err, fmt.Sprintf("create mount dir %q", hostPath))
 		}
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,

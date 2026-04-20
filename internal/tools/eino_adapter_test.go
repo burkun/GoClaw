@@ -95,11 +95,11 @@ func TestNewEinoInvokableToolAdapter(t *testing.T) {
 
 func TestEinoInvokableToolAdapter_Info(t *testing.T) {
 	tests := []struct {
-		name        string
-		tool        Tool
-		wantName    string
-		wantDesc    string
-		wantParams  bool
+		name       string
+		tool       Tool
+		wantName   string
+		wantDesc   string
+		wantParams bool
 	}{
 		{
 			name:       "tool with schema",

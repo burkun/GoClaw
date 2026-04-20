@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"goclaw/internal/config"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -291,7 +292,7 @@ func TestIsValidAgentName(t *testing.T) {
 	}{
 		{"valid_agent", true},
 		{"ValidAgent123", true},
-		{"a", false}, // too short
+		{"a", false},        // too short
 		{"1invalid", false}, // must start with letter
 		{"", false},
 		{"..", false},

@@ -353,7 +353,7 @@ type trackingPlugin struct {
 
 func newTrackingPlugin(id int) *trackingPlugin {
 	return &trackingPlugin{
-		mockPlugin: newMockPlugin(string(rune('a'+id))),
+		mockPlugin: newMockPlugin(string(rune('a' + id))),
 		id:         id,
 	}
 }

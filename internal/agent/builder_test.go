@@ -78,7 +78,7 @@ func TestFilterToolsByAllowed_WithMatches(t *testing.T) {
 	}
 
 	allowed := map[string]struct{}{
-		"read_file": {},
+		"read_file":  {},
 		"write_file": {},
 	}
 
@@ -649,11 +649,11 @@ func TestAgentConfig_Loader(t *testing.T) {
 // --- Table-driven tests for complex scenarios ---
 
 type filterToolsTestCase struct {
-	name         string
-	tools        []string
-	allowed      map[string]struct{}
-	expectCount  int
-	expectError  bool
+	name        string
+	tools       []string
+	allowed     map[string]struct{}
+	expectCount int
+	expectError bool
 }
 
 func TestFilterToolsByAllowed_TableDriven(t *testing.T) {
@@ -724,10 +724,10 @@ func TestFilterToolsByAllowed_TableDriven(t *testing.T) {
 }
 
 type skillFilterTestCase struct {
-	name           string
-	skills         []*skillsruntime.Skill
-	skillNames     []string
-	expectedTools  int
+	name          string
+	skills        []*skillsruntime.Skill
+	skillNames    []string
+	expectedTools int
 }
 
 func TestFilterSkillsByName_TableDriven(t *testing.T) {
@@ -767,16 +767,16 @@ func TestFilterSkillsByName_TableDriven(t *testing.T) {
 			expectedTools: 0,
 		},
 		{
-			name:           "empty skills list",
-			skills:         []*skillsruntime.Skill{},
-			skillNames:     []string{"skill1"},
-			expectedTools:  0,
+			name:          "empty skills list",
+			skills:        []*skillsruntime.Skill{},
+			skillNames:    []string{"skill1"},
+			expectedTools: 0,
 		},
 		{
-			name:           "nil skill names",
-			skills:         []*skillsruntime.Skill{{Metadata: skillsruntime.SkillMetadata{Name: "skill1", AllowedTools: []string{"a"}}}},
-			skillNames:     nil,
-			expectedTools:  0,
+			name:          "nil skill names",
+			skills:        []*skillsruntime.Skill{{Metadata: skillsruntime.SkillMetadata{Name: "skill1", AllowedTools: []string{"a"}}}},
+			skillNames:    nil,
+			expectedTools: 0,
 		},
 	}
 

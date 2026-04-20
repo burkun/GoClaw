@@ -44,14 +44,14 @@ func (item *CacheItem) IsExpired() bool {
 
 // Stats 缓存统计信息
 type Stats struct {
-	TotalItems    int64         `json:"total_items"`     // 总缓存项数
-	HitCount      int64         `json:"hit_count"`       // 命中次数
-	MissCount     int64         `json:"miss_count"`      // 未命中次数
-	HitRate       float64       `json:"hit_rate"`        // 命中率
-	TotalSize     int64         `json:"total_size"`      // 总大小(字节)
-	EvictionCount int64         `json:"eviction_count"`  // 驱逐次数
-	AvgLatency    time.Duration `json:"avg_latency"`     // 平均延迟
-	SlowOps       []SlowOp      `json:"slow_ops"`        // 慢操作记录
+	TotalItems    int64         `json:"total_items"`    // 总缓存项数
+	HitCount      int64         `json:"hit_count"`      // 命中次数
+	MissCount     int64         `json:"miss_count"`     // 未命中次数
+	HitRate       float64       `json:"hit_rate"`       // 命中率
+	TotalSize     int64         `json:"total_size"`     // 总大小(字节)
+	EvictionCount int64         `json:"eviction_count"` // 驱逐次数
+	AvgLatency    time.Duration `json:"avg_latency"`    // 平均延迟
+	SlowOps       []SlowOp      `json:"slow_ops"`       // 慢操作记录
 }
 
 // SlowOp 慢操作记录

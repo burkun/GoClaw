@@ -315,7 +315,7 @@ func TestQueryStats_RecordQuery_TrimOldRecords(t *testing.T) {
 
 	// Should only keep last 5
 	assert.Len(t, qs.RecentQueries, 5)
-	assert.Equal(t, int64(60), qs.RecentQueries[0].DurationMs) // 6th query
+	assert.Equal(t, int64(60), qs.RecentQueries[0].DurationMs)  // 6th query
 	assert.Equal(t, int64(100), qs.RecentQueries[4].DurationMs) // 10th query
 }
 

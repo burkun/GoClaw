@@ -160,10 +160,10 @@ func TestSetupAgentTool_Execute_InvalidAgentName(t *testing.T) {
 	tool := NewSetupAgentTool("")
 
 	invalidNames := []string{
-		"test-agent",   // hyphen not allowed
-		"test.agent",   // dot not allowed
-		"test agent",   // space not allowed
-		"test@agent",   // @ not allowed
+		"test-agent", // hyphen not allowed
+		"test.agent", // dot not allowed
+		"test agent", // space not allowed
+		"test@agent", // @ not allowed
 	}
 
 	for _, name := range invalidNames {

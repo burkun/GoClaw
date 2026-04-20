@@ -72,8 +72,8 @@ func TestValidate_InvalidMemory(t *testing.T) {
 			Use: "local",
 		},
 		Memory: MemoryConfig{
-			Enabled:           true,
-			DebounceSeconds:   500, // invalid: > 300
+			Enabled:         true,
+			DebounceSeconds: 500, // invalid: > 300
 		},
 	}
 
@@ -112,13 +112,13 @@ func TestValidate_ValidConfig(t *testing.T) {
 			Use: "local",
 		},
 		Memory: MemoryConfig{
-			Enabled: true,
-			DebounceSeconds: 30,
-			MaxFacts: 100,
+			Enabled:                 true,
+			DebounceSeconds:         30,
+			MaxFacts:                100,
 			FactConfidenceThreshold: 0.7,
 		},
 		Checkpointer: &CheckpointerConfig{
-			Type: "sqlite",
+			Type:             "sqlite",
 			ConnectionString: "checkpoints.db",
 		},
 	}
@@ -251,7 +251,7 @@ func TestValidateMemoryConfig_InvalidFactConfidenceThreshold(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := &MemoryConfig{
-				Enabled:                  true,
+				Enabled:                 true,
 				FactConfidenceThreshold: tc.value,
 			}
 			err := m.validate()
@@ -263,10 +263,10 @@ func TestValidateMemoryConfig_InvalidFactConfidenceThreshold(t *testing.T) {
 
 func TestValidateMemoryConfig_Valid(t *testing.T) {
 	m := &MemoryConfig{
-		Enabled:                  true,
-		DebounceSeconds:          30,
-		MaxFacts:                 100,
-		FactConfidenceThreshold:  0.7,
+		Enabled:                 true,
+		DebounceSeconds:         30,
+		MaxFacts:                100,
+		FactConfidenceThreshold: 0.7,
 	}
 	err := m.validate()
 	require.NoError(t, err)

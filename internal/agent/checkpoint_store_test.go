@@ -158,7 +158,7 @@ func TestNewCheckPointStore_Unsupported(t *testing.T) {
 func TestNewFileCheckPointStore(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "checkpoints.json")
-	
+
 	store := newFileCheckPointStore(path)
 	if store == nil {
 		t.Fatal("expected non-nil store")
@@ -174,10 +174,10 @@ func TestNewFileCheckPointStore(t *testing.T) {
 func TestFileCheckPointStore_Get_FileNotExist(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "nonexistent.json")
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Get should return not found when file doesn't exist
 	got, ok, err := store.Get(ctx, "cp-1")
 	if err != nil {
@@ -194,21 +194,21 @@ func TestFileCheckPointStore_Get_FileNotExist(t *testing.T) {
 func TestFileCheckPointStore_SetAndGet(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "checkpoints.json")
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Set a checkpoint
 	payload := []byte("test-state-data")
 	if err := store.Set(ctx, "cp-1", payload); err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
-	
+
 	// Verify file was created
 	if _, err := filepath.Glob(path); err != nil {
 		t.Errorf("expected file to be created at %s", path)
 	}
-	
+
 	// Get the checkpoint
 	got, ok, err := store.Get(ctx, "cp-1")
 	if err != nil {
@@ -225,23 +225,23 @@ func TestFileCheckPointStore_SetAndGet(t *testing.T) {
 func TestFileCheckPointStore_MultipleCheckpoints(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "checkpoints.json")
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Set multiple checkpoints
 	payloads := map[string][]byte{
 		"cp-1": []byte("state-1"),
 		"cp-2": []byte("state-2"),
 		"cp-3": []byte("state-3"),
 	}
-	
+
 	for id, payload := range payloads {
 		if err := store.Set(ctx, id, payload); err != nil {
 			t.Fatalf("set %s failed: %v", id, err)
 		}
 	}
-	
+
 	// Get all checkpoints
 	for id, expected := range payloads {
 		got, ok, err := store.Get(ctx, id)
@@ -260,18 +260,18 @@ func TestFileCheckPointStore_MultipleCheckpoints(t *testing.T) {
 func TestFileCheckPointStore_PersistAndReload(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "checkpoints.json")
-	
+
 	// First store - set data
 	store1 := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	if err := store1.Set(ctx, "cp-persist", []byte("persistent-state")); err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
-	
+
 	// Second store - reload from file
 	store2 := newFileCheckPointStore(path)
-	
+
 	got, ok, err := store2.Get(ctx, "cp-persist")
 	if err != nil {
 		t.Fatalf("get from reloaded store failed: %v", err)
@@ -287,20 +287,20 @@ func TestFileCheckPointStore_PersistAndReload(t *testing.T) {
 func TestFileCheckPointStore_UpdateExisting(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "checkpoints.json")
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Set initial value
 	if err := store.Set(ctx, "cp-update", []byte("initial")); err != nil {
 		t.Fatalf("initial set failed: %v", err)
 	}
-	
+
 	// Update value
 	if err := store.Set(ctx, "cp-update", []byte("updated")); err != nil {
 		t.Fatalf("update set failed: %v", err)
 	}
-	
+
 	// Verify updated value
 	got, ok, err := store.Get(ctx, "cp-update")
 	if err != nil {
@@ -317,15 +317,15 @@ func TestFileCheckPointStore_UpdateExisting(t *testing.T) {
 func TestFileCheckPointStore_EmptyPayload(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "checkpoints.json")
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Set empty payload
 	if err := store.Set(ctx, "cp-empty", []byte{}); err != nil {
 		t.Fatalf("set empty payload failed: %v", err)
 	}
-	
+
 	// Get empty payload
 	got, ok, err := store.Get(ctx, "cp-empty")
 	if err != nil {
@@ -342,20 +342,20 @@ func TestFileCheckPointStore_EmptyPayload(t *testing.T) {
 func TestFileCheckPointStore_BinaryPayload(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "checkpoints.json")
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Set binary payload with all byte values
 	binaryPayload := make([]byte, 256)
 	for i := 0; i < 256; i++ {
 		binaryPayload[i] = byte(i)
 	}
-	
+
 	if err := store.Set(ctx, "cp-binary", binaryPayload); err != nil {
 		t.Fatalf("set binary payload failed: %v", err)
 	}
-	
+
 	// Get binary payload
 	got, ok, err := store.Get(ctx, "cp-binary")
 	if err != nil {
@@ -377,10 +377,10 @@ func TestFileCheckPointStore_BinaryPayload(t *testing.T) {
 func TestFileCheckPointStore_ConcurrentAccess(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "checkpoints.json")
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Concurrent writes
 	done := make(chan bool, 10)
 	for i := 0; i < 10; i++ {
@@ -394,7 +394,7 @@ func TestFileCheckPointStore_ConcurrentAccess(t *testing.T) {
 			}
 		}(i)
 	}
-	
+
 	// Wait for all writes
 	for i := 0; i < 10; i++ {
 		select {
@@ -403,7 +403,7 @@ func TestFileCheckPointStore_ConcurrentAccess(t *testing.T) {
 			t.Fatal("timeout waiting for concurrent writes")
 		}
 	}
-	
+
 	// Verify all checkpoints
 	for i := 0; i < 10; i++ {
 		cpID := fmt.Sprintf("cp-concurrent-%d", i)
@@ -426,15 +426,15 @@ func TestFileCheckPointStore_ConcurrentAccess(t *testing.T) {
 func TestFileCheckPointStore_InvalidJSON(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "invalid.json")
-	
+
 	// Write invalid JSON
 	if err := os.WriteFile(path, []byte("not valid json"), 0o644); err != nil {
 		t.Fatalf("write file failed: %v", err)
 	}
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Get should return error for invalid JSON
 	_, _, err := store.Get(ctx, "cp-1")
 	if err == nil {
@@ -445,16 +445,16 @@ func TestFileCheckPointStore_InvalidJSON(t *testing.T) {
 func TestFileCheckPointStore_CorruptBase64(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "corrupt.json")
-	
+
 	// Write JSON with corrupt base64
 	corruptJSON := `{"cp-1": "!!!invalid-base64!!!"}`
 	if err := os.WriteFile(path, []byte(corruptJSON), 0o644); err != nil {
 		t.Fatalf("write file failed: %v", err)
 	}
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Get should return error for corrupt base64
 	_, _, err := store.Get(ctx, "cp-1")
 	if err == nil {
@@ -465,10 +465,10 @@ func TestFileCheckPointStore_CorruptBase64(t *testing.T) {
 func TestFileCheckPointStore_NilCheck(t *testing.T) {
 	tmp := t.TempDir()
 	path := filepath.Join(tmp, "checkpoints.json")
-	
+
 	store := newFileCheckPointStore(path)
 	ctx := context.Background()
-	
+
 	// Test Get for non-existent key
 	got, ok, err := store.Get(ctx, "nonexistent")
 	if err != nil {

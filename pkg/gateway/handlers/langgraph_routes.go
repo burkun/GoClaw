@@ -26,7 +26,7 @@ type LangGraphHandler struct {
 	cfg    *config.AppConfig
 	agent  agent.LeadAgent
 	agents map[string]agent.LeadAgent // P1 fix: 支持多agent
-	store  threadstore.Store           // Thread persistence for multi-turn context
+	store  threadstore.Store          // Thread persistence for multi-turn context
 
 	runsMu sync.RWMutex
 	runs   map[string]lgRunHandle

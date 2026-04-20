@@ -322,9 +322,9 @@ func TestGuardrailMiddleware_BuildRequest_NilState(t *testing.T) {
 		Passport: "agent-123",
 	})
 	toolCall := &middleware.ToolCall{
-		ID:     "call-1",
-		Name:   "read_file",
-		Input:  map[string]any{},
+		ID:    "call-1",
+		Name:  "read_file",
+		Input: map[string]any{},
 	}
 
 	req := mw.buildRequest(nil, toolCall)

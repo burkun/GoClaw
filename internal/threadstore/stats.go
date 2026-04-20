@@ -16,22 +16,22 @@ type QueryStats struct {
 	QueriesByEndpoint map[string]int64
 
 	// Performance metrics
-	AverageLatencyMs  float64
-	MaxLatencyMs      float64
-	SlowQueryCount    int64
+	AverageLatencyMs     float64
+	MaxLatencyMs         float64
+	SlowQueryCount       int64
 	SlowQueryThresholdMs float64
 
 	// Index metrics
-	IndexHitRate      float64
-	IndexHits         int64
-	IndexMisses       int64
+	IndexHitRate float64
+	IndexHits    int64
+	IndexMisses  int64
 
 	// Time-series data (last hour)
-	RecentQueries     []QueryRecord
-	MaxRecentQueries  int
+	RecentQueries    []QueryRecord
+	MaxRecentQueries int
 
 	// Start time
-	StartTime         int64
+	StartTime int64
 }
 
 // QueryRecord represents a single query execution record.
@@ -47,12 +47,12 @@ type QueryRecord struct {
 // NewQueryStats creates a new QueryStats instance.
 func NewQueryStats() *QueryStats {
 	return &QueryStats{
-		QueriesByType:         make(map[string]int64),
-		QueriesByEndpoint:     make(map[string]int64),
-		SlowQueryThresholdMs:  100.0, // 100ms considered slow
-		RecentQueries:         make([]QueryRecord, 0),
-		MaxRecentQueries:      1000,  // Keep last 1000 queries
-		StartTime:             time.Now().UnixMilli(),
+		QueriesByType:        make(map[string]int64),
+		QueriesByEndpoint:    make(map[string]int64),
+		SlowQueryThresholdMs: 100.0, // 100ms considered slow
+		RecentQueries:        make([]QueryRecord, 0),
+		MaxRecentQueries:     1000, // Keep last 1000 queries
+		StartTime:            time.Now().UnixMilli(),
 	}
 }
 
@@ -123,16 +123,16 @@ func (qs *QueryStats) GetStats() map[string]any {
 	defer qs.mu.RUnlock()
 
 	return map[string]any{
-		"total_queries":        qs.TotalQueries,
-		"queries_by_type":      qs.cloneMap(qs.QueriesByType),
-		"average_latency_ms":   qs.AverageLatencyMs,
-		"max_latency_ms":       qs.MaxLatencyMs,
-		"slow_query_count":     qs.SlowQueryCount,
-		"index_hit_rate":       qs.IndexHitRate,
-		"index_hits":           qs.IndexHits,
-		"index_misses":         qs.IndexMisses,
-		"uptime_seconds":       (time.Now().UnixMilli() - qs.StartTime) / 1000,
-		"recent_query_count":   len(qs.RecentQueries),
+		"total_queries":      qs.TotalQueries,
+		"queries_by_type":    qs.cloneMap(qs.QueriesByType),
+		"average_latency_ms": qs.AverageLatencyMs,
+		"max_latency_ms":     qs.MaxLatencyMs,
+		"slow_query_count":   qs.SlowQueryCount,
+		"index_hit_rate":     qs.IndexHitRate,
+		"index_hits":         qs.IndexHits,
+		"index_misses":       qs.IndexMisses,
+		"uptime_seconds":     (time.Now().UnixMilli() - qs.StartTime) / 1000,
+		"recent_query_count": len(qs.RecentQueries),
 	}
 }
 
@@ -203,13 +203,13 @@ func (qs *QueryStats) ToJSON() ([]byte, error) {
 
 // PerformanceMetrics represents aggregated performance data.
 type PerformanceMetrics struct {
-	Timestamp          int64   `json:"timestamp"`
-	QueryThroughput    float64 `json:"query_throughput"`    // queries per second
-	AvgLatencyMs       float64 `json:"avg_latency_ms"`
-	P95LatencyMs       float64 `json:"p95_latency_ms"`
-	IndexEfficiency    float64 `json:"index_efficiency"`    // percentage of queries using index
-	ErrorRate          float64 `json:"error_rate"`
-	ThreadCount        int64   `json:"thread_count"`
+	Timestamp       int64   `json:"timestamp"`
+	QueryThroughput float64 `json:"query_throughput"` // queries per second
+	AvgLatencyMs    float64 `json:"avg_latency_ms"`
+	P95LatencyMs    float64 `json:"p95_latency_ms"`
+	IndexEfficiency float64 `json:"index_efficiency"` // percentage of queries using index
+	ErrorRate       float64 `json:"error_rate"`
+	ThreadCount     int64   `json:"thread_count"`
 }
 
 // GetMetrics returns current performance metrics.

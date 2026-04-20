@@ -106,8 +106,8 @@ func TestGetEffectiveConfig_WithOverride(t *testing.T) {
 		Subagents: config.SubagentsConfig{
 			Types: map[string]config.SubagentTypeConfig{
 				"general-purpose": {
-					Enabled:     false,
-					MaxTurns:    100,
+					Enabled:      false,
+					MaxTurns:     100,
 					SystemPrompt: "custom prompt",
 				},
 			},
@@ -160,8 +160,8 @@ func TestGetEffectiveConfig_OverrideEnabledFalseWithOtherFields(t *testing.T) {
 		Subagents: config.SubagentsConfig{
 			Types: map[string]config.SubagentTypeConfig{
 				"general-purpose": {
-					Enabled:   false,
-					MaxTurns:  10, // other field present
+					Enabled:  false,
+					MaxTurns: 10, // other field present
 				},
 			},
 		},
@@ -266,8 +266,8 @@ func TestBashAgentConfig(t *testing.T) {
 
 func TestHasOtherOverrideFields(t *testing.T) {
 	tests := []struct {
-		name    string
-		cfg     config.SubagentTypeConfig
+		name     string
+		cfg      config.SubagentTypeConfig
 		hasOther bool
 	}{
 		{"empty", config.SubagentTypeConfig{}, false},

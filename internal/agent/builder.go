@@ -128,7 +128,7 @@ func New(ctx context.Context) (*leadAgent, error) {
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools},
 		},
 		MaxIterations: 100,
-		Middlewares:    mws,
+		Middlewares:   mws,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent.New: build chat model agent failed: %w", err)
@@ -307,7 +307,7 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools},
 		},
 		MaxIterations: 100,
-		Middlewares:    mws,
+		Middlewares:   mws,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent.NewWithName: build chat model agent failed: %w", err)

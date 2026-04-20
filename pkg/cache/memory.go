@@ -8,11 +8,11 @@ import (
 
 // MemoryCache 内存缓存实现 (L1)
 type MemoryCache struct {
-	items     sync.Map // map[string]*CacheItem
-	stats     *memoryStats
-	mu        sync.RWMutex
-	maxItems  int
-	onEvict   func(key string, value interface{})
+	items    sync.Map // map[string]*CacheItem
+	stats    *memoryStats
+	mu       sync.RWMutex
+	maxItems int
+	onEvict  func(key string, value interface{})
 }
 
 type memoryStats struct {
@@ -213,8 +213,8 @@ func (mc *MemoryCache) evict(count int) {
 	// 如果还需要驱逐更多,删除最少使用的
 	if count > len(expiredKeys) {
 		type keyValue struct {
-			key      string
-			hitCount int64
+			key       string
+			hitCount  int64
 			createdAt time.Time
 		}
 		var items []keyValue
@@ -222,8 +222,8 @@ func (mc *MemoryCache) evict(count int) {
 		mc.items.Range(func(key, value interface{}) bool {
 			item := value.(*CacheItem)
 			items = append(items, keyValue{
-				key:      key.(string),
-				hitCount: item.HitCount,
+				key:       key.(string),
+				hitCount:  item.HitCount,
 				createdAt: item.CreatedAt,
 			})
 			return true

@@ -281,12 +281,12 @@ func TestCapabilitiesAfterUnregister(t *testing.T) {
 
 	// Capabilities should be removed
 	tools := mgr.GetAllTools()
-	if tools != nil && len(tools) != 0 {
+	if len(tools) != 0 {
 		t.Errorf("Expected 0 tools after unregister, got %d", len(tools))
 	}
 
 	middlewares := mgr.GetAllMiddlewares()
-	if middlewares != nil && len(middlewares) != 0 {
+	if len(middlewares) != 0 {
 		t.Errorf("Expected 0 middlewares after unregister, got %d", len(middlewares))
 	}
 }

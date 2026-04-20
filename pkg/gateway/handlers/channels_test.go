@@ -233,7 +233,7 @@ func TestMissingOAuthFields(t *testing.T) {
 		cfg      map[string]any
 		expected int
 	}{
-		{"feishu", map[string]any{"app_id": "id"}, 1}, // missing app_secret
+		{"feishu", map[string]any{"app_id": "id"}, 1},      // missing app_secret
 		{"slack", map[string]any{"bot_token": "token"}, 1}, // missing app_token
 		{"telegram", map[string]any{"bot_token": "token"}, 0},
 		{"unknown", map[string]any{}, 0},

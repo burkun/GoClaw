@@ -12,25 +12,25 @@ import (
 
 // CacheMonitor 缓存监控器
 type CacheMonitor struct {
-	cache       Cache
-	metricsFile string
-	interval    time.Duration
-	stopChan    chan struct{}
-	mu          sync.RWMutex
-	snapshots   []MetricSnapshot
+	cache        Cache
+	metricsFile  string
+	interval     time.Duration
+	stopChan     chan struct{}
+	mu           sync.RWMutex
+	snapshots    []MetricSnapshot
 	maxSnapshots int
 }
 
 // MetricSnapshot 监控快照
 type MetricSnapshot struct {
-	Timestamp    time.Time `json:"timestamp"`
-	TotalItems   int64     `json:"total_items"`
-	HitCount     int64     `json:"hit_count"`
-	MissCount    int64     `json:"miss_count"`
-	HitRate      float64   `json:"hit_rate"`
-	TotalSize    int64     `json:"total_size"`
-	AvgLatency   string    `json:"avg_latency"`
-	EvictionCount int64    `json:"eviction_count"`
+	Timestamp     time.Time `json:"timestamp"`
+	TotalItems    int64     `json:"total_items"`
+	HitCount      int64     `json:"hit_count"`
+	MissCount     int64     `json:"miss_count"`
+	HitRate       float64   `json:"hit_rate"`
+	TotalSize     int64     `json:"total_size"`
+	AvgLatency    string    `json:"avg_latency"`
+	EvictionCount int64     `json:"eviction_count"`
 }
 
 // NewCacheMonitor 创建缓存监控器
@@ -98,7 +98,7 @@ func (cm *CacheMonitor) collectMetrics() {
 
 	// 持久化到文件
 	if cm.metricsFile != "" {
-		cm.persistMetrics(snapshot)
+		_ = cm.persistMetrics(snapshot) // 非关键错误，忽略
 	}
 }
 
@@ -179,17 +179,17 @@ func (cm *CacheMonitor) GetAggregatedStats() *AggregatedStats {
 	avgHitRate := totalHitRate / float64(len(cm.snapshots))
 
 	return &AggregatedStats{
-		SnapshotCount:    len(cm.snapshots),
-		TotalHits:        totalHits,
-		TotalMisses:      totalMisses,
-		AverageHitRate:   avgHitRate,
-		MinHitRate:       minHitRate,
-		MaxHitRate:       maxHitRate,
-		CurrentItems:     latest.TotalItems,
-		CurrentSize:      latest.TotalSize,
-		TotalEvictions:   latest.EvictionCount,
-		FirstSnapshot:    cm.snapshots[0].Timestamp,
-		LatestSnapshot:   latest.Timestamp,
+		SnapshotCount:  len(cm.snapshots),
+		TotalHits:      totalHits,
+		TotalMisses:    totalMisses,
+		AverageHitRate: avgHitRate,
+		MinHitRate:     minHitRate,
+		MaxHitRate:     maxHitRate,
+		CurrentItems:   latest.TotalItems,
+		CurrentSize:    latest.TotalSize,
+		TotalEvictions: latest.EvictionCount,
+		FirstSnapshot:  cm.snapshots[0].Timestamp,
+		LatestSnapshot: latest.Timestamp,
 	}
 }
 
@@ -200,17 +200,17 @@ func (cm *CacheMonitor) Stop() {
 
 // AggregatedStats 聚合统计
 type AggregatedStats struct {
-	SnapshotCount    int       `json:"snapshot_count"`
-	TotalHits        int64     `json:"total_hits"`
-	TotalMisses      int64     `json:"total_misses"`
-	AverageHitRate   float64   `json:"average_hit_rate"`
-	MinHitRate       float64   `json:"min_hit_rate"`
-	MaxHitRate       float64   `json:"max_hit_rate"`
-	CurrentItems     int64     `json:"current_items"`
-	CurrentSize      int64     `json:"current_size"`
-	TotalEvictions   int64     `json:"total_evictions"`
-	FirstSnapshot    time.Time `json:"first_snapshot"`
-	LatestSnapshot   time.Time `json:"latest_snapshot"`
+	SnapshotCount  int       `json:"snapshot_count"`
+	TotalHits      int64     `json:"total_hits"`
+	TotalMisses    int64     `json:"total_misses"`
+	AverageHitRate float64   `json:"average_hit_rate"`
+	MinHitRate     float64   `json:"min_hit_rate"`
+	MaxHitRate     float64   `json:"max_hit_rate"`
+	CurrentItems   int64     `json:"current_items"`
+	CurrentSize    int64     `json:"current_size"`
+	TotalEvictions int64     `json:"total_evictions"`
+	FirstSnapshot  time.Time `json:"first_snapshot"`
+	LatestSnapshot time.Time `json:"latest_snapshot"`
 }
 
 // AlertCondition 告警条件
