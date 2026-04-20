@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // LoopDetectionConfig holds configuration for LoopDetectionMiddleware.

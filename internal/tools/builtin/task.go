@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/logging"
 )
 
 // TaskStatus represents the current state of a subagent task.

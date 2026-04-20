@@ -36,8 +36,8 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/pkg/stdcopy"
 
-	"github.com/bookerbai/goclaw/internal/sandbox"
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/internal/sandbox"
+	"goclaw/pkg/errors"
 )
 
 // defaultContainerNamePrefix is prepended to thread IDs when no custom prefix is configured.

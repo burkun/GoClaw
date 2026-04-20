@@ -9,8 +9,8 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/config"
+	"goclaw/internal/logging"
 )
 
 // SetLogger allows external code to inject a custom logger.
@@ -37,8 +37,8 @@ type BuildOptions struct {
 	ReasoningEffort string
 }
 
-// ProviderBuilder 根据 ModelConfig 构建 Eino BaseChatModel。
-type ProviderBuilder func(ctx context.Context, cfg config.ModelConfig, opts BuildOptions) (model.BaseChatModel, error)
+// ProviderBuilder 根据 ModelConfig 构建 Eino ToolCallingChatModel。
+type ProviderBuilder func(ctx context.Context, cfg config.ModelConfig, opts BuildOptions) (model.ToolCallingChatModel, error)
 
 var (
 	buildersMu sync.RWMutex
@@ -67,7 +67,7 @@ func getProviderBuilder(provider string) (ProviderBuilder, bool) {
 }
 
 // CreateChatModel 根据 AppConfig 和请求参数创建模型。
-func CreateChatModel(ctx context.Context, appCfg *config.AppConfig, req CreateRequest) (model.BaseChatModel, error) {
+func CreateChatModel(ctx context.Context, appCfg *config.AppConfig, req CreateRequest) (model.ToolCallingChatModel, error) {
 	if appCfg == nil {
 		return nil, fmt.Errorf("models: app config is nil")
 	}

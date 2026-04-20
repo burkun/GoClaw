@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 func TestTaskToolExecuteCompleted(t *testing.T) {

@@ -9,15 +9,15 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
-	"github.com/bookerbai/goclaw/internal/agent"
-	"github.com/bookerbai/goclaw/internal/channels"
-	feishuch "github.com/bookerbai/goclaw/internal/channels/feishu"
-	slackch "github.com/bookerbai/goclaw/internal/channels/slack"
-	telegramch "github.com/bookerbai/goclaw/internal/channels/telegram"
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/internal/tracing"
-	"github.com/bookerbai/goclaw/pkg/gateway/handlers"
+	"goclaw/internal/agent"
+	"goclaw/internal/channels"
+	feishuch "goclaw/internal/channels/feishu"
+	slackch "goclaw/internal/channels/slack"
+	telegramch "goclaw/internal/channels/telegram"
+	"goclaw/internal/config"
+	"goclaw/internal/logging"
+	"goclaw/internal/tracing"
+	"goclaw/pkg/gateway/handlers"
 )
 
 // Server holds all dependencies for the HTTP gateway.

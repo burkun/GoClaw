@@ -6,8 +6,8 @@ package plugin
 import (
 	"context"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
-	"github.com/bookerbai/goclaw/internal/tools"
+	"goclaw/internal/middleware"
+	"goclaw/internal/tools"
 )
 
 // Plugin is the interface that every GoClaw plugin must implement.

@@ -12,15 +12,15 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/sandbox"
-	"github.com/bookerbai/goclaw/internal/tools"
-	"github.com/bookerbai/goclaw/internal/tools/builtin"
-	fstools "github.com/bookerbai/goclaw/internal/tools/fs"
-	"github.com/bookerbai/goclaw/internal/tools/media"
-	"github.com/bookerbai/goclaw/internal/tools/search"
-	"github.com/bookerbai/goclaw/internal/tools/shell"
-	"github.com/bookerbai/goclaw/internal/tools/web"
+	"goclaw/internal/config"
+	"goclaw/internal/sandbox"
+	"goclaw/internal/tools"
+	"goclaw/internal/tools/builtin"
+	fstools "goclaw/internal/tools/fs"
+	"goclaw/internal/tools/media"
+	"goclaw/internal/tools/search"
+	"goclaw/internal/tools/shell"
+	"goclaw/internal/tools/web"
 )
 
 // RegisterDefaultTools rebuilds the default tools registry using runtime-aware wrappers.

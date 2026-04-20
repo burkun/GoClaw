@@ -11,9 +11,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/bookerbai/goclaw/internal/agent"
-	"github.com/bookerbai/goclaw/internal/threadstore"
-	"github.com/bookerbai/goclaw/pkg/metrics"
+	"goclaw/internal/agent"
+	"goclaw/internal/threadstore"
+	"goclaw/pkg/metrics"
 )
 
 // ThreadsHandler serves /api/threads/:thread_id/* endpoints.

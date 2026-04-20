@@ -9,7 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/bookerbai/goclaw/pkg/metrics"
+	"goclaw/pkg/metrics"
 )
 
 // MetricsHandler handles metrics-related endpoints.

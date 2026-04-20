@@ -9,7 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 type stubModel struct{}

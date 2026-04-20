@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/sandbox"
+	"goclaw/internal/sandbox"
 )
 
 // newTestSandbox creates a LocalSandbox backed by a temporary directory.

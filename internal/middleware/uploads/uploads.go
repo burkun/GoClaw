@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // UploadsMiddleware injects uploaded file list into state.Extra["uploads"].

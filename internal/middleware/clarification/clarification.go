@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // ClarificationMiddleware intercepts clarification requests.

@@ -7,9 +7,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bookerbai/goclaw/internal/channels"
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/channels"
+	"goclaw/internal/config"
+	"goclaw/internal/logging"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"

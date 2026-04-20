@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/agent"
+	"goclaw/internal/agent"
 )
 
 func TestLangGraphEventConverter_Metadata(t *testing.T) {

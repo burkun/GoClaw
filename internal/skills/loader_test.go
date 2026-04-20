@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 func TestLoaderLoad_FilterEnabledAndFallbackName(t *testing.T) {

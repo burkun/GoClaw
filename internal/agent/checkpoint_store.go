@@ -11,14 +11,14 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/compose"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
-func newCheckPointStore(appCfg *config.AppConfig) (adk.CheckPointStore, error) {
+func newCheckPointStore(appCfg *config.AppConfig) (compose.CheckPointStore, error) {
 	if appCfg == nil || appCfg.Checkpointer == nil {
 		return nil, nil
 	}

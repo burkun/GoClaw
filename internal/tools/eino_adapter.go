@@ -9,7 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/eino-contrib/jsonschema"
 
-	"github.com/bookerbai/goclaw/pkg/metrics"
+	"goclaw/pkg/metrics"
 )
 
 // EinoInvokableToolAdapter 将 GoClaw Tool 适配为 Eino InvokableTool。

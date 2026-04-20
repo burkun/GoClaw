@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/tools"
+	"goclaw/internal/config"
+	"goclaw/internal/tools"
 )
 
 // MCPHandler handles MCP configuration routes.

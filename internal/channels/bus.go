@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/logging"
 )
 
 // OutboundHandler handles one outbound message event.

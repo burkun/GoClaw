@@ -13,7 +13,7 @@ package dangling
 import (
 	"context"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // DanglingToolCallMiddleware detects incomplete (dangling) tool calls at the

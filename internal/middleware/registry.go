@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/pkg/errors"
 )
 
 // Registry 接口定义了 middleware 注册和获取的契约。

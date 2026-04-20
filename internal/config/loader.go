@@ -11,7 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/logging"
 )
 
 // SetLogger allows external code to inject a custom logger.

@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bookerbai/goclaw/pkg/metrics"
+	"goclaw/pkg/metrics"
 )
 
 // ThreadMetadata represents the lightweight metadata stored in the index.

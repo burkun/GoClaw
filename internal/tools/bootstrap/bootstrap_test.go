@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/sandbox"
-	localsandbox "github.com/bookerbai/goclaw/internal/sandbox/local"
-	"github.com/bookerbai/goclaw/internal/tools"
-	"github.com/bookerbai/goclaw/internal/tools/builtin"
-	fstools "github.com/bookerbai/goclaw/internal/tools/fs"
+	"goclaw/internal/config"
+	"goclaw/internal/sandbox"
+	localsandbox "goclaw/internal/sandbox/local"
+	"goclaw/internal/tools"
+	"goclaw/internal/tools/builtin"
+	fstools "goclaw/internal/tools/fs"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

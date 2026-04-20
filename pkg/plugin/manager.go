@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/internal/middleware"
-	"github.com/bookerbai/goclaw/internal/tools"
+	"goclaw/internal/logging"
+	"goclaw/internal/middleware"
+	"goclaw/internal/tools"
 )
 
 // Manager manages plugin lifecycle and registration.

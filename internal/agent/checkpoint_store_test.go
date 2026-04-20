@@ -13,7 +13,7 @@ import (
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 func TestNewCheckPointStore_NilConfig(t *testing.T) {

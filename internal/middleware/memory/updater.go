@@ -12,7 +12,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/pkg/errors"
 )
 
 // SectionUpdate represents a single section update with shouldUpdate flag.

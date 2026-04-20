@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/internal/middleware"
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/internal/logging"
+	"goclaw/internal/middleware"
+	"goclaw/pkg/errors"
 )
 
 // GuardrailDecision represents a guardrail authorization decision (legacy, kept for compatibility).

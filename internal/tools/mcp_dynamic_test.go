@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 func TestBuildMCPDynamicTools(t *testing.T) {

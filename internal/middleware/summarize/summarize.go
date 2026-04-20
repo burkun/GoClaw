@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/logging"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // DefaultTokenLimit is the conservative estimate of the model's context window.

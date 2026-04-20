@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
-	"github.com/bookerbai/goclaw/internal/tools"
+	"goclaw/internal/middleware"
+	"goclaw/internal/tools"
 )
 
 // mockTool implements tools.Tool for testing

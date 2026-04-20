@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 // Loader scans skills directories and loads enabled skills.

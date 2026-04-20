@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/tools/fs"
+	"goclaw/internal/tools/fs"
 )
 
 // newTestPaths creates a temporary per-thread directory structure and returns

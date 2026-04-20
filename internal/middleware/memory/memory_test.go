@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 func TestMemoryStore_dedup(t *testing.T) {

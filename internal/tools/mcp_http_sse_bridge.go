@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 const defaultMCPHTTPTimeout = 30 * time.Second

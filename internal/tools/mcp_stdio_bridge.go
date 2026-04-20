@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 const defaultMCPStdioTimeout = 30 * time.Second

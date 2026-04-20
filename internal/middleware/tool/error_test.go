@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 func TestWrapToolCall_ConvertsHandlerErrorToStructuredResult(t *testing.T) {

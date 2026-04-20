@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	tools "github.com/bookerbai/goclaw/internal/tools"
+	tools "goclaw/internal/tools"
 )
 
 // PathResolver translates virtual /mnt/user-data/* paths to host paths.

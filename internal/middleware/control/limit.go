@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // ErrSubagentLimitReached is returned when the global subagent limit is hit.

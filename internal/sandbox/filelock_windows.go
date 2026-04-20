@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/pkg/errors"
 )
 
 var (

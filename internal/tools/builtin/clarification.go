@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	tools "github.com/bookerbai/goclaw/internal/tools"
+	tools "goclaw/internal/tools"
 )
 
 // ---------------------------------------------------------------------------

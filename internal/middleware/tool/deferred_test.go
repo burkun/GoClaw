@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 func TestDeferredToolFilterMiddleware_Name(t *testing.T) {

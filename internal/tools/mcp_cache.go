@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/pkg/cache"
+	"goclaw/internal/config"
+	"goclaw/pkg/cache"
 )
 
 // MCPCacheManager MCP配置缓存管理器

@@ -2,7 +2,7 @@
 package builtins
 
 import (
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 // SubagentTypeConfig is an alias to avoid import cycles.

@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/sandbox"
-	"github.com/bookerbai/goclaw/internal/sandbox/local"
+	"goclaw/internal/sandbox"
+	"goclaw/internal/sandbox/local"
 )
 
 // TestAgentBasicExecution tests basic agent execution flow

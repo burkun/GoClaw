@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/sandbox"
+	"goclaw/internal/sandbox"
 )
 
 // setupTestProvider creates a DockerSandboxProvider with mock client for testing

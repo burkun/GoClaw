@@ -2,9 +2,8 @@ package subagents
 
 import (
 	"context"
+	"sync"
 	"time"
-
-	"github.com/cloudwego/eino/adk"
 )
 
 // TaskEventData represents the data for a task event.
@@ -20,10 +19,58 @@ type TaskEventData struct {
 	Error         string         `json:"error,omitempty"`
 }
 
-// sendTaskEvent sends a custom task event to the SSE stream.
-// This function uses Eino's adk.SendEvent with a CustomizedAction to emit
-// task lifecycle events (task_started, task_running, task_completed, etc.).
+// taskEventKey is the context key for collecting task events.
+type taskEventKey struct{}
+
+// TaskEventCollector collects task events during subagent execution.
+type TaskEventCollector struct {
+	mu     sync.Mutex
+	events []TaskEventData
+}
+
+// NewTaskEventCollector creates a new collector.
+func NewTaskEventCollector() *TaskEventCollector {
+	return &TaskEventCollector{
+		events: make([]TaskEventData, 0),
+	}
+}
+
+// AddEvent adds a task event.
+func (c *TaskEventCollector) AddEvent(data TaskEventData) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.events = append(c.events, data)
+}
+
+// Events returns all collected events.
+func (c *TaskEventCollector) Events() []TaskEventData {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]TaskEventData, len(c.events))
+	copy(out, c.events)
+	return out
+}
+
+// WithTaskEventCollector attaches a TaskEventCollector to the context.
+func WithTaskEventCollector(ctx context.Context, collector *TaskEventCollector) context.Context {
+	return context.WithValue(ctx, taskEventKey{}, collector)
+}
+
+// getTaskEventCollector retrieves the collector from context.
+func getTaskEventCollector(ctx context.Context) *TaskEventCollector {
+	if c, ok := ctx.Value(taskEventKey{}).(*TaskEventCollector); ok {
+		return c
+	}
+	return nil
+}
+
+// sendTaskEvent records a task event via context collector.
 func sendTaskEvent(ctx context.Context, eventType string, taskID string, data map[string]any) {
+	collector := getTaskEventCollector(ctx)
+	if collector == nil {
+		return
+	}
+
 	if data == nil {
 		data = make(map[string]any)
 	}
@@ -31,14 +78,11 @@ func sendTaskEvent(ctx context.Context, eventType string, taskID string, data ma
 	data["type"] = eventType
 	data["timestamp"] = time.Now().UnixMilli()
 
-	event := &adk.AgentEvent{
-		Action: &adk.AgentAction{
-			CustomizedAction: data,
-		},
-	}
-
-	// Silently ignore error if not in agent context
-	_ = adk.SendEvent(ctx, event)
+	collector.AddEvent(TaskEventData{
+		Type:      eventType,
+		TaskID:    taskID,
+		Timestamp: data["timestamp"].(int64),
+	})
 }
 
 // SendTaskStarted sends a task_started event.

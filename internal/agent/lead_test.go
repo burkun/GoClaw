@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
-	toolruntime "github.com/bookerbai/goclaw/internal/tools"
+	"goclaw/internal/config"
+	skillsruntime "goclaw/internal/skills"
+	toolruntime "goclaw/internal/tools"
 	"github.com/cloudwego/eino/schema"
 )
 

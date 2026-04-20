@@ -13,9 +13,9 @@ import (
 	lctool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/bookerbai/goclaw/internal/agent/subagents"
-	"github.com/bookerbai/goclaw/internal/config"
-	basemw "github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/agent/subagents"
+	"goclaw/internal/config"
+	basemw "goclaw/internal/middleware"
 )
 
 // --- Tests for prepareRunMessages ---

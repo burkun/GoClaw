@@ -9,7 +9,7 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/bookerbai/goclaw/internal/agent"
+	"goclaw/internal/agent"
 )
 
 // LangGraphSSEEvent represents an SSE event in LangGraph SDK format.

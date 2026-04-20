@@ -29,7 +29,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/sandbox"
+	"goclaw/internal/sandbox"
 )
 
 // defaultDeniedCommands is the built-in denylist of dangerous command prefixes
@@ -788,29 +788,31 @@ func NewLocalSandboxProvider(cfg sandbox.SandboxConfig, baseDir string, skillsPa
 }
 
 // Acquire returns the singleton sandbox ID "local", creating the sandbox if needed.
-// threadID is used to set up the per-thread filesystem paths on first call.
+// threadID is used to set up the per-thread filesystem paths.
+// Note: For simplicity, we update the sandbox baseDir for each new thread.
 func (p *LocalSandboxProvider) Acquire(ctx context.Context, threadID string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.sandbox == nil {
-		threadBaseDir := filepath.Join(p.baseDir, "threads", threadID, "user-data")
-		for _, sub := range []string{"workspace", "uploads", "outputs"} {
-			dir := filepath.Join(threadBaseDir, sub)
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return "", fmt.Errorf("create sandbox dir %s: %w", sub, err)
-			}
-			if err := os.Chmod(dir, 0o777); err != nil {
-				return "", fmt.Errorf("chmod sandbox dir %s: %w", sub, err)
-			}
+	threadBaseDir := filepath.Join(p.baseDir, "threads", threadID, "user-data")
+	for _, sub := range []string{"workspace", "uploads", "outputs"} {
+		dir := filepath.Join(threadBaseDir, sub)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", fmt.Errorf("create sandbox dir %s: %w", sub, err)
 		}
-		p.sandbox = &LocalSandbox{
-			id:         "local",
-			threadID:   threadID,
-			baseDir:    threadBaseDir,
-			skillsPath: p.skillsPath,
-			cfg:        p.cfg,
+		if err := os.Chmod(dir, 0o777); err != nil {
+			return "", fmt.Errorf("chmod sandbox dir %s: %w", sub, err)
 		}
+	}
+
+	// Update sandbox for this thread (create or reuse)
+	absBaseDir, _ := filepath.Abs(threadBaseDir)
+	p.sandbox = &LocalSandbox{
+		id:         "local",
+		threadID:   threadID,
+		baseDir:    absBaseDir,
+		skillsPath: p.skillsPath,
+		cfg:        p.cfg,
 	}
 	return "local", nil
 }

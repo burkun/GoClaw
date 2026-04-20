@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bookerbai/goclaw/internal/channels"
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/channels"
+	"goclaw/internal/config"
+	"goclaw/internal/logging"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 

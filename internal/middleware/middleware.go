@@ -10,7 +10,7 @@ package middleware
 import (
 	"context"
 
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/logging"
 )
 
 // State is the mutable conversation state passed through every middleware.

@@ -3,7 +3,7 @@ package tools
 import (
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 func TestHasMCPConfigChanged(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/pkg/errors"
 )
 
 // EinoSummarizer adapts an Eino BaseChatModel to Summarizer.

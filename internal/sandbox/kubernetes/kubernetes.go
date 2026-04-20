@@ -35,7 +35,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/sandbox"
+	"goclaw/internal/sandbox"
 )
 
 // Default configuration values (aligned with DeerFlow).

@@ -10,10 +10,10 @@ import (
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/bookerbai/goclaw/internal/agent/subagents/builtins"
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/models"
-	toolruntime "github.com/bookerbai/goclaw/internal/tools"
+	"goclaw/internal/agent/subagents/builtins"
+	"goclaw/internal/config"
+	"goclaw/internal/models"
+	toolruntime "goclaw/internal/tools"
 )
 
 // TaskToolName is the stable tool name used by the model.

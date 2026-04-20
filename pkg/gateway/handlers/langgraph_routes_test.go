@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/bookerbai/goclaw/internal/agent"
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/agent"
+	"goclaw/internal/config"
 )
 
 func TestLangGraphHandler_CreateThread(t *testing.T) {

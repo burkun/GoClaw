@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/internal/middleware"
-	"github.com/bookerbai/goclaw/internal/tools"
-	"github.com/bookerbai/goclaw/pkg/plugin"
+	"goclaw/internal/config"
+	"goclaw/internal/logging"
+	"goclaw/internal/middleware"
+	"goclaw/internal/tools"
+	"goclaw/pkg/plugin"
 )
 
 // InitializePlugins initializes the plugin system based on the configuration.

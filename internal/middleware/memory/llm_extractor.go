@@ -9,7 +9,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/pkg/errors"
 )
 
 // EinoFactExtractor uses an Eino chat model to extract structured memory facts.

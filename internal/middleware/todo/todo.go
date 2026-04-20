@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // TodoStatus enumerates the allowed task lifecycle states.

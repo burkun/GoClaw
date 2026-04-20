@@ -35,8 +35,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/logging"
+	"goclaw/internal/middleware"
 )
 
 const DefaultMemoryPath = "memory.json"

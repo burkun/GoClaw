@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 func TestValidateThreadID(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 func makeAssistantWithTC(tc []map[string]any) map[string]any {

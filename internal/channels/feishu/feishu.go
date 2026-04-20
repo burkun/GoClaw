@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/channels"
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/channels"
+	"goclaw/internal/config"
+	"goclaw/internal/logging"
 	lark "github.com/larksuite/oapi-sdk-go/v3"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )

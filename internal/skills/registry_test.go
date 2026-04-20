@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 type fakePlugin struct {

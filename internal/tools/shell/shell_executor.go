@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -44,7 +45,10 @@ func (t *BashTool) Execute(ctx context.Context, input string) (string, error) {
 		resolvedCmd = mapped
 	}
 	if strings.TrimSpace(t.cfg.WorkspacePath) != "" {
-		resolvedCmd = "cd " + shellQuote(t.cfg.WorkspacePath) + " && " + resolvedCmd
+		// Ensure workspace directory exists before cd
+		if err := os.MkdirAll(t.cfg.WorkspacePath, 0o755); err == nil {
+			resolvedCmd = "cd " + shellQuote(t.cfg.WorkspacePath) + " && " + resolvedCmd
+		}
 	}
 
 	timeout := t.effectiveTimeout(ctx)

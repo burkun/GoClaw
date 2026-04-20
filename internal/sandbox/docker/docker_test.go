@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/sandbox"
+	"goclaw/internal/sandbox"
 )
 
 // TestEffectiveContainerPrefix tests container name prefix generation

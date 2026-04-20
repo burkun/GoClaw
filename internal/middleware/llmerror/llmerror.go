@@ -16,8 +16,8 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/logging"
+	"goclaw/internal/middleware"
 )
 
 // Retriable HTTP status codes.

@@ -3,7 +3,7 @@ package skills
 import (
 	"context"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 // SkillMetadata is parsed from SKILL.md frontmatter.

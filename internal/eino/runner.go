@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/compose"
 )
 
 // EventStream 封装 Eino AsyncIterator，供上层统一读取事件流。
@@ -24,7 +25,7 @@ func (s *EventStream) Next() (*adk.AgentEvent, bool) {
 type RunnerConfig struct {
 	Agent           adk.Agent
 	EnableStreaming bool
-	CheckPointStore adk.CheckPointStore
+	CheckPointStore compose.CheckPointStore
 }
 
 // Runner 是 GoClaw 对 Eino Runner 的适配器。

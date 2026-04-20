@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/bookerbai/goclaw/internal/agent"
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/threadstore"
+	"goclaw/internal/agent"
+	"goclaw/internal/config"
+	"goclaw/internal/threadstore"
 )
 
 // runHandle tracks an in-progress run for cancellation and lookup.

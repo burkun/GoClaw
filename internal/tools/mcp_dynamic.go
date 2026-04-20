@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 // MCPDynamicTool is a lightweight proxy tool generated from extensions MCP config.

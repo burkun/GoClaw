@@ -12,8 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	memorymw "github.com/bookerbai/goclaw/internal/middleware/memory"
+	"goclaw/internal/config"
+	memorymw "goclaw/internal/middleware/memory"
 )
 
 // MemoryHandler serves memory API endpoints.

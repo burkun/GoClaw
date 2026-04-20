@@ -13,10 +13,10 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/internal/middleware"
-	"github.com/bookerbai/goclaw/internal/sandbox"
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/internal/logging"
+	"goclaw/internal/middleware"
+	"goclaw/internal/sandbox"
+	"goclaw/pkg/errors"
 )
 
 // SandboxMiddleware acquires a sandbox on BeforeAgent and releases it on AfterAgent.

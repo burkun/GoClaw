@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/skills"
+	"goclaw/internal/config"
+	"goclaw/internal/skills"
 )
 
 func TestSkillsHandler_ListSkills_Empty(t *testing.T) {

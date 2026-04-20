@@ -13,9 +13,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	"github.com/bookerbai/goclaw/internal/agent"
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/pkg/metrics"
+	"goclaw/internal/agent"
+	"goclaw/internal/config"
+	"goclaw/pkg/metrics"
 )
 
 // LangGraphHandler serves the LangGraph SDK compatible API endpoints.

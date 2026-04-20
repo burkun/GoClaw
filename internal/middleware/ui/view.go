@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // ViewImageMiddleware handles image injection for multimodal models.

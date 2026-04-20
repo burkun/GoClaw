@@ -10,9 +10,9 @@ import (
 	lctool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/bookerbai/goclaw/internal/agentconfig"
-	"github.com/bookerbai/goclaw/internal/config"
-	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
+	"goclaw/internal/agentconfig"
+	"goclaw/internal/config"
+	skillsruntime "goclaw/internal/skills"
 )
 
 // --- Mock Types ---

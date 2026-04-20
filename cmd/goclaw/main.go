@@ -5,11 +5,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/agent"
-	"github.com/bookerbai/goclaw/internal/agentconfig"
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/pkg/gateway"
+	"goclaw/internal/agent"
+	"goclaw/internal/agentconfig"
+	"goclaw/internal/config"
+	"goclaw/internal/logging"
+	"goclaw/pkg/gateway"
 )
 
 func main() {

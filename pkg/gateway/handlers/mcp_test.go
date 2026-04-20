@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 func TestMCPHandler_GetConfig_Empty(t *testing.T) {

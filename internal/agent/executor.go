@@ -11,9 +11,9 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/bookerbai/goclaw/internal/agent/subagents"
-	einoruntime "github.com/bookerbai/goclaw/internal/eino"
-	basemw "github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/agent/subagents"
+	einoruntime "goclaw/internal/eino"
+	basemw "goclaw/internal/middleware"
 )
 
 // Run starts a new agent run with the given state and configuration.

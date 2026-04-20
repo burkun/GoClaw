@@ -7,8 +7,8 @@ package monitoring
 import (
 	"context"
 
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/logging"
+	"goclaw/internal/middleware"
 )
 
 // TokenUsageMiddleware logs token usage from model response usage_metadata.

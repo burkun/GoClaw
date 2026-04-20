@@ -10,7 +10,7 @@ import (
 
 	"github.com/cloudwego/eino/callbacks"
 
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/logging"
 )
 
 // TracingConfig holds configuration for all supported tracing providers.

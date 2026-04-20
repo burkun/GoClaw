@@ -11,20 +11,20 @@ import (
 	lctool "github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 
-	"github.com/bookerbai/goclaw/internal/agent/subagents"
-	"github.com/bookerbai/goclaw/internal/agentconfig"
-	"github.com/bookerbai/goclaw/internal/config"
-	einoruntime "github.com/bookerbai/goclaw/internal/eino"
-	"github.com/bookerbai/goclaw/internal/logging"
-	basemw "github.com/bookerbai/goclaw/internal/middleware"
-	"github.com/bookerbai/goclaw/internal/middleware/builder"
-	"github.com/bookerbai/goclaw/internal/models"
-	"github.com/bookerbai/goclaw/internal/sandbox"
-	dockersandbox "github.com/bookerbai/goclaw/internal/sandbox/docker"
-	localsandbox "github.com/bookerbai/goclaw/internal/sandbox/local"
-	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
-	toolruntime "github.com/bookerbai/goclaw/internal/tools"
-	toolbootstrap "github.com/bookerbai/goclaw/internal/tools/bootstrap"
+	"goclaw/internal/agent/subagents"
+	"goclaw/internal/agentconfig"
+	"goclaw/internal/config"
+	einoruntime "goclaw/internal/eino"
+	"goclaw/internal/logging"
+	basemw "goclaw/internal/middleware"
+	"goclaw/internal/middleware/builder"
+	"goclaw/internal/models"
+	"goclaw/internal/sandbox"
+	dockersandbox "goclaw/internal/sandbox/docker"
+	localsandbox "goclaw/internal/sandbox/local"
+	skillsruntime "goclaw/internal/skills"
+	toolruntime "goclaw/internal/tools"
+	toolbootstrap "goclaw/internal/tools/bootstrap"
 )
 
 var getAppConfig = config.GetAppConfig
@@ -128,7 +128,7 @@ func New(ctx context.Context) (*leadAgent, error) {
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools},
 		},
 		MaxIterations: 100,
-		Handlers:      mws,
+		Middlewares:    mws,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent.New: build chat model agent failed: %w", err)
@@ -307,7 +307,7 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools},
 		},
 		MaxIterations: 100,
-		Handlers:      mws,
+		Middlewares:    mws,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent.NewWithName: build chat model agent failed: %w", err)
@@ -330,13 +330,13 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 	return &leadAgent{einoAgent: a, tools: tools, middlewares: mws, runner: r, skills: skillRegistry}, nil
 }
 
-func buildMiddlewares(cfg RunConfig) []adk.ChatModelAgentMiddleware {
+func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
 	appCfg, _ := config.GetAppConfig()
 	sbProvider := buildSandboxProvider(appCfg)
 	sandbox.SetDefaultProvider(sbProvider)
 
 	// Create model creator function
-	createChatModel := func(ctx context.Context, modelName string) (model.BaseChatModel, error) {
+	createChatModel := func(ctx context.Context, modelName string) (model.ToolCallingChatModel, error) {
 		if appCfg == nil {
 			return nil, fmt.Errorf("app config not loaded")
 		}
@@ -363,7 +363,7 @@ func buildMiddlewares(cfg RunConfig) []adk.ChatModelAgentMiddleware {
 		return nil
 	}
 
-	// Convert basemw.Middleware to adk.ChatModelAgentMiddleware using adapter
+	// Convert basemw.Middleware to adk.AgentMiddleware using adapter
 	return basemw.AdaptMiddlewares(middlewares)
 }
 

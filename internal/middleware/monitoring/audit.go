@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/logging"
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/logging"
+	"goclaw/internal/middleware"
 )
 
 // AuditEntry represents a single audit log entry.

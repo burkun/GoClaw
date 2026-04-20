@@ -14,9 +14,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/bookerbai/goclaw/internal/agent"
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/threadstore"
+	"goclaw/internal/agent"
+	"goclaw/internal/config"
+	"goclaw/internal/threadstore"
 )
 
 // ---------------------------------------------------------------------------

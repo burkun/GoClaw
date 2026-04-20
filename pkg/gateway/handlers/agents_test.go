@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 	"gopkg.in/yaml.v3"
 )
 

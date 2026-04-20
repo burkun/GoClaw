@@ -1,7 +1,7 @@
 // Package builtins provides built-in subagent configurations.
 package builtins
 
-import "github.com/bookerbai/goclaw/internal/config"
+import "goclaw/internal/config"
 
 // GeneralPurposeConfig is the default subagent for complex, multi-step tasks.
 var GeneralPurposeConfig = config.SubagentTypeConfig{

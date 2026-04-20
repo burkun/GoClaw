@@ -1,6 +1,6 @@
 package builtins
 
-import "github.com/bookerbai/goclaw/internal/config"
+import "goclaw/internal/config"
 
 // BashAgentConfig is a command execution specialist for running bash commands.
 var BashAgentConfig = config.SubagentTypeConfig{

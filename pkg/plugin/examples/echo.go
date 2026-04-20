@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
-	"github.com/bookerbai/goclaw/internal/tools"
-	"github.com/bookerbai/goclaw/pkg/plugin"
+	"goclaw/internal/middleware"
+	"goclaw/internal/tools"
+	"goclaw/pkg/plugin"
 )
 
 // EchoPlugin is an example plugin that demonstrates the plugin interface.

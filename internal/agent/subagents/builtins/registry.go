@@ -1,7 +1,7 @@
 package builtins
 
 import (
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 // BuiltinSubagents is the registry of built-in subagent configurations.

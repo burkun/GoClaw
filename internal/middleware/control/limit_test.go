@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 func TestSubagentLimitMiddleware_Before_NotSubagent(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/logging"
 )
 
 // ---------------------------------------------------------------------------

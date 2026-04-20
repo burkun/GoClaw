@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/pkg/errors"
 )
 
 // FileLockMode determines the lock implementation to use.

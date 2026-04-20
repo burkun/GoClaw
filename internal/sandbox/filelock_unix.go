@@ -8,7 +8,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/bookerbai/goclaw/pkg/errors"
+	"goclaw/pkg/errors"
 )
 
 // tryAcquireFileLockPlatform acquires an exclusive lock on Unix/Linux/macOS using flock.

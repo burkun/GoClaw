@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bookerbai/goclaw/internal/config"
+	"goclaw/internal/config"
 )
 
 // Registry stores loaded skills and dispatches plugin lifecycle hooks.

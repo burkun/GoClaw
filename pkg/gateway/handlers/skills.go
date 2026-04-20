@@ -15,8 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gopkg.in/yaml.v3"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/skills"
+	"goclaw/internal/config"
+	"goclaw/internal/skills"
 )
 
 // SkillsHandler handles skill listing and updates.

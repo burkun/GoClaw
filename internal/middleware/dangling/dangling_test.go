@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 func TestDanglingToolCallMiddleware_Before_NoMessages(t *testing.T) {

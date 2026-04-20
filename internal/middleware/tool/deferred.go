@@ -7,7 +7,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // DeferredToolFilterMiddleware filters deferred tools from model bindings.

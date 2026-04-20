@@ -5,8 +5,8 @@ import (
 
 	"github.com/cloudwego/eino/adk"
 	lctool "github.com/cloudwego/eino/components/tool"
-	einoruntime "github.com/bookerbai/goclaw/internal/eino"
-	skillsruntime "github.com/bookerbai/goclaw/internal/skills"
+	einoruntime "goclaw/internal/eino"
+	skillsruntime "goclaw/internal/skills"
 )
 
 // LeadAgent defines the interface for a lead agent.
@@ -19,7 +19,7 @@ type LeadAgent interface {
 type leadAgent struct {
 	einoAgent   adk.Agent
 	tools       []lctool.BaseTool
-	middlewares []adk.ChatModelAgentMiddleware
+	middlewares []adk.AgentMiddleware
 	runner      *einoruntime.Runner
 	skills      *skillsruntime.Registry
 }

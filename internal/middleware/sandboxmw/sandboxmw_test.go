@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
-	"github.com/bookerbai/goclaw/internal/sandbox"
+	"goclaw/internal/middleware"
+	"goclaw/internal/sandbox"
 )
 
 type stubSandbox struct{ id string }

@@ -7,7 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/bookerbai/goclaw/internal/middleware"
+	"goclaw/internal/middleware"
 )
 
 // ToolErrorHandlingMiddleware catches tool execution errors and converts them

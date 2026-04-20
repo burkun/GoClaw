@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bookerbai/goclaw/internal/config"
-	"github.com/bookerbai/goclaw/internal/logging"
+	"goclaw/internal/config"
+	"goclaw/internal/logging"
 )
 
 // MCPToolDefinition represents a single tool from MCP tools/list.
