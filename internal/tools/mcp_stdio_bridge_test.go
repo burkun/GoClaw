@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"strconv"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -34,10 +34,10 @@ func TestFormatMCPCallResult(t *testing.T) {
 	}
 }
 
-func TestReadMCPFrame(t *testing.T) {
+func TestReadMCPContentLengthFrame(t *testing.T) {
 	payload := `{"jsonrpc":"2.0","id":1,"result":{}}`
-	frame := "Content-Length: " + strconv.Itoa(len(payload)) + "\r\n\r\n" + payload
-	got, err := readMCPFrame(bufio.NewReader(strings.NewReader(frame)))
+	frame := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(payload), payload)
+	got, err := readMCPContentLengthFrame(bufio.NewReader(strings.NewReader(frame)))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -46,15 +46,44 @@ func TestReadMCPFrame(t *testing.T) {
 	}
 }
 
-func TestMCPFramedClientWrite(t *testing.T) {
+func TestReadMCPLineFrame(t *testing.T) {
+	payload := `{"jsonrpc":"2.0","id":1,"result":{}}`
+	frame := payload + "\n"
+	got, err := readMCPLineFrame(bufio.NewReader(strings.NewReader(frame)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != payload {
+		t.Fatalf("payload mismatch: %q", string(got))
+	}
+}
+
+func TestMCPFramedClientWrite_ContentLength(t *testing.T) {
 	var buf bytes.Buffer
-	c := &mcpFramedClient{writer: &buf}
+	c := &mcpFramedClient{writer: &buf, lineFramed: false}
 	id := 1
 	msg := mcpEnvelope{JSONRPC: "2.0", ID: &id, Method: "ping"}
 	if err := c.write(msg); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
 	if !strings.Contains(buf.String(), "Content-Length:") || !strings.Contains(buf.String(), `"method":"ping"`) {
+		t.Fatalf("unexpected frame: %s", buf.String())
+	}
+}
+
+func TestMCPFramedClientWrite_LineFramed(t *testing.T) {
+	var buf bytes.Buffer
+	c := &mcpFramedClient{writer: &buf, lineFramed: true}
+	id := 1
+	msg := mcpEnvelope{JSONRPC: "2.0", ID: &id, Method: "ping"}
+	if err := c.write(msg); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	// Line-framed should NOT have Content-Length header
+	if strings.Contains(buf.String(), "Content-Length:") {
+		t.Fatalf("unexpected Content-Length in line-framed mode: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"method":"ping"`) || !strings.HasSuffix(buf.String(), "\n") {
 		t.Fatalf("unexpected frame: %s", buf.String())
 	}
 }

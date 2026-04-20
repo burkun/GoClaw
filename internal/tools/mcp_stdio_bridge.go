@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"goclaw/internal/config"
+	"goclaw/internal/logging"
 )
 
 const defaultMCPStdioTimeout = 30 * time.Second
@@ -49,9 +50,21 @@ type mcpToolCallResult struct {
 }
 
 type mcpFramedClient struct {
-	reader *bufio.Reader
-	writer io.Writer
-	nextID int
+	reader     *bufio.Reader
+	writer     io.Writer
+	nextID     int
+	lineFramed bool // true = server uses newline-delimited JSON; false = Content-Length framing
+}
+
+// detectFrameFormat peeks at the first byte to determine the server's framing format.
+// If it starts with '{', the server uses newline-delimited JSON.
+// If it starts with 'C' (Content-Length), the server uses header-based framing.
+func detectFrameFormat(r *bufio.Reader) (lineFramed bool, err error) {
+	b, err := r.Peek(1)
+	if err != nil {
+		return false, fmt.Errorf("peek frame format: %w", err)
+	}
+	return b[0] == '{', nil
 }
 
 type pooledStdioClient struct {
@@ -213,10 +226,18 @@ func (p *pooledStdioClient) ensureStarted() error {
 		return fmt.Errorf("start stdio server %q: %w", p.serverName, err)
 	}
 
+	// Give the process a moment to initialize.
+	// Some MCP servers need time to set up before they can process input.
+	time.Sleep(100 * time.Millisecond)
+
+	reader := bufio.NewReader(stdout)
 	p.cmd = cmd
 	p.stdin = stdin
 	p.stdout = stdout
-	p.client = &mcpFramedClient{reader: bufio.NewReader(stdout), writer: stdin}
+	// Default to newline-delimited JSON format for better compatibility.
+	// Many MCP servers (including @modelcontextprotocol/server-filesystem)
+	// use newline-delimited JSON instead of Content-Length framing.
+	p.client = &mcpFramedClient{reader: reader, writer: stdin, lineFramed: true}
 	p.initialized = false
 	return nil
 }
@@ -247,12 +268,18 @@ func (c *mcpFramedClient) request(ctx context.Context, method string, params any
 		ID:      &idCopy,
 		Method:  method,
 	}
+	// Check if params is nil or a nil map/slice.
+	// In Go, a nil map passed to any interface is NOT equal to nil.
+	// We need to marshal and check for "null" to handle this correctly.
 	if params != nil {
 		b, err := json.Marshal(params)
 		if err != nil {
 			return nil, fmt.Errorf("marshal params: %w", err)
 		}
-		msg.Params = b
+		// Only set params if it's not "null" (which happens with nil maps/slices)
+		if string(b) != "null" {
+			msg.Params = b
+		}
 	}
 
 	if err := c.write(msg); err != nil {
@@ -299,20 +326,51 @@ func (c *mcpFramedClient) write(msg mcpEnvelope) error {
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
-	if _, err := fmt.Fprintf(c.writer, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
-		return fmt.Errorf("write header: %w", err)
-	}
-	if _, err := c.writer.Write(payload); err != nil {
-		return fmt.Errorf("write payload: %w", err)
+	if c.lineFramed {
+		// Newline-delimited JSON: write JSON + newline
+		n, err := fmt.Fprintf(c.writer, "%s\n", payload)
+		if err != nil {
+			return fmt.Errorf("write line frame: %w", err)
+		}
+		// Flush the writer to ensure the message is sent immediately.
+		// This is critical for stdin pipes which may be buffered.
+		if flusher, ok := c.writer.(interface{ Flush() error }); ok {
+			if err := flusher.Flush(); err != nil {
+				return fmt.Errorf("flush writer: %w", err)
+			}
+		}
+		logging.Debug("[MCP stdio] wrote line frame", "bytes", n, "payload", string(payload))
+	} else {
+		// Content-Length framing (LSP-style)
+		if _, err := fmt.Fprintf(c.writer, "Content-Length: %d\r\n\r\n", len(payload)); err != nil {
+			return fmt.Errorf("write header: %w", err)
+		}
+		if _, err := c.writer.Write(payload); err != nil {
+			return fmt.Errorf("write payload: %w", err)
+		}
+		// Flush for buffered writers.
+		if flusher, ok := c.writer.(interface{ Flush() error }); ok {
+			if err := flusher.Flush(); err != nil {
+				return fmt.Errorf("flush writer: %w", err)
+			}
+		}
 	}
 	return nil
 }
 
 func (c *mcpFramedClient) read() (mcpEnvelope, error) {
-	payload, err := readMCPFrame(c.reader)
+	var payload []byte
+	var err error
+
+	if c.lineFramed {
+		payload, err = readMCPLineFrame(c.reader)
+	} else {
+		payload, err = readMCPContentLengthFrame(c.reader)
+	}
 	if err != nil {
 		return mcpEnvelope{}, err
 	}
+
 	var env mcpEnvelope
 	if err := json.Unmarshal(payload, &env); err != nil {
 		return mcpEnvelope{}, fmt.Errorf("decode response: %w", err)
@@ -320,7 +378,19 @@ func (c *mcpFramedClient) read() (mcpEnvelope, error) {
 	return env, nil
 }
 
-func readMCPFrame(r *bufio.Reader) ([]byte, error) {
+// readMCPLineFrame reads a newline-delimited JSON frame.
+// Many MCP servers use this simpler format instead of Content-Length framing.
+func readMCPLineFrame(r *bufio.Reader) ([]byte, error) {
+	line, err := r.ReadBytes('\n')
+	if err != nil {
+		return nil, fmt.Errorf("read line frame: %w", err)
+	}
+	return bytes.TrimRight(line, "\r\n"), nil
+}
+
+// readMCPContentLengthFrame reads a Content-Length framed message (LSP-style).
+// This is used by spec-compliant MCP servers that implement the full framing protocol.
+func readMCPContentLengthFrame(r *bufio.Reader) ([]byte, error) {
 	contentLength := -1
 	for {
 		line, err := r.ReadString('\n')
