@@ -17,7 +17,7 @@ export default defineConfig({
   ],
 
   themeConfig: {
-    logo: { src: '/logo.png', alt: 'GoClaw' },
+    logo: { src: '/logo.svg', alt: 'GoClaw' },
 
     nav: [
       { text: '开始阅读', link: '/chapters/01-what-is-goclaw' },

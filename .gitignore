@@ -39,3 +39,9 @@ extensions_config.json
 # Skills directory (user data)
 skills/*
 !skills/README.md
+
+# Docs build artifacts
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+docs/package-lock.json
