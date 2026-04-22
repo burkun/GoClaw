@@ -102,6 +102,7 @@ type LGCreateThreadRequest struct {
 // LGThread represents a thread in LangGraph format.
 type LGThread struct {
 	ThreadID  string         `json:"thread_id"`
+	Title     string         `json:"title,omitempty"`
 	CreatedAt string         `json:"created_at"`
 	UpdatedAt string         `json:"updated_at"`
 	Status    string         `json:"status"`
@@ -168,6 +169,25 @@ func (h *LangGraphHandler) CreateThread(c *gin.Context) {
 		Metadata:  req.Metadata,
 	}
 
+	// Persist thread in store
+	if h.store != nil {
+		nowMs := time.Now().UnixMilli()
+		meta := &threadstore.ThreadMetadata{
+			ThreadID:  threadID,
+			Status:    "idle",
+			CreatedAt: nowMs,
+			UpdatedAt: nowMs,
+			Metadata:  req.Metadata,
+		}
+		if err := h.store.Create(meta); err != nil {
+			// Thread already exists - that's ok, just return it
+			if !strings.Contains(err.Error(), "already exists") {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+		}
+	}
+
 	c.JSON(http.StatusCreated, thread)
 }
 
@@ -179,6 +199,23 @@ func (h *LangGraphHandler) GetThread(c *gin.Context) {
 		return
 	}
 
+	// Try to load from store
+	if h.store != nil {
+		if meta, err := h.store.Get(threadID); err == nil && meta != nil {
+			thread := LGThread{
+				ThreadID:  meta.ThreadID,
+				Title:     meta.Title,
+				CreatedAt: time.UnixMilli(meta.CreatedAt).UTC().Format(time.RFC3339),
+				UpdatedAt: time.UnixMilli(meta.UpdatedAt).UTC().Format(time.RFC3339),
+				Status:    meta.Status,
+				Metadata:  meta.Metadata,
+			}
+			c.JSON(http.StatusOK, thread)
+			return
+		}
+	}
+
+	// Return default if not found
 	now := time.Now().UTC().Format(time.RFC3339)
 	thread := LGThread{
 		ThreadID:  threadID,
@@ -198,7 +235,62 @@ func (h *LangGraphHandler) DeleteThread(c *gin.Context) {
 		return
 	}
 
+	// Delete from store
+	if h.store != nil {
+		_ = h.store.Delete(threadID)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"thread_id": threadID, "deleted": true})
+}
+
+// PatchThread handles PATCH /threads/{thread_id}.
+// Updates thread metadata (used by SDK threads.update).
+func (h *LangGraphHandler) PatchThread(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	var req struct {
+		Metadata map[string]any `json:"metadata"`
+		TTL      any            `json:"ttl"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		// Allow empty body
+	}
+
+	// Update in store
+	var createdAt int64
+	if h.store != nil {
+		if existing, err := h.store.Get(threadID); err == nil && existing != nil {
+			createdAt = existing.CreatedAt
+		}
+		_ = h.store.Update(threadID, &threadstore.ThreadMetadata{
+			ThreadID:  threadID,
+			Status:    "idle",
+			Metadata:  req.Metadata,
+			CreatedAt: createdAt,
+			UpdatedAt: time.Now().UnixMilli(),
+		})
+	}
+
+	// Return the updated thread
+	var createdStr, updatedStr string
+	if createdAt > 0 {
+		createdStr = time.UnixMilli(createdAt).UTC().Format(time.RFC3339)
+	} else {
+		createdStr = time.Now().UTC().Format(time.RFC3339)
+	}
+	updatedStr = time.Now().UTC().Format(time.RFC3339)
+
+	c.JSON(http.StatusOK, LGThread{
+		ThreadID:  threadID,
+		CreatedAt: createdStr,
+		UpdatedAt: updatedStr,
+		Status:    "idle",
+		Metadata:  req.Metadata,
+	})
 }
 
 // SearchThreads handles POST /threads/search.
@@ -206,9 +298,41 @@ func (h *LangGraphHandler) SearchThreads(c *gin.Context) {
 	var req LGSearchRequest
 	_ = c.ShouldBindJSON(&req)
 
-	// Minimal implementation: return empty list.
-	// Full implementation would query a persistent store.
-	c.JSON(http.StatusOK, []LGThread{})
+	if h.store == nil {
+		c.JSON(http.StatusOK, []LGThread{})
+		return
+	}
+
+	// Query thread store
+	query := threadstore.SearchQuery{
+		Status: req.Status,
+		Limit:  req.Limit,
+		Offset: req.Offset,
+	}
+	if query.Limit == 0 {
+		query.Limit = 100
+	}
+
+	threads, _, err := h.store.Search(query)
+	if err != nil {
+		c.JSON(http.StatusOK, []LGThread{})
+		return
+	}
+
+	// Convert to LangGraph format
+	result := make([]LGThread, 0, len(threads))
+	for _, t := range threads {
+		result = append(result, LGThread{
+			ThreadID:  t.ThreadID,
+			Title:     t.Title,
+			CreatedAt: time.UnixMilli(t.CreatedAt).UTC().Format(time.RFC3339),
+			UpdatedAt: time.UnixMilli(t.UpdatedAt).UTC().Format(time.RFC3339),
+			Status:    t.Status,
+			Metadata:  t.Metadata,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // GetThreadState handles GET /threads/{thread_id}/state.
@@ -219,11 +343,37 @@ func (h *LangGraphHandler) GetThreadState(c *gin.Context) {
 		return
 	}
 
+	// Load thread state from store
+	var messages []LangGraphMessage
+	var title string
+	var createdAt int64
+
+	if h.store != nil {
+		if ts, err := h.store.GetState(threadID); err == nil && ts != nil {
+			title = ts.Title
+			createdAt = ts.CreatedAt
+			for _, mr := range ts.Messages {
+				content := mr.Content
+				if content == "" {
+					continue
+				}
+				messages = append(messages, LangGraphMessage{
+					Type:      mr.Role,
+					Content:   content,
+					ID:        fmt.Sprintf("msg-%d", mr.CreatedAt),
+					CreatedAt: mr.CreatedAt,
+				})
+			}
+		}
+	}
+
 	state := LGThreadState{
 		Values: map[string]any{
-			"messages": []any{},
+			"messages": messages,
+			"title":    title,
 		},
-		Next: []string{},
+		Next:         []string{},
+		CreatedAt:    time.UnixMilli(createdAt).UTC().Format(time.RFC3339),
 	}
 
 	c.JSON(http.StatusOK, state)
@@ -245,13 +395,114 @@ func (h *LangGraphHandler) UpdateThreadState(c *gin.Context) {
 		return
 	}
 
+	// Save to store
+	checkpointID := uuid.NewString()
+	if h.store != nil {
+		// Extract messages from values
+		var messages []threadstore.MessageRecord
+		if msgs, ok := req.Values["messages"].([]any); ok {
+			for _, m := range msgs {
+				if msgMap, ok := m.(map[string]any); ok {
+					role, _ := msgMap["type"].(string)
+					content := ""
+					switch v := msgMap["content"].(type) {
+					case string:
+						content = v
+					}
+					if content != "" {
+						messages = append(messages, threadstore.MessageRecord{
+							Role:      role,
+							Content:   content,
+							CreatedAt: time.Now().UnixMilli(),
+						})
+					}
+				}
+			}
+		}
+
+		title, _ := req.Values["title"].(string)
+		now := time.Now().UnixMilli()
+
+		// Check if thread exists
+		if existing, err := h.store.Get(threadID); err != nil || existing == nil {
+			_ = h.store.Create(&threadstore.ThreadMetadata{
+				ThreadID:  threadID,
+				Status:    "idle",
+				CreatedAt: now,
+				UpdatedAt: now,
+			})
+		}
+
+		_ = h.store.SaveState(&threadstore.ThreadState{
+			ThreadID:  threadID,
+			Status:    "idle",
+			Title:     title,
+			Messages:  messages,
+			UpdatedAt: now,
+		})
+	}
+
 	state := LGThreadState{
 		Values:       req.Values,
 		Next:         []string{},
-		CheckpointID: uuid.NewString(),
+		CheckpointID: checkpointID,
 	}
 
 	c.JSON(http.StatusOK, state)
+}
+
+// GetThreadHistory handles POST /threads/{thread_id}/history.
+// Returns the checkpoint history for a thread (for state resumption).
+func (h *LangGraphHandler) GetThreadHistory(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	if threadID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id is required"})
+		return
+	}
+
+	var req struct {
+		Limit  int    `json:"limit"`
+		Before string `json:"before"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	if req.Limit == 0 {
+		req.Limit = 10
+	}
+
+	// Load thread state and return as history
+	if h.store != nil {
+		if ts, err := h.store.GetState(threadID); err == nil && ts != nil {
+			// Build messages for the state
+			var messages []LangGraphMessage
+			for _, mr := range ts.Messages {
+				content := mr.Content
+				if content == "" {
+					continue
+				}
+				messages = append(messages, LangGraphMessage{
+					Type:      mr.Role,
+					Content:   content,
+					ID:        fmt.Sprintf("msg-%d", mr.CreatedAt),
+					CreatedAt: mr.CreatedAt,
+				})
+			}
+
+			state := LGThreadState{
+				Values: map[string]any{
+					"messages": messages,
+					"title":    ts.Title,
+				},
+				Next:         []string{},
+				CheckpointID: fmt.Sprintf("cp-%d", ts.UpdatedAt),
+				CreatedAt:    time.UnixMilli(ts.CreatedAt).UTC().Format(time.RFC3339),
+			}
+			c.JSON(http.StatusOK, []LGThreadState{state})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, []LGThreadState{})
 }
 
 // ---------------------------------------------------------------------------
@@ -275,31 +526,43 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 
 	runID := uuid.NewString()
 
-	// Determine stream mode.
-	streamMode := "values"
+	// Determine stream modes.
+	// Support multiple modes: values, messages, custom, etc.
+	streamModes := []string{"values"}
 	switch v := req.StreamMode.(type) {
 	case string:
 		if v != "" {
-			streamMode = v
+			streamModes = []string{v}
 		}
 	case []any:
 		if len(v) > 0 {
-			if s, ok := v[0].(string); ok {
-				streamMode = s
+			modes := make([]string, 0, len(v))
+			for _, item := range v {
+				if s, ok := item.(string); ok && s != "" {
+					modes = append(modes, s)
+				}
+			}
+			if len(modes) > 0 {
+				streamModes = modes
 			}
 		}
 	}
+
+	// Primary mode for converter (first one)
+	primaryMode := streamModes[0]
 
 	// Set SSE headers.
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+	// Content-Location header required by LangGraph SDK for onRunCreated callback.
+	c.Header("Content-Location", fmt.Sprintf("/threads/%s/runs/%s", threadID, runID))
 
 	w := c.Writer
 
 	// Create converter for this stream.
-	converter := NewLangGraphEventConverter(threadID, runID, streamMode)
+	converter := NewLangGraphEventConverter(threadID, runID, primaryMode)
 
 	// Write metadata event first.
 	if err := WriteLangGraphSSE(w, converter.ConvertMetadataEvent()); err != nil {
@@ -429,6 +692,28 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 	})
 	defer h.unregisterRun(runID)
 
+	// Send initial user messages as the first values event.
+	// This ensures the user's input is visible in the UI before the AI responds.
+	var initialMessages []LangGraphMessage
+	for _, msg := range state.Messages {
+		lgMsg := ConvertSchemaMessageToLangGraph(msg)
+		initialMessages = append(initialMessages, lgMsg)
+	}
+	if len(initialMessages) > 0 {
+		// Add user messages to converter's state
+		converter.messages = append(converter.messages, initialMessages...)
+		if err := WriteLangGraphSSE(w, LangGraphSSEEvent{
+			Event: "values",
+			Data: LangGraphValuesEvent{
+				Messages: converter.messages,
+				Title:    converter.title,
+			},
+		}); err != nil {
+			return
+		}
+		w.Flush()
+	}
+
 	// Ensure metrics are recorded on exit.
 	defer func() {
 		runDuration := time.Since(runStartTime)
@@ -491,7 +776,7 @@ streamLoop:
 	}
 
 	// Persist thread state for multi-turn context.
-	h.saveThreadMessages(threadID, state.Messages, converter.messages)
+	h.saveThreadMessages(threadID, state.Messages, converter.messages, converter.title)
 }
 
 // StreamRunStandalone handles POST /runs/stream (without thread_id).
@@ -509,6 +794,38 @@ func (h *LangGraphHandler) StreamRunStandalone(c *gin.Context) {
 	// Forward to StreamRun with the new thread_id.
 	c.Params = append(c.Params, gin.Param{Key: "thread_id", Value: threadID})
 	h.StreamRun(c)
+}
+
+// JoinRunStream handles GET /threads/{thread_id}/runs/{run_id}/stream.
+// Used by LangGraph SDK to reconnect to an existing stream.
+func (h *LangGraphHandler) JoinRunStream(c *gin.Context) {
+	threadID := c.Param("thread_id")
+	runID := c.Param("run_id")
+	if threadID == "" || runID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "thread_id and run_id are required"})
+		return
+	}
+
+	// Check if the run is still active.
+	run, ok := h.getRun(runID)
+	if !ok || run.ThreadID != threadID {
+		// Run not found - return an empty completed stream.
+		// This handles the case where the run already completed.
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("X-Accel-Buffering", "no")
+		c.Header("Content-Location", fmt.Sprintf("/threads/%s/runs/%s", threadID, runID))
+
+		// Send end event immediately since run is completed.
+		_, _ = fmt.Fprintf(c.Writer, "event: end\ndata: {\"run_id\":\"%s\",\"thread_id\":\"%s\"}\n\n", runID, threadID)
+		return
+	}
+
+	// Run is still active - send error since we don't support reconnection to active runs.
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("X-Accel-Buffering", "no")
+	_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: {\"message\":\"run reconnection not supported\"}\n\n")
 }
 
 // CancelRun handles POST /threads/{thread_id}/runs/{run_id}/cancel.
@@ -561,33 +878,16 @@ func (h *LangGraphHandler) getRun(runID string) (lgRunHandle, bool) {
 }
 
 // saveThreadMessages persists the combined message history to thread store.
-func (h *LangGraphHandler) saveThreadMessages(threadID string, initialMsgs []*schema.Message, converterMsgs []LangGraphMessage) {
+func (h *LangGraphHandler) saveThreadMessages(threadID string, _ []*schema.Message, converterMsgs []LangGraphMessage, title string) {
 	if h.store == nil {
 		return
 	}
 
-	// Build combined message list: initial messages + new messages from converter
-	allMsgs := make([]threadstore.MessageRecord, 0)
+	// Build message list from converter messages only.
+	// converterMsgs already contains all messages including initial user messages
+	// (added in StreamRun line 691) plus AI responses and tool results.
+	allMsgs := make([]threadstore.MessageRecord, 0, len(converterMsgs))
 
-	// Add initial messages
-	for _, m := range initialMsgs {
-		role := "human"
-		switch m.Role {
-		case schema.Assistant:
-			role = "assistant"
-		case schema.System:
-			role = "system"
-		case schema.Tool:
-			role = "tool"
-		}
-		allMsgs = append(allMsgs, threadstore.MessageRecord{
-			Role:      role,
-			Content:   m.Content,
-			CreatedAt: time.Now().UnixMilli(),
-		})
-	}
-
-	// Add new messages from converter (AI responses and tool results)
 	for _, m := range converterMsgs {
 		content := ""
 		switch v := m.Content.(type) {
@@ -609,12 +909,17 @@ func (h *LangGraphHandler) saveThreadMessages(threadID string, initialMsgs []*sc
 	threadState := &threadstore.ThreadState{
 		ThreadID:  threadID,
 		Status:    "idle",
+		Title:     title,
 		Messages:  allMsgs,
 		UpdatedAt: now,
 	}
 
 	// Check if thread exists, create metadata if not
-	if existingMeta, _ := h.store.Get(threadID); existingMeta == nil {
+	var createdAt int64
+	if existingMeta, err := h.store.Get(threadID); err == nil && existingMeta != nil {
+		createdAt = existingMeta.CreatedAt
+	} else {
+		createdAt = now
 		_ = h.store.Create(&threadstore.ThreadMetadata{
 			ThreadID:  threadID,
 			Status:    "idle",
@@ -623,7 +928,18 @@ func (h *LangGraphHandler) saveThreadMessages(threadID string, initialMsgs []*sc
 		})
 	}
 
+	// Save the state
 	_ = h.store.SaveState(threadState)
+
+	// Also update the metadata with the title for Search to return it
+	if title != "" {
+		_ = h.store.Update(threadID, &threadstore.ThreadMetadata{
+			ThreadID:  threadID,
+			Title:     title,
+			Status:    "idle",
+			CreatedAt: createdAt,
+		})
+	}
 }
 
 // parseContent extracts text content from various formats.
@@ -707,11 +1023,22 @@ func (h *LangGraphHandler) WaitForRun(c *gin.Context) {
 		return
 	}
 
-	// Minimal implementation: return run status.
+	// Check if run is still active
+	run, ok := h.getRun(runID)
+	if ok && run.ThreadID == threadID {
+		c.JSON(http.StatusOK, gin.H{
+			"thread_id": threadID,
+			"run_id":    runID,
+			"status":    "running",
+		})
+		return
+	}
+
+	// Run completed - check thread store for final status
 	c.JSON(http.StatusOK, gin.H{
 		"thread_id": threadID,
 		"run_id":    runID,
-		"status":    "pending",
+		"status":    "completed",
 	})
 }
 
@@ -763,11 +1090,11 @@ func (h *LangGraphHandler) ListRuns(c *gin.Context) {
 }
 
 // ---------------------------------------------------------------------------
-// Assistants endpoints (stub for SDK compatibility)
+// Assistants endpoints
 // ---------------------------------------------------------------------------
 
 // GetAssistant handles GET /assistants/{assistant_id}.
-// LangGraph SDK expects this to exist for the assistant_id parameter.
+// Returns the assistant/agent configuration.
 func (h *LangGraphHandler) GetAssistant(c *gin.Context) {
 	assistantID := c.Param("assistant_id")
 	if assistantID == "" {
@@ -775,22 +1102,52 @@ func (h *LangGraphHandler) GetAssistant(c *gin.Context) {
 		return
 	}
 
-	// Return a stub assistant for "lead_agent".
+	// Check if this assistant exists in agents map
+	assistantName := assistantID
+	if h.agents != nil {
+		if _, ok := h.agents[assistantID]; ok {
+			c.JSON(http.StatusOK, gin.H{
+				"assistant_id": assistantID,
+				"name":         assistantID,
+				"graph_id":     assistantID,
+				"config":       map[string]any{},
+			})
+			return
+		}
+	}
+
+	// Fallback to lead_agent
 	c.JSON(http.StatusOK, gin.H{
 		"assistant_id": assistantID,
-		"name":         "lead_agent",
-		"graph_id":     "lead_agent",
+		"name":         assistantName,
+		"graph_id":     assistantName,
 		"config":       map[string]any{},
 	})
 }
 
 // ListAssistants handles GET /assistants.
+// Returns all available agents as assistants.
 func (h *LangGraphHandler) ListAssistants(c *gin.Context) {
-	c.JSON(http.StatusOK, []gin.H{
+	assistants := []gin.H{
 		{
 			"assistant_id": "lead_agent",
 			"name":         "Lead Agent",
 			"graph_id":     "lead_agent",
 		},
-	})
+	}
+
+	// Add all configured agents
+	if h.agents != nil {
+		for name := range h.agents {
+			if name != "lead_agent" {
+				assistants = append(assistants, gin.H{
+					"assistant_id": name,
+					"name":         name,
+					"graph_id":     name,
+				})
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, assistants)
 }

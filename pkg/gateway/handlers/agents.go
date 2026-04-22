@@ -34,20 +34,11 @@ func isValidAgentName(name string) bool {
 
 // ListAgents returns the list of configured agents.
 func (h *AgentsHandler) ListAgents(c *gin.Context) {
-	agents := []map[string]any{}
+	agentSet := make(map[string]map[string]any)
 
-	// Load from in-memory config
+	// Load from in-memory config first
 	if h.cfg != nil {
-		names := make([]string, 0, len(h.cfg.Agents))
-		for name := range h.cfg.Agents {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			agentCfg := h.cfg.Agents[name]
-
-			// Try to load per-agent config for additional fields
-			agentConfig, err := loadAgentConfig(name)
+		for name, agentCfg := range h.cfg.Agents {
 			response := map[string]any{
 				"name":        name,
 				"enabled":     agentCfg.Enabled,
@@ -55,18 +46,78 @@ func (h *AgentsHandler) ListAgents(c *gin.Context) {
 				"description": agentCfg.Description,
 			}
 
+			// Try to load per-agent config for additional fields
+			agentConfig, err := loadAgentConfig(name)
 			if err == nil {
-				// Add skills and tool_groups from per-agent config
 				if skills, ok := agentConfig["skills"].([]interface{}); ok {
 					response["skills"] = skills
 				}
 				if toolGroups, ok := agentConfig["tool_groups"].([]interface{}); ok {
 					response["tool_groups"] = toolGroups
 				}
+				if desc, ok := agentConfig["description"].(string); ok && desc != "" {
+					response["description"] = desc
+				}
 			}
 
-			agents = append(agents, response)
+			agentSet[name] = response
 		}
+	}
+
+	// Also scan .goclaw/agents/ directory for additional agents
+	baseDir := strings.TrimSpace(os.Getenv("GOCLAW_HOME"))
+	if baseDir == "" {
+		baseDir = ".goclaw"
+	}
+	agentsDir := filepath.Join(baseDir, "agents")
+
+	if entries, err := os.ReadDir(agentsDir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if _, exists := agentSet[name]; exists {
+				continue // Already loaded from config
+			}
+
+			// Try to load per-agent config
+			agentConfig, err := loadAgentConfig(name)
+			if err != nil {
+				continue
+			}
+
+			response := map[string]any{
+				"name":    name,
+				"enabled": true,
+			}
+			if desc, ok := agentConfig["description"].(string); ok {
+				response["description"] = desc
+			}
+			if model, ok := agentConfig["model"].(string); ok {
+				response["model"] = model
+			}
+			if skills, ok := agentConfig["skills"].([]interface{}); ok {
+				response["skills"] = skills
+			}
+			if toolGroups, ok := agentConfig["tool_groups"].([]interface{}); ok {
+				response["tool_groups"] = toolGroups
+			}
+
+			agentSet[name] = response
+		}
+	}
+
+	// Convert to sorted list
+	names := make([]string, 0, len(agentSet))
+	for name := range agentSet {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	agents := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		agents = append(agents, agentSet[name])
 	}
 
 	c.JSON(http.StatusOK, gin.H{"agents": agents})

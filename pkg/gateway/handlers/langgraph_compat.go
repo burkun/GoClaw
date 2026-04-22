@@ -46,6 +46,7 @@ type LangGraphMessage struct {
 	AdditionalKwargs map[string]any      `json:"additional_kwargs,omitempty"`
 	ToolCalls        []LangGraphToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string              `json:"tool_call_id,omitempty"`
+	CreatedAt        int64               `json:"created_at,omitempty"`
 }
 
 // LangGraphContentPart represents a content part for multimodal messages.
@@ -116,6 +117,8 @@ func (c *LangGraphEventConverter) Convert(ev agent.Event) []LangGraphSSEEvent {
 		return c.convertToolEvent(ev)
 	case agent.EventTaskStarted, agent.EventTaskRunning, agent.EventTaskCompleted, agent.EventTaskFailed, agent.EventTaskTimedOut:
 		return c.convertTaskEvent(ev)
+	case agent.EventTitle:
+		return c.convertTitleEvent(ev)
 	case agent.EventCompleted:
 		return c.convertCompleted(ev)
 	case agent.EventError:
@@ -132,26 +135,74 @@ func (c *LangGraphEventConverter) convertMessageDelta(ev agent.Event) []LangGrap
 		return nil
 	}
 
-	// Append to messages array for values mode.
-	msg := LangGraphMessage{
-		Type:    "ai",
-		Content: payload.Content,
-		ID:      fmt.Sprintf("msg-%d", ev.Timestamp),
-	}
-	if payload.IsThinking {
-		msg.AdditionalKwargs = map[string]any{"thinking": true}
-	}
-
 	// In "messages" stream mode, emit message chunks.
 	if c.streamMode == "messages" {
+		msg := LangGraphMessage{
+			Type:    "ai",
+			Content: payload.Content,
+			ID:      fmt.Sprintf("msg-%d", ev.Timestamp),
+		}
+		if payload.IsThinking {
+			msg.AdditionalKwargs = map[string]any{
+				"reasoning_content": payload.Content,
+			}
+			msg.Content = ""
+		}
 		return []LangGraphSSEEvent{{
 			Event: "messages",
 			Data:  c.formatMessageTuple(msg, ev),
 		}}
 	}
 
-	// In "values" mode, accumulate and emit full state.
-	c.messages = append(c.messages, msg)
+	// In "values" mode, accumulate content into the last AI message.
+	// This provides a proper streaming experience where the AI message
+	// content grows incrementally.
+
+	// Check if we have an AI message to append to
+	var lastAIMsg *LangGraphMessage
+	if len(c.messages) > 0 {
+		lastMsg := &c.messages[len(c.messages)-1]
+		if lastMsg.Type == "ai" && len(lastMsg.ToolCalls) == 0 {
+			lastAIMsg = lastMsg
+		}
+	}
+
+	if payload.IsThinking {
+		// Handle thinking/reasoning content
+		if lastAIMsg == nil {
+			// Create new AI message for thinking
+			lastAIMsg = &LangGraphMessage{
+				Type:             "ai",
+				Content:          "",
+				ID:               fmt.Sprintf("msg-%d", ev.Timestamp),
+				AdditionalKwargs: map[string]any{"reasoning_content": payload.Content},
+			}
+			c.messages = append(c.messages, *lastAIMsg)
+		} else {
+			// Append to existing thinking content
+			if lastAIMsg.AdditionalKwargs == nil {
+				lastAIMsg.AdditionalKwargs = map[string]any{}
+			}
+			existing, _ := lastAIMsg.AdditionalKwargs["reasoning_content"].(string)
+			lastAIMsg.AdditionalKwargs["reasoning_content"] = existing + payload.Content
+		}
+	} else {
+		// Handle regular content
+		if lastAIMsg == nil {
+			// Create new AI message
+			lastAIMsg = &LangGraphMessage{
+				Type:    "ai",
+				Content: payload.Content,
+				ID:      fmt.Sprintf("msg-%d", ev.Timestamp),
+			}
+			c.messages = append(c.messages, *lastAIMsg)
+		} else {
+			// Append to existing content
+			existing, _ := lastAIMsg.Content.(string)
+			lastAIMsg.Content = existing + payload.Content
+		}
+	}
+
 	return []LangGraphSSEEvent{{
 		Event: "values",
 		Data: LangGraphValuesEvent{
@@ -161,7 +212,7 @@ func (c *LangGraphEventConverter) convertMessageDelta(ev agent.Event) []LangGrap
 	}}
 }
 
-// convertToolEvent handles tool_event events.
+	// convertToolEvent handles tool_event events.
 func (c *LangGraphEventConverter) convertToolEvent(ev agent.Event) []LangGraphSSEEvent {
 	payload, ok := ev.Payload.(agent.ToolEventPayload)
 	if !ok {
@@ -176,19 +227,38 @@ func (c *LangGraphEventConverter) convertToolEvent(ev agent.Event) []LangGraphSS
 		var args map[string]any
 		_ = json.Unmarshal([]byte(payload.Input), &args)
 
-		// Create an AI message with tool_call.
-		aiMsg := LangGraphMessage{
-			Type:    "ai",
-			ID:      fmt.Sprintf("msg-toolcall-%d", ev.Timestamp),
-			Content: "",
-			ToolCalls: []LangGraphToolCall{{
-				ID:   payload.CallID,
-				Name: payload.ToolName,
-				Args: args,
-				Type: "tool_call",
-			}},
+		// Check if the last message is an AI message we can attach tool_calls to.
+		// This avoids creating duplicate AI messages.
+		var aiMsg *LangGraphMessage
+		if len(c.messages) > 0 {
+			lastMsg := &c.messages[len(c.messages)-1]
+			if lastMsg.Type == "ai" && lastMsg.Content == "" && len(lastMsg.ToolCalls) == 0 {
+				// Reuse the empty AI message
+				lastMsg.ToolCalls = []LangGraphToolCall{{
+					ID:   payload.CallID,
+					Name: payload.ToolName,
+					Args: args,
+					Type: "tool_call",
+				}}
+				aiMsg = lastMsg
+			}
 		}
-		c.messages = append(c.messages, aiMsg)
+
+		if aiMsg == nil {
+			// Create a new AI message with tool_call.
+			aiMsg = &LangGraphMessage{
+				Type:    "ai",
+				ID:      fmt.Sprintf("msg-toolcall-%d", ev.Timestamp),
+				Content: "",
+				ToolCalls: []LangGraphToolCall{{
+					ID:   payload.CallID,
+					Name: payload.ToolName,
+					Args: args,
+					Type: "tool_call",
+				}},
+			}
+			c.messages = append(c.messages, *aiMsg)
+		}
 
 		events = append(events, LangGraphSSEEvent{
 			Event: "values",
@@ -280,15 +350,44 @@ func (c *LangGraphEventConverter) convertTaskEvent(ev agent.Event) []LangGraphSS
 	}}
 }
 
+// convertTitleEvent handles title events.
+// It updates the converter's title and emits a values event with the title.
+func (c *LangGraphEventConverter) convertTitleEvent(ev agent.Event) []LangGraphSSEEvent {
+	payload, ok := ev.Payload.(agent.TitlePayload)
+	if !ok {
+		return nil
+	}
+
+	c.title = payload.Title
+
+	// Emit values event with the title
+	return []LangGraphSSEEvent{{
+		Event: "values",
+		Data: LangGraphValuesEvent{
+			Messages: c.messages,
+			Title:    c.title,
+		},
+	}}
+}
+
 // convertCompleted handles the completed terminal event.
 func (c *LangGraphEventConverter) convertCompleted(ev agent.Event) []LangGraphSSEEvent {
+	// Get title from CompletedPayload if not already set
+	title := c.title
+	if title == "" {
+		if payload, ok := ev.Payload.(agent.CompletedPayload); ok && payload.Title != "" {
+			title = payload.Title
+			c.title = title
+		}
+	}
+
 	// Emit final values snapshot then end event.
 	events := []LangGraphSSEEvent{
 		{
 			Event: "values",
 			Data: LangGraphValuesEvent{
 				Messages: c.messages,
-				Title:    c.title,
+				Title:    title,
 			},
 		},
 		{
@@ -303,25 +402,34 @@ func (c *LangGraphEventConverter) convertCompleted(ev agent.Event) []LangGraphSS
 }
 
 // convertError handles error terminal event.
+// It sends both an error event and an end event to properly terminate the SSE stream.
 func (c *LangGraphEventConverter) convertError(ev agent.Event) []LangGraphSSEEvent {
 	payload, ok := ev.Payload.(agent.ErrorPayload)
-	if !ok {
-		// Fallback for unknown payload format.
-		return []LangGraphSSEEvent{{
-			Event: "error",
-			Data: LangGraphErrorEvent{
-				Message: "unknown error",
-			},
-		}}
+	var message string
+	var code string
+	if ok {
+		message = payload.Message
+		code = payload.Code
+	} else {
+		message = "unknown error"
 	}
 
-	return []LangGraphSSEEvent{{
-		Event: "error",
-		Data: LangGraphErrorEvent{
-			Message: payload.Message,
-			Name:    payload.Code,
+	return []LangGraphSSEEvent{
+		{
+			Event: "error",
+			Data: LangGraphErrorEvent{
+				Message: message,
+				Name:    code,
+			},
 		},
-	}}
+		{
+			Event: "end",
+			Data: map[string]any{
+				"run_id":    c.runID,
+				"thread_id": c.threadID,
+			},
+		},
+	}
 }
 
 // formatMessageTuple formats a message for "messages" stream mode.

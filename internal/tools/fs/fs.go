@@ -45,6 +45,9 @@ type PathMapping struct {
 	UploadsPath string
 	// OutputsPath is the host path that corresponds to /mnt/user-data/outputs.
 	OutputsPath string
+	// UserDataPath is the host path that corresponds to /mnt/user-data root.
+	// If set, this allows writing directly under /mnt/user-data.
+	UserDataPath string
 }
 
 type fileOpLockKey struct {
@@ -82,7 +85,7 @@ func getFileOperationLock(threadID string, hostPath string) *sync.Mutex {
 //	/mnt/user-data/workspace → m.WorkspacePath
 //	/mnt/user-data/uploads   → m.UploadsPath
 //	/mnt/user-data/outputs   → m.OutputsPath
-//	/mnt/user-data           → common parent of the three dirs (if they share one)
+//	/mnt/user-data           → m.UserDataPath (if set)
 func ResolveVirtualPath(virtualPath string, m *PathMapping) (string, error) {
 	// 1. Block ".." segments.
 	if err := rejectPathTraversal(virtualPath); err != nil {
@@ -98,6 +101,7 @@ func ResolveVirtualPath(virtualPath string, m *PathMapping) (string, error) {
 		{VirtualPathPrefix + "/workspace", m.WorkspacePath},
 		{VirtualPathPrefix + "/uploads", m.UploadsPath},
 		{VirtualPathPrefix + "/outputs", m.OutputsPath},
+		{VirtualPathPrefix, m.UserDataPath},
 	}
 
 	// 3. Iterate and match.
@@ -137,7 +141,7 @@ func rejectPathTraversal(path string) error {
 }
 
 // validateResolvedPath verifies that resolved falls within one of the allowed
-// per-thread host roots (workspace, uploads, outputs). Returns PermissionError
+// per-thread host roots (workspace, uploads, outputs, or user-data root). Returns PermissionError
 // if the resolved path escapes those roots after filepath.Clean/Abs evaluation.
 func validateResolvedPath(resolved string, m *PathMapping) error {
 	absResolved, err := filepath.Abs(resolved)
@@ -145,7 +149,7 @@ func validateResolvedPath(resolved string, m *PathMapping) error {
 		return fmt.Errorf("permission denied: cannot resolve path: %s", resolved)
 	}
 
-	roots := []string{m.WorkspacePath, m.UploadsPath, m.OutputsPath}
+	roots := []string{m.WorkspacePath, m.UploadsPath, m.OutputsPath, m.UserDataPath}
 	for _, root := range roots {
 		if root == "" {
 			continue

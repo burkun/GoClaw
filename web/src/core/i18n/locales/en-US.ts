@@ -455,4 +455,28 @@ export const enUS: Translations = {
       emptyDescription: "Credits and acknowledgements will show here.",
     },
   },
+
+  // Errors
+  errors: {
+    rateLimitTitle: "Rate Limit Reached",
+    rateLimitMessage:
+      "Too many requests. Please wait a moment before continuing.",
+    rateLimitRetry: "The AI provider is limiting requests. Retrying automatically...",
+    quotaExceededTitle: "Quota Exceeded",
+    quotaExceededMessage:
+      "The AI provider quota has been exceeded. Please check your billing or try again later.",
+    authFailedTitle: "Authentication Failed",
+    authFailedMessage:
+      "The AI provider credentials are invalid. Please check your API key configuration.",
+    providerBusyTitle: "Provider Busy",
+    providerBusyMessage:
+      "The AI provider is temporarily unavailable. Please wait and try again.",
+    networkErrorTitle: "Network Error",
+    networkErrorMessage:
+      "Unable to connect to the server. Please check your network connection.",
+    unknownError: "An unexpected error occurred. Please try again.",
+    retryButton: "Retry",
+    waitSeconds: (seconds: number) =>
+      `Please wait ${seconds} second${seconds === 1 ? "" : "s"} before retrying.`,
+  },
 };

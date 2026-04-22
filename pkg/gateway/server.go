@@ -253,17 +253,20 @@ func (s *Server) registerRoutes() {
 		// Threads CRUD.
 		lg.POST("/threads", langgraphH.CreateThread)
 		lg.GET("/threads/:thread_id", langgraphH.GetThread)
+		lg.PATCH("/threads/:thread_id", langgraphH.PatchThread)
 		lg.DELETE("/threads/:thread_id", langgraphH.DeleteThread)
 		lg.POST("/threads/search", langgraphH.SearchThreads)
 
 		// Thread state.
 		lg.GET("/threads/:thread_id/state", langgraphH.GetThreadState)
 		lg.PATCH("/threads/:thread_id/state", langgraphH.UpdateThreadState)
+		lg.POST("/threads/:thread_id/history", langgraphH.GetThreadHistory)
 
 		// Runs (streaming).
 		lg.GET("/threads/:thread_id/runs", langgraphH.ListRuns)
 		lg.GET("/threads/:thread_id/runs/:run_id", langgraphH.GetRun)
 		lg.POST("/threads/:thread_id/runs/stream", langgraphH.StreamRun)
+		lg.GET("/threads/:thread_id/runs/:run_id/stream", langgraphH.JoinRunStream)
 		lg.POST("/threads/:thread_id/runs/:run_id/cancel", langgraphH.CancelRun)
 
 		// Standalone run (creates thread internally).

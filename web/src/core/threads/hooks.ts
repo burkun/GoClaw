@@ -9,6 +9,7 @@ import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 
 import { getAPIClient } from "../api";
 import { getBackendBaseURL } from "../config";
+import { classifyError } from "../errors";
 import { useI18n } from "../i18n/hooks";
 import type { FileInMessage } from "../messages/utils";
 import type { LocalSettings } from "../settings";
@@ -132,6 +133,50 @@ function getStreamErrorMessage(error: unknown): string {
     }
   }
   return "Request failed.";
+}
+
+/**
+ * Shows a user-friendly error toast based on error classification.
+ */
+function showErrorToast(error: unknown, t: ReturnType<typeof useI18n>["t"]) {
+  const classified = classifyError(error);
+  const errors = t.errors;
+
+  // Map error type to localized messages
+  let title: string;
+  let message: string;
+
+  switch (classified.type) {
+    case "rate_limit":
+      title = errors.rateLimitTitle;
+      message = classified.retryAfter
+        ? errors.waitSeconds(classified.retryAfter)
+        : errors.rateLimitMessage;
+      break;
+    case "quota_exceeded":
+      title = errors.quotaExceededTitle;
+      message = errors.quotaExceededMessage;
+      break;
+    case "auth_failed":
+      title = errors.authFailedTitle;
+      message = errors.authFailedMessage;
+      break;
+    case "provider_busy":
+      title = errors.providerBusyTitle;
+      message = errors.providerBusyMessage;
+      break;
+    case "network":
+      title = errors.networkErrorTitle;
+      message = errors.networkErrorMessage;
+      break;
+    default:
+      title = "Error";
+      message = getStreamErrorMessage(error) || errors.unknownError;
+  }
+
+  toast.error(`${title}: ${message}`, {
+    duration: classified.retryAfter ? classified.retryAfter * 1000 + 2000 : 5000,
+  });
 }
 
 export function useThreadStream({
@@ -288,7 +333,7 @@ export function useThreadStream({
     },
     onError(error) {
       setOptimisticMessages([]);
-      toast.error(getStreamErrorMessage(error));
+      showErrorToast(error, t);
     },
     onFinish(state) {
       listeners.current.onFinish?.(state.values);
@@ -482,6 +527,7 @@ export function useThreadStream({
           },
           {
             threadId: threadId,
+            streamMode: ["values", "messages", "custom"],
             streamSubgraphs: true,
             streamResumable: true,
             config: {
@@ -551,7 +597,7 @@ export function useThreads(
       if (maxResults !== undefined && maxResults <= 0) {
         const response =
           await apiClient.threads.search<AgentThreadState>(params);
-        return response as AgentThread[];
+        return response;
       }
 
       const pageSize =

@@ -425,9 +425,32 @@ func (h *ThreadsHandler) GetThreadState(c *gin.Context) {
 		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
 		return
 	}
-	// Minimal implementation: return empty state (no checkpoint store integration yet).
+
+	// Load thread state from store
+	var messages []map[string]any
+	var title string
+
+	if h.svc != nil && h.svc.GetStore() != nil {
+		if ts, err := h.svc.GetStore().GetState(threadID); err == nil && ts != nil {
+			title = ts.Title
+			for _, mr := range ts.Messages {
+				if mr.Content == "" {
+					continue
+				}
+				messages = append(messages, map[string]any{
+					"type":    mr.Role,
+					"content": mr.Content,
+					"id":      fmt.Sprintf("msg-%d", mr.CreatedAt),
+				})
+			}
+		}
+	}
+
 	resp := ThreadStateResponse{
-		ChannelValues: map[string]any{},
+		ChannelValues: map[string]any{
+			"messages": messages,
+			"title":    title,
+		},
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -460,8 +483,19 @@ func (h *ThreadsHandler) GetThreadHistory(c *gin.Context) {
 		NewValidationError("thread_id is required").Render(c, http.StatusBadRequest)
 		return
 	}
-	// Minimal implementation: return empty list (no persistent history yet).
-	c.JSON(http.StatusOK, gin.H{"thread_id": threadID, "history": []HistoryEntry{}})
+
+	// Load thread state and return as history
+	var history []HistoryEntry
+	if h.svc != nil && h.svc.GetStore() != nil {
+		if ts, err := h.svc.GetStore().GetState(threadID); err == nil && ts != nil {
+			history = append(history, HistoryEntry{
+				CheckpointID: fmt.Sprintf("cp-%d", ts.UpdatedAt),
+				Timestamp:     ts.UpdatedAt,
+			})
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"thread_id": threadID, "history": history})
 }
 
 // ListRuns handles GET /api/threads/:thread_id/runs.

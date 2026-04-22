@@ -80,10 +80,53 @@ export function groupMessages<T>(
         if (open) {
           open.messages.push(message);
         } else {
-          console.error(
-            "Unexpected tool message outside a processing group",
-            message,
-          );
+          // Find the most recent AI message with matching tool_call_id and create a processing group.
+          // This handles cases where tool errors arrive out of order.
+          const toolCallId = message.tool_call_id;
+          let foundGroup = false;
+
+          // Search backwards for an AI message with this tool_call
+          for (let i = groups.length - 1; i >= 0; i--) {
+            const group = groups[i];
+            if (group?.type === "assistant:processing") {
+              // Check if this group has an AI message with the matching tool_call
+              const aiMsg = group.messages.find(
+                (m) =>
+                  m.type === "ai" &&
+                  m.tool_calls?.some((tc) => tc.id === toolCallId),
+              );
+              if (aiMsg) {
+                group.messages.push(message);
+                foundGroup = true;
+                break;
+              }
+            }
+          }
+
+          if (!foundGroup) {
+            // Create a new processing group for this tool message
+            // Find the AI message with the matching tool_call in the messages list
+            const aiMsgWithToolCall = messages.find(
+              (m) =>
+                m.type === "ai" &&
+                m.tool_calls?.some((tc) => tc.id === toolCallId),
+            );
+
+            if (aiMsgWithToolCall) {
+              groups.push({
+                id: aiMsgWithToolCall.id,
+                type: "assistant:processing",
+                messages: [aiMsgWithToolCall, message],
+              });
+            } else {
+              // Last resort: create a standalone tool group
+              groups.push({
+                id: message.id,
+                type: "assistant:processing",
+                messages: [message],
+              });
+            }
+          }
         }
       }
       continue;
@@ -126,7 +169,7 @@ export function groupMessages<T>(
 
   return groups
     .map(mapper)
-    .filter((result) => result !== undefined && result !== null) as T[];
+    .filter((result) => result !== undefined && result !== null);
 }
 
 export function extractTextFromMessage(message: Message) {

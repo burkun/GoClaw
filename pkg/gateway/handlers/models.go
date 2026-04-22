@@ -25,6 +25,8 @@ func NewModelsHandler(cfg *config.AppConfig) *ModelsHandler {
 type ModelResponse struct {
 	// ID is the unique model name used in configuration and API requests.
 	ID string `json:"id"`
+	// Name is an alias for ID, for frontend compatibility.
+	Name string `json:"name"`
 	// Model is the actual provider-level model identifier (e.g. "gpt-4o").
 	Model string `json:"model"`
 	// DisplayName is a human-readable label suitable for UI rendering.
@@ -39,6 +41,12 @@ type ModelResponse struct {
 	HasAPIBase bool `json:"has_api_base"`
 	// HasGeminiAPIKey indicates whether gemini_api_key is configured.
 	HasGeminiAPIKey bool `json:"has_gemini_api_key"`
+	// SupportsThinking is at the top level for frontend compatibility.
+	SupportsThinking bool `json:"supports_thinking"`
+	// SupportsReasoningEffort is at the top level for frontend compatibility.
+	SupportsReasoningEffort bool `json:"supports_reasoning_effort"`
+	// SupportsVision is at the top level for frontend compatibility.
+	SupportsVision bool `json:"supports_vision"`
 	// Capabilities holds feature flags for this model.
 	Capabilities ModelCapabilities `json:"capabilities"`
 }
@@ -74,14 +82,18 @@ func (h *ModelsHandler) ListModels(c *gin.Context) {
 		models = make([]ModelResponse, 0, len(h.cfg.Models))
 		for _, model := range h.cfg.Models {
 			models = append(models, ModelResponse{
-				ID:              model.Name,
-				Model:           model.Model,
-				DisplayName:     model.DisplayName,
-				Description:     model.Description,
-				UseResponsesAPI: model.UseResponsesAPI,
-				OutputVersion:   model.OutputVersion,
-				HasAPIBase:      model.APIBase != "" || model.BaseURL != "",
-				HasGeminiAPIKey: model.GeminiAPIKey != "",
+				ID:                      model.Name,
+				Name:                    model.Name,
+				Model:                   model.Model,
+				DisplayName:             model.DisplayName,
+				Description:             model.Description,
+				UseResponsesAPI:         model.UseResponsesAPI,
+				OutputVersion:           model.OutputVersion,
+				HasAPIBase:              model.APIBase != "" || model.BaseURL != "",
+				HasGeminiAPIKey:         model.GeminiAPIKey != "",
+				SupportsThinking:        model.SupportsThinking,
+				SupportsReasoningEffort: model.SupportsReasoningEffort,
+				SupportsVision:          model.SupportsVision,
 				Capabilities: ModelCapabilities{
 					SupportsThinking:        model.SupportsThinking,
 					SupportsReasoningEffort: model.SupportsReasoningEffort,

@@ -119,6 +119,7 @@ func threadPathsFromContext(ctx context.Context) *fstools.PathMapping {
 		WorkspacePath: filepath.Join(base, "workspace"),
 		UploadsPath:   filepath.Join(base, "uploads"),
 		OutputsPath:   filepath.Join(base, "outputs"),
+		UserDataPath:  base,
 	}
 }
 

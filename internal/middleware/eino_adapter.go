@@ -22,20 +22,25 @@ func AdaptMiddlewares(middlewares []Middleware) []adk.AgentMiddleware {
 	return result
 }
 
+// middlewareStateSessionKey is the key used to store middleware state in session values.
+// This must match the key used in executor.go.
+const middlewareStateSessionKey = "__middleware_state__"
+
 // adaptMiddleware converts a single Middleware to adk.AgentMiddleware.
 func adaptMiddleware(mw Middleware) adk.AgentMiddleware {
 	return adk.AgentMiddleware{
 		BeforeChatModel: func(ctx context.Context, state *adk.ChatModelAgentState) error {
-			mwState := toMiddlewareState(state)
+			mwState := getOrCreateMiddlewareState(ctx, state)
 			if err := mw.BeforeModel(ctx, mwState); err != nil {
 				return err
 			}
-			// Write back modified state to adk state
+			// Write back modified state to adk state and session values
 			applyMiddlewareStateToAdk(mwState, state)
+			saveMiddlewareStateToSession(ctx, mwState)
 			return nil
 		},
 		AfterChatModel: func(ctx context.Context, state *adk.ChatModelAgentState) error {
-			mwState := toMiddlewareState(state)
+			mwState := getOrCreateMiddlewareState(ctx, state)
 			resp := toMiddlewareResponse(state)
 
 			if err := mw.AfterModel(ctx, mwState, resp); err != nil {
@@ -44,10 +49,50 @@ func adaptMiddleware(mw Middleware) adk.AgentMiddleware {
 					"error", err,
 				)
 			}
+			// Save state back to session values (includes Title, etc.)
+			saveMiddlewareStateToSession(ctx, mwState)
 			return nil
 		},
 		WrapToolCall: composeToolMiddleware(mw),
 	}
+}
+
+// getOrCreateMiddlewareState retrieves middleware state from session values or creates a new one.
+func getOrCreateMiddlewareState(ctx context.Context, state *adk.ChatModelAgentState) *State {
+	// Try to get existing state from session values
+	vals := adk.GetSessionValues(ctx)
+	if vals != nil {
+		if cached, ok := vals[middlewareStateSessionKey].(*State); ok && cached != nil {
+			// Update messages from current adk state
+			cached.Messages = make([]map[string]any, 0, len(state.Messages))
+			for _, msg := range state.Messages {
+				cached.Messages = append(cached.Messages, messageToMap(msg))
+			}
+			return cached
+		}
+	}
+
+	// Create new state
+	mwState := toMiddlewareState(state)
+	if vals != nil {
+		// Try to get thread_id from session values
+		if tid, ok := vals["thread_id"].(string); ok {
+			mwState.ThreadID = tid
+		}
+	}
+	return mwState
+}
+
+// saveMiddlewareStateToSession stores middleware state in session values.
+func saveMiddlewareStateToSession(ctx context.Context, state *State) {
+	if state == nil {
+		return
+	}
+	vals := adk.GetSessionValues(ctx)
+	if vals == nil {
+		return
+	}
+	vals[middlewareStateSessionKey] = state
 }
 
 // composeToolMiddleware creates a compose.ToolMiddleware from a single middleware.

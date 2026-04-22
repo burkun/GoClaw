@@ -373,4 +373,22 @@ export interface Translations {
       emptyDescription: string;
     };
   };
+
+  // Errors
+  errors: {
+    rateLimitTitle: string;
+    rateLimitMessage: string;
+    rateLimitRetry: string;
+    quotaExceededTitle: string;
+    quotaExceededMessage: string;
+    authFailedTitle: string;
+    authFailedMessage: string;
+    providerBusyTitle: string;
+    providerBusyMessage: string;
+    networkErrorTitle: string;
+    networkErrorMessage: string;
+    unknownError: string;
+    retryButton: string;
+    waitSeconds: (seconds: number) => string;
+  };
 }

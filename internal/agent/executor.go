@@ -200,8 +200,21 @@ func drainIter(ctx context.Context, iter *einoruntime.EventStream, threadID, run
 		}
 	}
 
+	// Get the title from middleware state stored in session values
+	var title string
+	if vals := adk.GetSessionValues(ctx); vals != nil {
+		if mwState, ok := vals[middlewareStateSessionKey].(*basemw.State); ok && mwState != nil {
+			title = mwState.Title
+		}
+	}
+
+	// Emit title event if title was generated
+	if title != "" {
+		emit(Event{Type: EventTitle, ThreadID: threadID, RunID: runID, Payload: TitlePayload{Title: title}, Timestamp: timeUnixMilli()})
+	}
+
 	finalMessage := strings.Join(finalMessages, "")
-	emit(Event{Type: EventCompleted, ThreadID: threadID, RunID: runID, Payload: CompletedPayload{FinalMessage: finalMessage}, Timestamp: timeUnixMilli()})
+	emit(Event{Type: EventCompleted, ThreadID: threadID, RunID: runID, Payload: CompletedPayload{FinalMessage: finalMessage, Title: title}, Timestamp: timeUnixMilli()})
 }
 
 // toMiddlewareState converts adk state to middleware state.

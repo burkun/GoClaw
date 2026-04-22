@@ -31,6 +31,9 @@ const (
 
 	// EventTaskTimedOut is emitted when a subagent task times out.
 	EventTaskTimedOut EventType = "task_timed_out"
+
+	// EventTitle is emitted when the conversation title is generated.
+	EventTitle EventType = "title"
 )
 
 // Event is the envelope sent over the channel returned by LeadAgent.Run.
@@ -81,6 +84,14 @@ type ToolEventPayload struct {
 type CompletedPayload struct {
 	// FinalMessage is the last assistant message produced.
 	FinalMessage string `json:"final_message"`
+	// Title is the auto-generated conversation title.
+	Title string `json:"title,omitempty"`
+}
+
+// TitlePayload carries the title when it's generated.
+type TitlePayload struct {
+	// Title is the auto-generated conversation title.
+	Title string `json:"title"`
 }
 
 // ErrorPayload carries diagnostic information when a run fails.

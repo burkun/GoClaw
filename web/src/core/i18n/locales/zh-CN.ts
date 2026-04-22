@@ -436,4 +436,22 @@ export const zhCN: Translations = {
       emptyDescription: "相关的致谢信息会展示在这里。",
     },
   },
+
+  // Errors
+  errors: {
+    rateLimitTitle: "请求频率受限",
+    rateLimitMessage: "请求过于频繁，请稍后再试。",
+    rateLimitRetry: "AI 服务商正在限制请求，正在自动重试...",
+    quotaExceededTitle: "配额已用尽",
+    quotaExceededMessage: "AI 服务商配额已用尽，请检查账户余额或稍后再试。",
+    authFailedTitle: "认证失败",
+    authFailedMessage: "AI 服务商凭证无效，请检查 API Key 配置。",
+    providerBusyTitle: "服务繁忙",
+    providerBusyMessage: "AI 服务商暂时不可用，请稍后再试。",
+    networkErrorTitle: "网络错误",
+    networkErrorMessage: "无法连接到服务器，请检查网络连接。",
+    unknownError: "发生未知错误，请重试。",
+    retryButton: "重试",
+    waitSeconds: (seconds: number) => `请等待 ${seconds} 秒后再重试。`,
+  },
 };
