@@ -72,8 +72,8 @@ func (idx *ThreadIndex) Add(meta *ThreadMetadata) {
 // Get retrieves a thread by ID.
 // Time complexity: O(1)
 func (idx *ThreadIndex) Get(threadID string) (*ThreadMetadata, bool) {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
 
 	meta, exists := idx.byID[threadID]
 	if exists {

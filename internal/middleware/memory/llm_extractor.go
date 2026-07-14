@@ -32,12 +32,12 @@ func NewEinoFactExtractor(chatModel model.BaseChatModel, minConfidence float64) 
 }
 
 // Extract implements FactExtractor.
-func (e *EinoFactExtractor) Extract(messages []map[string]any, correctionDetected bool) ([]Fact, error) {
+func (e *EinoFactExtractor) Extract(ctx context.Context, messages []map[string]any, correctionDetected bool) ([]Fact, error) {
 	if e == nil || e.chatModel == nil {
 		return nil, errors.ConfigError("memory extractor: chat model is nil")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
+	ctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
 	prompt := buildMemoryExtractionUserPrompt(messages, correctionDetected)

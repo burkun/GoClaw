@@ -68,7 +68,7 @@ type updateEntry struct {
 // Only the latest entry per thread_id is retained (replace-on-add).
 // Processing fires after DebounceDelay has elapsed without new entries.
 type UpdateQueue struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	entries   map[string]*updateEntry // key: threadID
 	timer     *time.Timer
 	store     MemoryStore
@@ -198,16 +198,25 @@ func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
 		ctx = context.Background()
 	}
 
+	// Snapshot updater, extractor, and maxFacts under the lock to avoid data races
+	// with SetExtractor/SetUpdater/SetMaxFacts which acquire q.mu.Lock().
+	q.mu.RLock()
+	updater := q.updater
+	extractor := q.extractor
+	maxFacts := q.maxFacts
+	q.mu.RUnlock()
+
 	// Try full LLM memory update (User/History contexts + facts) if updater is configured.
-	if q.updater != nil {
-		update, extractErr := q.updater.ExtractMemoryUpdate(ctx, mem, entry.messages, entry.correctionDetected)
+	updaterUsed := false
+	if updater != nil {
+		updaterUsed = true
+		update, extractErr := updater.ExtractMemoryUpdate(ctx, mem, entry.messages, entry.correctionDetected)
 		if extractErr == nil && update != nil && update.HasUpdates() {
 			if ApplyUpdates(mem, update, entry.threadID) {
 				q.store.Deduplicate(mem)
-				if q.maxFacts > 0 && len(mem.Facts) > q.maxFacts {
-					// Sort by confidence and keep top N
+				if maxFacts > 0 && len(mem.Facts) > maxFacts {
 					mem.Facts = sortFactsByConfidence(mem.Facts)
-					mem.Facts = mem.Facts[:q.maxFacts]
+					mem.Facts = mem.Facts[:maxFacts]
 				}
 				if err := q.store.Save(mem); err != nil {
 					return err
@@ -218,14 +227,19 @@ func (q *UpdateQueue) extractAndSave(entry *updateEntry) error {
 				return nil
 			}
 		}
+		// If updater was used but failed, log and skip the fallback to avoid
+		// a second LLM call that doubles latency and cost.
+		if extractErr != nil {
+			logging.Warn("[MemoryMiddleware] updater failed, skipping legacy fallback",
+				"thread", entry.threadID, "error", extractErr)
+			return nil
+		}
 	}
 
-	// Fallback to legacy fact-only extraction.
+	// Fallback to legacy fact-only extraction (only when no updater was configured).
 	var extractedFacts []Fact
-
-	// Try LLM extraction if extractor is configured.
-	if q.extractor != nil {
-		extracted, extractErr := q.extractor.Extract(entry.messages, entry.correctionDetected)
+	if !updaterUsed && extractor != nil {
+		extracted, extractErr := extractor.Extract(ctx, entry.messages, entry.correctionDetected)
 		if extractErr == nil && len(extracted) > 0 {
 			extractedFacts = extracted
 		}

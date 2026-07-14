@@ -128,6 +128,7 @@ func (h *ModelsHandler) GetModel(c *gin.Context) {
 
 	c.JSON(http.StatusOK, ModelResponse{
 		ID:              modelCfg.Name,
+		Name:            modelCfg.Name,
 		Model:           modelCfg.Model,
 		DisplayName:     modelCfg.DisplayName,
 		Description:     modelCfg.Description,

@@ -116,7 +116,12 @@ func (c *Channel) runSocketMode(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case evt := <-socket.Events:
+		case evt, ok := <-socket.Events:
+			if !ok {
+				// Channel closed: socket disconnected. Log and exit to avoid busy loop.
+				logging.Warn("[Slack] Socket events channel closed, exiting event loop")
+				return
+			}
 			switch evt.Type {
 			case socketmode.EventTypeConnecting:
 				logging.Info("[Slack] Connecting...")
@@ -267,7 +272,12 @@ func (c *Channel) sendOnce(ctx context.Context, msg channels.OutgoingMessage) er
 		return fmt.Errorf("slack: client not initialized")
 	}
 
-	_, _, err := client.PostMessageContext(ctx, msg.ThreadID,
+	// Use ChatID (Slack channel ID) for destination, not ThreadID (GoClaw UUID).
+	channelID := msg.ChatID
+	if channelID == "" {
+		channelID = msg.ThreadID // fallback for legacy messages
+	}
+	_, _, err := client.PostMessageContext(ctx, channelID,
 		slack.MsgOptionText(msg.Text, false),
 	)
 	if err != nil {

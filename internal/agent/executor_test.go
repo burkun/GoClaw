@@ -1120,7 +1120,7 @@ func TestToTaskEvent(t *testing.T) {
 		{"in_progress", "in_progress", EventTaskRunning},
 		{"completed", "completed", EventTaskCompleted},
 		{"failed", "failed", EventTaskFailed},
-		{"timed_out", "timed_out", EventTaskFailed},
+		{"timed_out", "timed_out", EventTaskTimedOut},
 	}
 
 	for _, tt := range tests {

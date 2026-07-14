@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"sync"
 
 	"goclaw/internal/agent"
@@ -35,7 +35,9 @@ func NewThreadsService(cfg *config.AppConfig, a agent.LeadAgent, store threadsto
 		var err error
 		store, err = threadstore.NewFileStore("")
 		if err != nil {
-			panic(fmt.Sprintf("failed to create thread store: %v", err))
+			// Fail-fast at startup: without a working store, the server cannot function.
+			// Using a logged fatal instead of panic for cleaner diagnostics.
+			log.Fatalf("[ThreadsService] failed to create default file store: %v", err)
 		}
 	}
 	return &ThreadsService{cfg: cfg, agent: a, store: store, runs: make(map[string]runHandle)}

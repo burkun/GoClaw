@@ -123,6 +123,12 @@ func (c *LangGraphEventConverter) Convert(ev agent.Event) []LangGraphSSEEvent {
 		return c.convertCompleted(ev)
 	case agent.EventError:
 		return c.convertError(ev)
+	case agent.EventStateSnapshot:
+		return c.convertStateSnapshot(ev)
+	case agent.EventStateDelta:
+		return c.convertStateDelta(ev)
+	case agent.EventCustom:
+		return c.convertCustom(ev)
 	default:
 		return nil
 	}
@@ -212,7 +218,7 @@ func (c *LangGraphEventConverter) convertMessageDelta(ev agent.Event) []LangGrap
 	}}
 }
 
-	// convertToolEvent handles tool_event events.
+// convertToolEvent handles tool_event events.
 func (c *LangGraphEventConverter) convertToolEvent(ev agent.Event) []LangGraphSSEEvent {
 	payload, ok := ev.Payload.(agent.ToolEventPayload)
 	if !ok {
@@ -430,6 +436,57 @@ func (c *LangGraphEventConverter) convertError(ev agent.Event) []LangGraphSSEEve
 			},
 		},
 	}
+}
+
+// convertStateSnapshot converts a state_snapshot event to LangGraph format.
+// Mapped as a "custom" event with the snapshot data serialized into the Message field.
+func (c *LangGraphEventConverter) convertStateSnapshot(ev agent.Event) []LangGraphSSEEvent {
+	payload, ok := ev.Payload.(agent.StateSnapshotPayload)
+	if !ok {
+		return nil
+	}
+	data, _ := json.Marshal(payload)
+	return []LangGraphSSEEvent{{
+		Event: "custom",
+		Data: LangGraphCustomEvent{
+			Type:    "state_snapshot",
+			Message: string(data),
+		},
+	}}
+}
+
+// convertStateDelta converts a state_delta event to LangGraph format.
+// Mapped as a "custom" event with the delta data serialized into the Message field.
+func (c *LangGraphEventConverter) convertStateDelta(ev agent.Event) []LangGraphSSEEvent {
+	payload, ok := ev.Payload.(agent.StateDeltaPayload)
+	if !ok {
+		return nil
+	}
+	data, _ := json.Marshal(payload)
+	return []LangGraphSSEEvent{{
+		Event: "custom",
+		Data: LangGraphCustomEvent{
+			Type:    "state_delta",
+			Message: string(data),
+		},
+	}}
+}
+
+// convertCustom converts a custom event to LangGraph format.
+// The custom event name and value are preserved via JSON serialization.
+func (c *LangGraphEventConverter) convertCustom(ev agent.Event) []LangGraphSSEEvent {
+	payload, ok := ev.Payload.(agent.CustomPayload)
+	if !ok {
+		return nil
+	}
+	data, _ := json.Marshal(payload.Value)
+	return []LangGraphSSEEvent{{
+		Event: "custom",
+		Data: LangGraphCustomEvent{
+			Type:    payload.Name,
+			Message: string(data),
+		},
+	}}
 }
 
 // formatMessageTuple formats a message for "messages" stream mode.

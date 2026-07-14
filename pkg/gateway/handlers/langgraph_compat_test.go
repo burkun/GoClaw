@@ -190,9 +190,10 @@ func TestLangGraphEventConverter_Error(t *testing.T) {
 		},
 	}
 
+	// convertError returns 2 events: the error event + an end event.
 	events := converter.Convert(ev)
-	if len(events) != 1 {
-		t.Fatalf("expected 1 event, got %d", len(events))
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events (error + end), got %d", len(events))
 	}
 
 	if events[0].Event != "error" {

@@ -271,7 +271,7 @@ func (fc *FileCache) checkAndEvict() error {
 	}
 
 	type fileInfo struct {
-		key       string
+		filename  string // entry name including .cache extension (already hex-encoded, avoid double encoding)
 		size      int64
 		hitCount  int64
 		createdAt time.Time
@@ -286,13 +286,12 @@ func (fc *FileCache) checkAndEvict() error {
 			}
 			currentSize += info.Size()
 
-			// 读取文件内容获取元数据
 			filename := filepath.Join(fc.baseDir, entry.Name())
 			if data, err := os.ReadFile(filename); err == nil {
 				var item CacheItem
 				if err := json.Unmarshal(data, &item); err == nil {
 					files = append(files, fileInfo{
-						key:       strings.TrimSuffix(entry.Name(), ".cache"),
+						filename:  entry.Name(),
 						size:      info.Size(),
 						hitCount:  item.HitCount,
 						createdAt: item.CreatedAt,
@@ -306,7 +305,7 @@ func (fc *FileCache) checkAndEvict() error {
 	if currentSize > fc.maxSize {
 		// 删除过期的文件
 		for _, file := range files {
-			filename := fc.getFilename(file.key)
+			filename := filepath.Join(fc.baseDir, file.filename)
 			data, err := os.ReadFile(filename)
 			if err != nil {
 				continue
@@ -319,7 +318,7 @@ func (fc *FileCache) checkAndEvict() error {
 
 			if item.IsExpired() {
 				if fc.onEvict != nil {
-					fc.onEvict(file.key, item.Value)
+					fc.onEvict(strings.TrimSuffix(file.filename, ".cache"), item.Value)
 				}
 				_ = os.Remove(filename)
 				currentSize -= file.size
@@ -341,7 +340,7 @@ func (fc *FileCache) checkAndEvict() error {
 
 			// 删除文件直到大小满足要求
 			for _, file := range files {
-				filename := fc.getFilename(file.key)
+				filename := filepath.Join(fc.baseDir, file.filename)
 				data, err := os.ReadFile(filename)
 				if err != nil {
 					continue
@@ -353,7 +352,7 @@ func (fc *FileCache) checkAndEvict() error {
 				}
 
 				if fc.onEvict != nil {
-					fc.onEvict(file.key, item.Value)
+					fc.onEvict(strings.TrimSuffix(file.filename, ".cache"), item.Value)
 				}
 				_ = os.Remove(filename)
 				currentSize -= file.size

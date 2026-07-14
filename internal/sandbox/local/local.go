@@ -285,10 +285,15 @@ func isSkillsVirtualPath(virtualPath string) bool {
 }
 
 // isDeniedCommand checks whether the given command matches a denylist entry.
+// Whitespace is normalized (collapsed to single spaces) to prevent bypass via
+// extra spaces (e.g., "rm -rf  /" bypassing "rm -rf /").
 func isDeniedCommand(command string, denied []string) bool {
+	// Normalize whitespace: collapse multiple spaces/tabs to single spaces.
 	trimmed := strings.TrimSpace(command)
+	normalized := strings.Join(strings.Fields(trimmed), " ")
 	for _, pattern := range denied {
-		if strings.HasPrefix(trimmed, pattern) {
+		normalizedPattern := strings.Join(strings.Fields(pattern), " ")
+		if strings.HasPrefix(normalized, normalizedPattern) {
 			return true
 		}
 	}
@@ -774,6 +779,7 @@ type LocalSandboxProvider struct {
 	baseDir    string // root directory for all thread data (e.g. /path/to/.goclaw)
 	skillsPath string // optional path to skills directory for /mnt/skills mounting
 	sandbox    *LocalSandbox
+	sandboxes  map[string]*LocalSandbox // per-thread sandbox instances
 }
 
 // NewLocalSandboxProvider creates a new provider. baseDir is the root directory
@@ -787,9 +793,8 @@ func NewLocalSandboxProvider(cfg sandbox.SandboxConfig, baseDir string, skillsPa
 	}
 }
 
-// Acquire returns the singleton sandbox ID "local", creating the sandbox if needed.
-// threadID is used to set up the per-thread filesystem paths.
-// Note: For simplicity, we update the sandbox baseDir for each new thread.
+// Acquire creates a per-thread sandbox instance to avoid the singleton-sharing bug
+// where two threads could overwrite each other's baseDir.
 func (p *LocalSandboxProvider) Acquire(ctx context.Context, threadID string) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -805,30 +810,47 @@ func (p *LocalSandboxProvider) Acquire(ctx context.Context, threadID string) (st
 		}
 	}
 
-	// Update sandbox for this thread (create or reuse)
 	absBaseDir, _ := filepath.Abs(threadBaseDir)
-	p.sandbox = &LocalSandbox{
-		id:         "local",
+	sb := &LocalSandbox{
+		id:         threadID,
 		threadID:   threadID,
 		baseDir:    absBaseDir,
 		skillsPath: p.skillsPath,
 		cfg:        p.cfg,
 	}
+	// Store per-thread for Get() and Release().
+	if p.sandboxes == nil {
+		p.sandboxes = make(map[string]*LocalSandbox)
+	}
+	p.sandboxes[threadID] = sb
+	// Keep per-thread sandbox (keyed by threadID) and legacy singleton (keyed by "local").
+	legacySB := *sb
+	legacySB.id = "local"
+	p.sandbox = &legacySB
+	p.sandboxes[threadID] = sb
+	p.sandboxes["local"] = &legacySB
 	return "local", nil
 }
 
-// Get retrieves the singleton sandbox by ID. Returns nil if not yet created.
+// Get retrieves the per-thread sandbox by ID. Returns nil if not found.
 func (p *LocalSandboxProvider) Get(sandboxID string) sandbox.Sandbox {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if sb, ok := p.sandboxes[sandboxID]; ok {
+		return sb
+	}
+	// Fallback to legacy singleton for backward compatibility with "local" ID.
 	if sandboxID == "local" && p.sandbox != nil {
 		return p.sandbox
 	}
 	return nil
 }
 
-// Release is a no-op for the local singleton; the sandbox is kept alive for reuse.
+// Release cleans up the per-thread sandbox.
 func (p *LocalSandboxProvider) Release(ctx context.Context, sandboxID string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.sandboxes, sandboxID)
 	return nil
 }
 

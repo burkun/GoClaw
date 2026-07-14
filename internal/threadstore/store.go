@@ -162,7 +162,12 @@ func (fs *FileStore) saveIndex() error {
 		return fmt.Errorf("marshal index: %w", err)
 	}
 
-	return os.WriteFile(indexPath, data, 0644)
+	// Write to temp file first, then rename for atomicity.
+	tmpPath := indexPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("write index tmp: %w", err)
+	}
+	return os.Rename(tmpPath, indexPath)
 }
 
 func (fs *FileStore) threadDir(threadID string) string {
@@ -382,7 +387,11 @@ func (fs *FileStore) saveStateLocked(state *ThreadState) error {
 	}
 
 	statePath := fs.statePath(state.ThreadID)
-	return os.WriteFile(statePath, data, 0644)
+	tmpPath := statePath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("write state tmp: %w", err)
+	}
+	return os.Rename(tmpPath, statePath)
 }
 
 // List returns all threads (convenience method).

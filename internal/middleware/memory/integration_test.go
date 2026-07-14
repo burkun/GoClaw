@@ -16,7 +16,7 @@ type integrationExtractor struct {
 	err   error
 }
 
-func (e *integrationExtractor) Extract(_ []map[string]any, _ bool) ([]Fact, error) {
+func (e *integrationExtractor) Extract(_ context.Context, _ []map[string]any, _ bool) ([]Fact, error) {
 	if e.err != nil {
 		return nil, e.err
 	}

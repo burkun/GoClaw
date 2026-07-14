@@ -131,6 +131,25 @@ func (h *ThreadsHandler) RunThread(c *gin.Context) {
 	if h.svc.GetConfig() != nil && h.svc.GetConfig().DefaultModel() != nil {
 		modelName = h.svc.GetConfig().DefaultModel().Name
 	}
+	// Extract and validate scene from request config.
+	// Only scenes declared in config.yaml scenes.* are allowed.
+	scene := ""
+	if req.Config != nil {
+		if s, ok := req.Config["scene"].(string); ok {
+			s = strings.TrimSpace(s)
+			if s != "" {
+				if h.svc.GetConfig() != nil {
+					if _, ok := h.svc.GetConfig().Scenes.Scenes[s]; ok {
+						scene = s
+					}
+				}
+			}
+		}
+	}
+	// Fall back to configured default scene.
+	if scene == "" && h.svc.GetConfig() != nil {
+		scene = h.svc.GetConfig().Scenes.DefaultScene
+	}
 	cfg := agent.RunConfig{
 		ThreadID:        threadID,
 		ModelName:       modelName,
@@ -138,6 +157,7 @@ func (h *ThreadsHandler) RunThread(c *gin.Context) {
 		CheckpointID:    checkpointID,
 		AgentName:       "lead_agent",
 		RunID:           runID,
+		Scene:           scene,
 	}
 
 	// Check agent is initialized.
@@ -490,7 +510,7 @@ func (h *ThreadsHandler) GetThreadHistory(c *gin.Context) {
 		if ts, err := h.svc.GetStore().GetState(threadID); err == nil && ts != nil {
 			history = append(history, HistoryEntry{
 				CheckpointID: fmt.Sprintf("cp-%d", ts.UpdatedAt),
-				Timestamp:     ts.UpdatedAt,
+				Timestamp:    ts.UpdatedAt,
 			})
 		}
 	}

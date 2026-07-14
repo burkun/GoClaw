@@ -9,9 +9,37 @@ package middleware
 
 import (
 	"context"
+	"sync"
 
 	"goclaw/internal/logging"
 )
+
+// State provides safe concurrent access to its Extra field via the embedded RWMutex.
+func (s *State) Lock()    { s.mu.Lock() }
+func (s *State) RLock()   { s.mu.RLock() }
+func (s *State) Unlock()  { s.mu.Unlock() }
+func (s *State) RUnlock() { s.mu.RUnlock() }
+
+// SetExtra stores a value in the Extra map under the given key in a concurrency-safe way.
+func (s *State) SetExtra(key string, value any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Extra == nil {
+		s.Extra = map[string]any{}
+	}
+	s.Extra[key] = value
+}
+
+// GetExtra retrieves a value from the Extra map in a concurrency-safe way.
+func (s *State) GetExtra(key string) (any, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.Extra == nil {
+		return nil, false
+	}
+	v, ok := s.Extra[key]
+	return v, ok
+}
 
 // State is the mutable conversation state passed through every middleware.
 // It mirrors DeerFlow's ThreadState and carries the message history, metadata,
@@ -19,6 +47,9 @@ import (
 //
 // All middlewares read from and write to State to coordinate across the chain.
 type State struct {
+	// mu guards Extra against concurrent access from tool call goroutines.
+	mu sync.RWMutex
+
 	// ThreadID is the stable conversation identifier (UUID).
 	ThreadID string
 

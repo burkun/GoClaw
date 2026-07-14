@@ -183,9 +183,14 @@ func (c *Channel) sendOnce(ctx context.Context, msg channels.OutgoingMessage) er
 		return fmt.Errorf("telegram: bot not initialized")
 	}
 
-	chatID, err := strconv.ParseInt(msg.ThreadID, 10, 64)
+	// Use ChatID (Telegram chat ID) for destination, not ThreadID (GoClaw UUID).
+	chatIDStr := msg.ChatID
+	if chatIDStr == "" {
+		chatIDStr = msg.ThreadID // fallback for legacy messages
+	}
+	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
 	if err != nil {
-		return fmt.Errorf("telegram: invalid chat ID: %w", err)
+		return fmt.Errorf("telegram: invalid chat ID %q: %w", chatIDStr, err)
 	}
 
 	tgMsg := tgbotapi.NewMessage(chatID, msg.Text)

@@ -1,5 +1,7 @@
 package memory
 
+import "context"
+
 // FactCategory represents the category of a fact.
 // These categories match DeerFlow's fact categorization system.
 type FactCategory string
@@ -55,6 +57,7 @@ type Fact struct {
 // FactExtractor extracts facts from conversation messages using an LLM.
 type FactExtractor interface {
 	// Extract returns facts derived from the given messages.
+	// ctx is used for cancellation and timeout propagation.
 	// correctionDetected indicates the user corrected a previous response.
-	Extract(messages []map[string]any, correctionDetected bool) ([]Fact, error)
+	Extract(ctx context.Context, messages []map[string]any, correctionDetected bool) ([]Fact, error)
 }

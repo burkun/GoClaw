@@ -15,7 +15,7 @@ type stubExtractor struct {
 	err   error
 }
 
-func (s *stubExtractor) Extract(_ []map[string]any, _ bool) ([]Fact, error) {
+func (s *stubExtractor) Extract(_ context.Context, _ []map[string]any, _ bool) ([]Fact, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -115,7 +115,7 @@ func TestEinoFactExtractor_Extract_FiltersDedupAndCorrection(t *testing.T) {
 ]`, nil)}
 
 	extractor := NewEinoFactExtractor(m, 0.7)
-	facts, err := extractor.Extract([]map[string]any{{"role": "human", "content": "I prefer Go"}}, true)
+	facts, err := extractor.Extract(context.Background(), []map[string]any{{"role": "human", "content": "I prefer Go"}}, true)
 	if err != nil {
 		t.Fatalf("Extract failed: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestEinoFactExtractor_Extract_InvalidJSONReturnsError(t *testing.T) {
 	m := &stubChatModel{resp: schema.AssistantMessage("not-json", nil)}
 	extractor := NewEinoFactExtractor(m, 0.7)
 
-	_, err := extractor.Extract([]map[string]any{{"role": "human", "content": "hello"}}, false)
+	_, err := extractor.Extract(context.Background(), []map[string]any{{"role": "human", "content": "hello"}}, false)
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
 	}

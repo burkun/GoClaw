@@ -34,10 +34,6 @@ func (a *leadAgent) Run(ctx context.Context, state *ThreadState, cfg RunConfig) 
 	if state == nil {
 		state = &ThreadState{}
 	}
-	if err := a.syncSkillsOnConfigReload(); err != nil {
-		return nil, fmt.Errorf("sync skills config failed: %w", err)
-	}
-
 	messages := prepareRunMessages(state.Messages, cfg)
 
 	// Build session values for subagent state passing
@@ -50,6 +46,7 @@ func (a *leadAgent) Run(ctx context.Context, state *ThreadState, cfg RunConfig) 
 		"viewed_images":            state.ViewedImages,
 		"agent_name":               cfg.AgentName,
 		"is_subagent":              strings.TrimSpace(cfg.AgentName) != "",
+		"scene":                    cfg.Scene,
 	}
 	// Pass thread data paths for subagent access
 	if state.ThreadData != nil {
@@ -89,10 +86,6 @@ func (a *leadAgent) Resume(ctx context.Context, state *ThreadState, cfg RunConfi
 		return ch, nil
 	}
 
-	if err := a.syncSkillsOnConfigReload(); err != nil {
-		return nil, fmt.Errorf("sync skills config failed: %w", err)
-	}
-
 	if state == nil {
 		state = &ThreadState{}
 	}
@@ -105,6 +98,7 @@ func (a *leadAgent) Resume(ctx context.Context, state *ThreadState, cfg RunConfi
 		"viewed_images":            state.ViewedImages,
 		"agent_name":               cfg.AgentName,
 		"is_subagent":              strings.TrimSpace(cfg.AgentName) != "",
+		"scene":                    cfg.Scene,
 	}))
 	if err != nil {
 		return nil, fmt.Errorf("resume from checkpoint failed: %w", err)
@@ -157,6 +151,13 @@ func prepareRunMessages(messages []*schema.Message, cfg RunConfig) []*schema.Mes
 }
 
 func drainIter(ctx context.Context, iter *einoruntime.EventStream, threadID, runID string, ch chan<- Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			ch <- Event{Type: EventError, ThreadID: threadID, RunID: runID,
+				Payload: ErrorPayload{Code: ErrorCodeRunFailed, Message: fmt.Sprintf("panic in event drain: %v", r)},
+				Timestamp: timeUnixMilli()}
+		}
+	}()
 	if iter == nil {
 		ch <- Event{Type: EventError, ThreadID: threadID, RunID: runID, Payload: ErrorPayload{Code: ErrorCodeEmptyStream, Message: "empty event stream"}, Timestamp: timeUnixMilli()}
 		return
@@ -306,6 +307,9 @@ func toToolMiddlewareState(ctx context.Context) *basemw.State {
 		}
 		if agentName, ok := vals["agent_name"].(string); ok && strings.TrimSpace(agentName) != "" {
 			extra["agent_name"] = strings.TrimSpace(agentName)
+		}
+		if scene, ok := vals["scene"].(string); ok && strings.TrimSpace(scene) != "" {
+			extra["scene"] = strings.TrimSpace(scene)
 		}
 		for _, k := range []string{"task_tool_calls_count", "clarification_request", "interrupt", "pending_tool_calls"} {
 			if v, ok := vals[k]; ok {
@@ -630,6 +634,11 @@ func convertAgentEvent(event *adk.AgentEvent, threadID string) []Event {
 				out = append(out, *taskEv)
 			}
 		}
+		// Detect _genui_components metadata in tool results.
+		// Tools can embed a "_genui_components" array in their JSON output to declare
+		// UI components that the frontend should render (AGUI protocol).
+		genuiEvents := extractGenUIComponents(msg.Content, threadID, now)
+		out = append(out, genuiEvents...)
 	}
 	return out
 }
@@ -641,6 +650,77 @@ func isToolError(msg *schema.Message) bool {
 	}
 	lower := strings.ToLower(strings.TrimSpace(msg.Content))
 	return strings.HasPrefix(lower, "error") || strings.HasPrefix(lower, "failed")
+}
+
+// genuiEnvelope is the JSON structure expected in a tool result that wants to
+// emit GenUI state events (AG-UI protocol). Tools embed these top-level keys in their JSON output.
+// - _state_snapshot: complete UI state tree → emits state_snapshot event
+// - _state_delta: JSON Patch operations → emits state_delta event
+// Both keys can appear together in a single tool result.
+type genuiEnvelope struct {
+	StateSnapshot map[string]any `json:"_state_snapshot"`
+	StateDelta    []jsonPatchOp  `json:"_state_delta"`
+}
+type jsonPatchOp struct {
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Value any    `json:"value,omitempty"`
+	From  string `json:"from,omitempty"`
+}
+
+// extractGenUIComponents parses a tool result string for embedded GenUI state metadata
+// (AG-UI protocol) and returns the corresponding StateSnapshot and StateDelta events.
+//
+// Convention: a tool includes "_state_snapshot" and/or "_state_delta" keys in its JSON output.
+// The executor detects these and emits the corresponding AG-UI events alongside the normal
+// tool event. This allows any tool to participate in Generative UI without special registration.
+func extractGenUIComponents(raw string, threadID string, ts int64) []Event {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || (!strings.Contains(raw, `"_state_snapshot"`) && !strings.Contains(raw, `"_state_delta"`)) {
+		return nil
+	}
+
+	var envelope genuiEnvelope
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		return nil
+	}
+
+	var events []Event
+
+	// Emit StateSnapshot if the tool provided a full UI state tree.
+	if envelope.StateSnapshot != nil {
+		events = append(events, Event{
+			Type:     EventStateSnapshot,
+			ThreadID: threadID,
+			Payload: StateSnapshotPayload{
+				Snapshot: envelope.StateSnapshot,
+			},
+			Timestamp: ts,
+		})
+	}
+
+	// Emit StateDelta if the tool provided JSON Patch operations.
+	if len(envelope.StateDelta) > 0 {
+		delta := make([]JSONPatchOperation, len(envelope.StateDelta))
+		for i, op := range envelope.StateDelta {
+			delta[i] = JSONPatchOperation{
+				Op:    op.Op,
+				Path:  op.Path,
+				Value: op.Value,
+				From:  op.From,
+			}
+		}
+		events = append(events, Event{
+			Type:     EventStateDelta,
+			ThreadID: threadID,
+			Payload: StateDeltaPayload{
+				Delta: delta,
+			},
+			Timestamp: ts,
+		})
+	}
+
+	return events
 }
 
 func toTaskEvent(threadID, raw string, ts int64) *Event {
@@ -664,8 +744,10 @@ func toTaskEvent(threadID, raw string, ts int64) *Event {
 		evType = EventTaskRunning
 	case string(subagents.StatusCompleted):
 		evType = EventTaskCompleted
-	case string(subagents.StatusFailed), string(subagents.StatusTimedOut):
+	case string(subagents.StatusFailed):
 		evType = EventTaskFailed
+	case string(subagents.StatusTimedOut):
+		evType = EventTaskTimedOut
 	}
 
 	return &Event{

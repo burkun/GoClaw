@@ -57,4 +57,7 @@ type RunConfig struct {
 	// AvailableSkills is an optional set of skill names to make available.
 	// If nil, all enabled skills are available.
 	AvailableSkills map[string]bool
+	// Scene identifies the active scene/context for this run (e.g., "paper_reading", "kids_edu").
+	// The SceneMiddleware and GuardrailMiddleware use this to apply scene-specific policies.
+	Scene string
 }

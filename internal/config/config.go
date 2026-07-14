@@ -55,6 +55,9 @@ type AppConfig struct {
 	// Guardrails configures authorization policies.
 	Guardrails GuardrailsConfig `yaml:"guardrails"`
 
+	// Scenes configures scene-based agent behavior profiles.
+	Scenes ScenesConfig `yaml:"scenes,omitempty"`
+
 	// Subagents configures sub-agent execution timeouts.
 	Subagents SubagentsConfig `yaml:"subagents"`
 
@@ -391,6 +394,39 @@ type GuardrailsConfig struct {
 
 	// Provider configures the authorization provider implementation.
 	Provider *GuardrailProviderConfig `yaml:"provider,omitempty"`
+
+	// RulesFile is an optional path to a YAML/JSON file containing guardrail rules.
+	// When set, a FileBasedProvider is created that loads rules from this file.
+	// The rules can be scene-specific (each rule can specify a list of scene IDs).
+	RulesFile string `yaml:"rules_file,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// ScenesConfig
+// ---------------------------------------------------------------------------
+
+// SceneConfig defines a single scene profile.
+type SceneConfig struct {
+	// SceneID is the unique identifier for this scene (e.g., "paper_reading").
+	SceneID string `yaml:"scene_id" json:"scene_id"`
+
+	// Description is a human-readable label for logging.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+
+	// PromptSuffix is appended to the system prompt as <scene_context> when this scene is active.
+	PromptSuffix string `yaml:"prompt_suffix,omitempty" json:"prompt_suffix,omitempty"`
+
+	// SafetyProfile identifies the content safety policy: "default", "strict", or "kids".
+	SafetyProfile string `yaml:"safety_profile,omitempty" json:"safety_profile,omitempty"`
+}
+
+// ScenesConfig holds the scene middleware configuration.
+type ScenesConfig struct {
+	// DefaultScene is the scene to use when no scene is specified in the request.
+	DefaultScene string `yaml:"default_scene,omitempty" json:"default_scene,omitempty"`
+
+	// Scenes maps scene IDs to their configurations.
+	Scenes map[string]SceneConfig `yaml:"scenes,omitempty" json:"scenes,omitempty"`
 }
 
 // ToolSearchConfig configures lazy loading of MCP tools.

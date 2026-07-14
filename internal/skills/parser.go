@@ -30,6 +30,8 @@ const (
 // allowed-tools: [a, b]
 // ---
 func ParseSkillMarkdown(content string) (SkillMetadata, string, error) {
+	// Normalize line endings for cross-platform compatibility (Windows CRLF -> LF).
+	content = strings.ReplaceAll(content, "\r\n", "\n")
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
 		return SkillMetadata{}, "", nil

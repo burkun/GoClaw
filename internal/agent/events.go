@@ -34,6 +34,18 @@ const (
 
 	// EventTitle is emitted when the conversation title is generated.
 	EventTitle EventType = "title"
+
+	// EventStateSnapshot is emitted to send a complete UI state tree to the frontend.
+	// Aligned with AG-UI protocol: the frontend replaces its state model with the snapshot.
+	EventStateSnapshot EventType = "state_snapshot"
+
+	// EventStateDelta is emitted to send incremental UI state updates as RFC 6902 JSON Patch
+	// operations. Aligned with AG-UI protocol: the frontend applies each operation in sequence.
+	EventStateDelta EventType = "state_delta"
+
+	// EventCustom is emitted for application-specific events not covered by the standard
+	// event types. Aligned with AG-UI protocol: carries a name and an arbitrary value.
+	EventCustom EventType = "custom"
 )
 
 // Event is the envelope sent over the channel returned by LeadAgent.Run.
@@ -110,4 +122,43 @@ type TaskPayload struct {
 	Subject string `json:"subject"`
 	// Status is one of "pending", "in_progress", "completed", "failed".
 	Status string `json:"status"`
+}
+
+// StateSnapshotPayload carries a complete UI state tree for the frontend to render.
+// Aligned with AG-UI protocol's StateSnapshot event.
+// The frontend replaces its current state model with the snapshot contents.
+type StateSnapshotPayload struct {
+	// Snapshot is the complete state object. The frontend derives its UI from this state.
+	Snapshot map[string]any `json:"snapshot"`
+}
+
+// JSONPatchOperation is a single RFC 6902 JSON Patch operation.
+// Used by StateDeltaPayload for incremental state updates.
+type JSONPatchOperation struct {
+	// Op is the operation: "add", "remove", "replace", "move", "copy", or "test".
+	Op string `json:"op"`
+	// Path is a JSON Pointer (RFC 6901) to the target location.
+	Path string `json:"path"`
+	// Value is the operand for "add", "replace", and "test" operations.
+	Value any `json:"value,omitempty"`
+	// From is a JSON Pointer for the source location (used with "move" and "copy").
+	From string `json:"from,omitempty"`
+}
+
+// StateDeltaPayload carries incremental state updates as RFC 6902 JSON Patch operations.
+// Aligned with AG-UI protocol's StateDelta event.
+// The frontend applies each operation in sequence to its current state model.
+type StateDeltaPayload struct {
+	// Delta is the ordered list of JSON Patch operations to apply.
+	Delta []JSONPatchOperation `json:"delta"`
+}
+
+// CustomPayload carries an application-specific event, aligned with AG-UI protocol's Custom event.
+// Used for frontend-to-agent component actions (user clicks, form submissions)
+// and any other events not covered by standard event types.
+type CustomPayload struct {
+	// Name identifies the custom event (e.g., "component_action", "file_dropped").
+	Name string `json:"name"`
+	// Value carries the event payload. Structure depends on the event name.
+	Value any `json:"value"`
 }

@@ -128,7 +128,7 @@ func New(ctx context.Context) (*leadAgent, error) {
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools},
 		},
 		MaxIterations: 100,
-		Middlewares:   mws,
+		Handlers:      mws,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent.New: build chat model agent failed: %w", err)
@@ -238,8 +238,16 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 	}
 
 	tools := toolruntime.AdaptDefaultRegistryToEinoTools()
-	for _, mcpTool := range toolruntime.BuildMCPDynamicTools(appCfg) {
+
+	// Discover individual MCP tools first, fall back to proxy-style (matches New).
+	discoveredMCPTools := toolruntime.BuildDiscoveredMCPTools(appCfg)
+	for _, mcpTool := range discoveredMCPTools {
 		tools = append(tools, toolruntime.AdaptToEinoTool(mcpTool))
+	}
+	if len(discoveredMCPTools) == 0 {
+		for _, mcpTool := range toolruntime.BuildMCPDynamicTools(appCfg) {
+			tools = append(tools, toolruntime.AdaptToEinoTool(mcpTool))
+		}
 	}
 
 	// Phase7B: add subagent task tool with bounded executor.
@@ -307,7 +315,7 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools},
 		},
 		MaxIterations: 100,
-		Middlewares:   mws,
+		Handlers:      mws,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("agent.NewWithName: build chat model agent failed: %w", err)
@@ -330,7 +338,7 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 	return &leadAgent{einoAgent: a, tools: tools, middlewares: mws, runner: r, skills: skillRegistry}, nil
 }
 
-func buildMiddlewares(cfg RunConfig) []adk.AgentMiddleware {
+func buildMiddlewares(cfg RunConfig) []adk.ChatModelAgentMiddleware {
 	appCfg, _ := config.GetAppConfig()
 	sbProvider := buildSandboxProvider(appCfg)
 	sandbox.SetDefaultProvider(sbProvider)

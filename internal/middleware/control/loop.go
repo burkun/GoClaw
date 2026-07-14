@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"goclaw/internal/middleware"
@@ -100,7 +101,7 @@ func collectToolCallHashes(messages []map[string]any, limit int) []string {
 		if len(tcs) == 0 {
 			continue
 		}
-		b, _ := json.Marshal(tcs)
+		b, _ := marshalCanonical(tcs)
 		sum := sha256.Sum256(b)
 		hashes = append([]string{hex.EncodeToString(sum[:])}, hashes...)
 	}
@@ -178,6 +179,36 @@ func normalizeToolCalls(calls []map[string]any) []map[string]any {
 		out = append(out, n)
 	}
 	return out
+}
+
+// marshalCanonical marshals v to JSON with sorted map keys for deterministic output.
+func marshalCanonical(v any) ([]byte, error) {
+	return json.Marshal(canonicalize(v))
+}
+
+// canonicalize recursively converts maps to use sorted keys for deterministic JSON output.
+func canonicalize(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		sorted := make(map[string]any, len(val))
+		for _, k := range keys {
+			sorted[k] = canonicalize(val[k])
+		}
+		return sorted
+	case []any:
+		out := make([]any, len(val))
+		for i, item := range val {
+			out[i] = canonicalize(item)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func normalizeArguments(raw any) any {

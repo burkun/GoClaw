@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"goclaw/internal/logging"
 	"goclaw/internal/middleware"
@@ -176,14 +177,22 @@ func (m *GuardrailMiddleware) buildRequest(state *middleware.State, toolCall *mi
 		}
 	}
 
+	// Extract scene from state if available.
+	scene := ""
+	if state != nil && state.Extra != nil {
+		if s, ok := state.Extra["scene"].(string); ok {
+			scene = s
+		}
+	}
+
 	return GuardrailRequest{
 		ToolName:   toolCall.Name,
 		ToolInput:  toolCall.Input,
 		AgentID:    m.cfg.Passport,
 		ThreadID:   threadID,
 		IsSubagent: isSubagent,
-		Timestamp: strings.ReplaceAll(strings.ReplaceAll(
-			strings.Split(fmt.Sprintf("%v", toolCall), " ")[0], "[", ""), "]", ""),
+		Scene:      scene,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
 	}
 }
 

@@ -20,7 +20,7 @@ type LeadAgent interface {
 type leadAgent struct {
 	einoAgent   adk.Agent
 	tools       []lctool.BaseTool
-	middlewares []adk.AgentMiddleware
+	middlewares []adk.ChatModelAgentMiddleware
 	runner      *einoruntime.Runner
 	skills      *skillsruntime.Registry
 }

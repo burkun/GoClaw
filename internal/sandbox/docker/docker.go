@@ -181,21 +181,18 @@ func (s *DockerSandbox) ReadFile(ctx context.Context, virtualPath string, startL
 		return "", err
 	}
 
-	// Build command with optional line range (P0 fix)
+	// Build command with optional line range.
+	// sed uses 1-based line numbers; our API uses 0-based. Add 1 to convert.
 	cmd := "cat " + shellQuote(containerPath)
 	if startLine > 0 || endLine > 0 {
-		// Use sed to extract line range
+		sedStart := startLine + 1 // 0-based to 1-based conversion (single increment)
 		if startLine < 0 {
-			startLine = 0
-		}
-		if startLine > 0 {
-			// sed is 1-based, Go is 0-based
-			startLine++
+			sedStart = 1
 		}
 		if endLine > 0 {
-			cmd = fmt.Sprintf("sed -n '%d,%dp' %s", startLine+1, endLine, shellQuote(containerPath))
+			cmd = fmt.Sprintf("sed -n '%d,%dp' %s", sedStart, endLine, shellQuote(containerPath))
 		} else {
-			cmd = fmt.Sprintf("sed -n '%d,$p' %s", startLine+1, shellQuote(containerPath))
+			cmd = fmt.Sprintf("sed -n '%d,$p' %s", sedStart, shellQuote(containerPath))
 		}
 	}
 

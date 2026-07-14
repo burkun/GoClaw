@@ -27,6 +27,10 @@ type GuardrailRequest struct {
 	// IsSubagent indicates if this is a sub-agent request.
 	IsSubagent bool
 
+	// Scene identifies the active scene/context for this tool call (e.g., "paper_reading", "kids_edu").
+	// Guardrail providers can use this to apply scene-specific policies.
+	Scene string
+
 	// Timestamp is the ISO-8601 timestamp of the request.
 	Timestamp string
 }

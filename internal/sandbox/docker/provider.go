@@ -21,6 +21,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	dockerclient "github.com/docker/docker/client"
 
+	"goclaw/internal/logging"
 	"goclaw/internal/sandbox"
 )
 
@@ -381,18 +382,21 @@ func (p *DockerSandboxProvider) evictOldestWarm() string {
 			oldestTime = t
 		}
 	}
-	delete(p.warmPool, oldestID)
 	p.mu.Unlock()
 
-	// Destroy the container
+	// Destroy the container BEFORE removing from map to avoid orphaning
+	// if destroy fails (container stays in pool for retry).
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := p.destroySandbox(ctx, oldestID); err != nil {
-		// Log error but don't fail
-		_ = err
+		logging.Warn("[DockerSandbox] failed to destroy warm container during eviction", "container", oldestID, "error", err)
 		return ""
 	}
+	// Only remove from map after successful destruction.
+	p.mu.Lock()
+	delete(p.warmPool, oldestID)
+	p.mu.Unlock()
 
 	return oldestID
 }

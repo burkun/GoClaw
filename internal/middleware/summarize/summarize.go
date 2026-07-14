@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"goclaw/internal/logging"
 
@@ -185,7 +186,9 @@ func (s *SummarizationMiddleware) BeforeModel(ctx context.Context, state *middle
 	// --- Step 7: LLM summarisation ---
 	summaryText := "[Conversation history summarised — details omitted.]"
 	if s.summ != nil {
-		if text, err := s.summ.Summarize(ctx, transcript); err == nil && text != "" {
+		summaryCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if text, err := s.summ.Summarize(summaryCtx, transcript); err == nil && text != "" {
 			summaryText = text
 		} else if err != nil {
 			logging.Warn("[SummarizationMiddleware] summarisation failed", "error", err)

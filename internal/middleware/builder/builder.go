@@ -17,12 +17,14 @@ import (
 	"goclaw/internal/middleware/memory"
 	"goclaw/internal/middleware/monitoring"
 	"goclaw/internal/middleware/sandboxmw"
+	"goclaw/internal/middleware/scene"
 	"goclaw/internal/middleware/summarize"
 	"goclaw/internal/middleware/threaddata"
 	"goclaw/internal/middleware/todo"
 	"goclaw/internal/middleware/tool"
 	"goclaw/internal/middleware/ui"
 	"goclaw/internal/middleware/uploads"
+	"goclaw/internal/logging"
 	"goclaw/internal/sandbox"
 	"goclaw/pkg/errors"
 )
@@ -97,6 +99,27 @@ func BuildMiddlewaresFromBuilder(cfg *BuilderConfig) []middleware.Middleware {
 	}
 	middlewares = append(middlewares, dangling.New())
 
+	// SceneMiddleware: injects scene-specific context into the system prompt
+	// and sets scene metadata for downstream middlewares (Guardrail, etc.).
+	sceneCfg := scene.DefaultConfig()
+	if cfg.AppConfig != nil {
+		if cfg.AppConfig.Scenes.DefaultScene != "" {
+			sceneCfg.DefaultScene = cfg.AppConfig.Scenes.DefaultScene
+		}
+		if len(cfg.AppConfig.Scenes.Scenes) > 0 {
+			sceneCfg.Scenes = make(map[string]scene.SceneConfig, len(cfg.AppConfig.Scenes.Scenes))
+			for id, sc := range cfg.AppConfig.Scenes.Scenes {
+				sceneCfg.Scenes[id] = scene.SceneConfig{
+					SceneID:       sc.SceneID,
+					Description:   sc.Description,
+					PromptSuffix:  sc.PromptSuffix,
+					SafetyProfile: sc.SafetyProfile,
+				}
+			}
+		}
+	}
+	middlewares = append(middlewares, scene.New(sceneCfg))
+
 	// GuardrailMiddleware
 	guardrailCfg := control.DefaultGuardrailConfig()
 	if cfg.AppConfig != nil {
@@ -151,6 +174,19 @@ func BuildMiddlewaresFromBuilder(cfg *BuilderConfig) []middleware.Middleware {
 			// For custom providers, fall back to legacy policy-based approach.
 			// Future: support dynamic provider loading via reflection/plugin.
 		}
+
+		// FileBasedProvider: load guardrail rules from a YAML/JSON file.
+		// Takes precedence over AllowlistProvider; a warning is logged if both are configured.
+		if strings.TrimSpace(cfg.AppConfig.Guardrails.RulesFile) != "" {
+			if guardrailCfg.Provider != nil {
+				logging.Warn("guardrail: both provider and rules_file configured; rules_file takes precedence")
+			}
+			if fileProvider, err := control.NewFileBasedProvider(cfg.AppConfig.Guardrails.RulesFile); err != nil {
+				logging.Warn("guardrail: failed to load rules file, falling back to allowlist", "path", cfg.AppConfig.Guardrails.RulesFile, "error", err)
+			} else {
+				guardrailCfg.Provider = fileProvider
+			}
+		}
 	}
 	middlewares = append(middlewares, control.NewGuardrailMiddleware(guardrailCfg))
 
@@ -182,6 +218,8 @@ func BuildMiddlewaresFromBuilder(cfg *BuilderConfig) []middleware.Middleware {
 		if cfg.AppConfig != nil {
 			if cm, err := createChatModel(cfg.AppConfig.Summarization.ModelName); err == nil && cm != nil {
 				summarizer = summarize.NewEinoSummarizer(cm)
+			} else if err != nil {
+				logging.Warn("summarization: failed to create model, using passthrough", "model", cfg.AppConfig.Summarization.ModelName, "error", err)
 			}
 		}
 		middlewares = append(middlewares, summarize.NewSummarizationMiddleware(summCfg, summarizer))
@@ -201,6 +239,8 @@ func BuildMiddlewaresFromBuilder(cfg *BuilderConfig) []middleware.Middleware {
 		if cfg.AppConfig != nil {
 			if cm, err := createChatModel(cfg.AppConfig.Title.ModelName); err == nil && cm != nil {
 				titleGen = ui.NewEinoTitleGenerator(cm)
+			} else if err != nil {
+				logging.Warn("title: failed to create model for title generation", "model", cfg.AppConfig.Title.ModelName, "error", err)
 			}
 		}
 		middlewares = append(middlewares, ui.NewTitleMiddleware(titleCfg, titleGen))
@@ -214,6 +254,8 @@ func BuildMiddlewaresFromBuilder(cfg *BuilderConfig) []middleware.Middleware {
 		if cfg.AppConfig != nil {
 			if cm, err := createChatModel(cfg.AppConfig.Memory.ModelName); err == nil && cm != nil {
 				queue.SetExtractor(memory.NewEinoFactExtractor(cm, memoryConfidence))
+			} else if err != nil {
+				logging.Warn("memory: failed to create model for fact extraction", "model", cfg.AppConfig.Memory.ModelName, "error", err)
 			}
 		}
 		middlewares = append(middlewares, memory.NewMemoryMiddleware(

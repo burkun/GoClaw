@@ -152,7 +152,7 @@ func (s *Server) registerMiddleware() {
 func (s *Server) registerRoutes() {
 	// Build handler instances that hold references to config / agent.
 	modelsH := handlers.NewModelsHandler(s.cfg)
-	threadsH := handlers.NewThreadsHandler(s.cfg, s.agent, nil) // nil = use default file store
+	threadsH := handlers.NewThreadsHandlerWithService(handlers.NewThreadsService(s.cfg, s.agent, nil)) // nil = use default file store
 	uploadsH := handlers.NewUploadsHandler(s.cfg)
 	memoryH := handlers.NewMemoryHandler(s.cfg)
 	mcpH := handlers.NewMCPHandler(s.cfg)

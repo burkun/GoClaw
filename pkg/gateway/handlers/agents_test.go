@@ -32,6 +32,8 @@ func newPersistedAgentsHandler(t *testing.T, cfg *config.AppConfig) *AgentsHandl
 }
 
 func TestAgentsHandler_ListAgents_Empty(t *testing.T) {
+	// Set GOCLAW_HOME to a temp dir to avoid picking up the project's .goclaw/agents/.
+	t.Setenv("GOCLAW_HOME", t.TempDir())
 	h := NewAgentsHandler(nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
 	rr := httptest.NewRecorder()
@@ -44,13 +46,20 @@ func TestAgentsHandler_ListAgents_Empty(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	list := resp["agents"].([]any)
-	if len(list) != 0 {
-		t.Errorf("expected empty list, got %v", list)
+	agents, ok := resp["agents"].([]any)
+	if !ok {
+		t.Fatal("expected agents array in response")
+	}
+	if len(agents) != 0 {
+		t.Errorf("expected empty agents list, got %d agents", len(agents))
 	}
 }
 
 func TestAgentsHandler_ListAgents_WithAgents(t *testing.T) {
+	// Set GOCLAW_HOME to a temp dir to avoid picking up the project's .goclaw/agents/.
+	tmpDir := t.TempDir()
+	t.Setenv("GOCLAW_HOME", tmpDir)
+
 	cfg := &config.AppConfig{Agents: map[string]config.AgentConfig{
 		"agent1": {Enabled: true, Model: "gpt-4", Description: "Agent 1"},
 		"agent2": {Enabled: false, Model: "gpt-3.5", Description: "Agent 2"},
@@ -67,9 +76,12 @@ func TestAgentsHandler_ListAgents_WithAgents(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	list := resp["agents"].([]any)
-	if len(list) != 2 {
-		t.Errorf("expected 2 agents, got %d", len(list))
+	agents, ok := resp["agents"].([]any)
+	if !ok {
+		t.Fatal("expected agents array in response")
+	}
+	if len(agents) != 2 {
+		t.Errorf("expected 2 agents, got %d", len(agents))
 	}
 }
 
