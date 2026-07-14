@@ -10,6 +10,7 @@ package scene
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"goclaw/internal/logging"
 	"goclaw/internal/middleware"
@@ -126,6 +127,10 @@ func (m *SceneMiddleware) injectScenePrompt(state *middleware.State, sceneCfg Sc
 		role, _ := msg["role"].(string)
 		if role == "system" {
 			content, _ := msg["content"].(string)
+			// Guard against compounding: skip if scene block already present.
+			if strings.HasPrefix(content, sceneBlock) {
+				return
+			}
 			msg["content"] = sceneBlock + "\n\n" + content
 			state.Messages[i] = msg
 			return

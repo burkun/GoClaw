@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"goclaw/internal/logging"
 )
 
@@ -711,13 +713,13 @@ func (t *TaskTool) deferredCleanup(taskID string, maxPolls int) {
 // ---------------------------------------------------------------------------
 
 func generateTaskID() string {
-	// Generate a short unique ID (8 characters)
-	return fmt.Sprintf("%08d", time.Now().UnixNano()%100000000)
+	// Use UUID for collision-free task IDs.
+	return uuid.NewString()
 }
 
 func generateTraceID() string {
-	// Generate a short trace ID (8 characters)
-	return fmt.Sprintf("%08d", time.Now().UnixNano()%100000000)
+	// Use first 8 chars of UUID for compact trace correlation.
+	return uuid.NewString()[:8]
 }
 
 func timePtr(t time.Time) *time.Time {

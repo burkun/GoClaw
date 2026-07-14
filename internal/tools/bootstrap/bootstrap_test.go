@@ -45,7 +45,6 @@ func TestRegisterDefaultTools_RegistersCoreTools(t *testing.T) {
 		"present_files",
 		"ask_clarification",
 		"tool_search",
-		"task",
 		"setup_agent",
 	}
 
@@ -657,7 +656,6 @@ func TestRegisterDefaultTools_BuiltinTools(t *testing.T) {
 	builtinTools := []string{
 		"ask_clarification",
 		"tool_search",
-		"task",
 		"setup_agent",
 	}
 
@@ -712,21 +710,10 @@ func TestToolSearchTool_ThroughRegistry(t *testing.T) {
 }
 
 func TestTaskTool_ThroughRegistry(t *testing.T) {
-	// 重置默认注册表
-	tools.ResetDefaultRegistry()
-
-	cfg := &config.AppConfig{}
-	err := RegisterDefaultTools(cfg)
-	require.NoError(t, err)
-
-	// 获取task工具
-	taskTool, ok := tools.Get("task")
-	require.True(t, ok, "task tool should be registered")
-
-	// 验证工具基本信息
-	assert.Equal(t, "task", taskTool.Name())
-	assert.NotEmpty(t, taskTool.Description())
-	assert.NotNil(t, taskTool.InputSchema())
+	// The "task" tool is no longer registered via bootstrap.RegisterDefaultTools.
+	// It is registered directly in internal/agent/builder.go via subagents.NewTaskTool()
+	// to avoid duplicate tool names (CRITICAL audit fix).
+	t.Skip("task tool is now registered in builder.go, not via default registry")
 }
 
 func TestSetupAgentTool_ThroughRegistry(t *testing.T) {

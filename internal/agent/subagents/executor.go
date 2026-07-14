@@ -254,6 +254,13 @@ func (e *Executor) runTask(ctx context.Context, taskID string, req TaskRequest, 
 	}
 
 	e.finishTask(taskID, StatusCompleted, output, "")
+	
+	// Schedule deferred cleanup to prevent unbounded task map growth.
+	// Keep completed tasks available for a brief window for result retrieval.
+	go func() {
+		time.Sleep(5 * time.Minute)
+		e.Cleanup(taskID)
+	}()
 }
 
 func (e *Executor) runTaskWithMessages(ctx context.Context, taskID string, req TaskRequest, worker WorkerFuncWithMessages) {
@@ -295,6 +302,12 @@ func (e *Executor) runTaskWithMessages(ctx context.Context, taskID string, req T
 	}
 
 	e.finishTaskWithMessages(taskID, StatusCompleted, result.Output, "", result.AIMessages)
+	
+	// Schedule deferred cleanup to prevent unbounded task map growth.
+	go func() {
+		time.Sleep(5 * time.Minute)
+		e.Cleanup(taskID)
+	}()
 }
 
 // Get returns a snapshot of a task result.

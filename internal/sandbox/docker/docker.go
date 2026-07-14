@@ -156,6 +156,11 @@ func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.Ex
 	exitCode := 0
 	if err == nil {
 		exitCode = inspectResult.ExitCode
+	} else {
+		// Inspect failed — the exit code is unknown. Log and use a
+		// non-zero sentinel so callers don't treat this as success.
+		logging.Warn("docker exec inspect failed, exit code unknown", "error", err)
+		exitCode = -1
 	}
 
 	// Check for timeout

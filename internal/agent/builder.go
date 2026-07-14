@@ -113,7 +113,10 @@ func New(ctx context.Context) (*leadAgent, error) {
 		}
 	}
 
-	mws := buildMiddlewares(RunConfig{})
+	mws, err := buildMiddlewares(RunConfig{})
+	if err != nil {
+		return nil, fmt.Errorf("build middlewares: %w", err)
+	}
 
 	// Build system prompt with skills (P0 fix)
 	// Default agent has all skills available (nil = no filter)
@@ -292,7 +295,10 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 		logging.Info("agent: filtered tool groups", "agent", agentName, "count", len(agentToolGroups), "groups", agentToolGroups)
 	}
 
-	mws := buildMiddlewares(RunConfig{AgentName: agentName})
+	mws, err := buildMiddlewares(RunConfig{AgentName: agentName})
+	if err != nil {
+		return nil, fmt.Errorf("build middlewares: %w", err)
+	}
 
 	// Build availableSkills map from agent config
 	var availableSkills map[string]bool
@@ -338,9 +344,12 @@ func NewWithName(ctx context.Context, agentName string) (*leadAgent, error) {
 	return &leadAgent{einoAgent: a, tools: tools, middlewares: mws, runner: r, skills: skillRegistry}, nil
 }
 
-func buildMiddlewares(cfg RunConfig) []adk.ChatModelAgentMiddleware {
+func buildMiddlewares(cfg RunConfig) ([]adk.ChatModelAgentMiddleware, error) {
 	appCfg, _ := config.GetAppConfig()
-	sbProvider := buildSandboxProvider(appCfg)
+	sbProvider, err := buildSandboxProvider(appCfg)
+	if err != nil {
+		return nil, fmt.Errorf("build sandbox provider: %w", err)
+	}
 	sandbox.SetDefaultProvider(sbProvider)
 
 	// Create model creator function
@@ -368,14 +377,14 @@ func buildMiddlewares(cfg RunConfig) []adk.ChatModelAgentMiddleware {
 	middlewares := builder.BuildMiddlewaresFromBuilder(builderCfg)
 
 	if len(middlewares) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Convert basemw.Middleware to adk.AgentMiddleware using adapter
-	return basemw.AdaptMiddlewares(middlewares)
+	return basemw.AdaptMiddlewares(middlewares), nil
 }
 
-func buildSandboxProvider(appCfg *config.AppConfig) sandbox.SandboxProvider {
+func buildSandboxProvider(appCfg *config.AppConfig) (sandbox.SandboxProvider, error) {
 	sbCfg := sandbox.SandboxConfig{
 		Type:        sandbox.SandboxTypeLocal,
 		WorkDir:     ".goclaw",
@@ -421,14 +430,14 @@ func buildSandboxProvider(appCfg *config.AppConfig) sandbox.SandboxProvider {
 	if sbCfg.Type == sandbox.SandboxTypeDocker {
 		provider, err := dockersandbox.NewDockerSandboxProvider(sbCfg, sbCfg.WorkDir)
 		if err == nil {
-			return provider
+			return provider, nil
 		}
 		if appCfg != nil && appCfg.Sandbox.StrictDocker {
-			panic(fmt.Sprintf("sandbox.use=docker requested and strict_docker=true, but docker provider init failed: %v", err))
+			return nil, fmt.Errorf("sandbox.use=docker: strict_docker=true but docker provider init failed: %w", err)
 		}
 		logging.Warn("sandbox.use=docker requested but docker provider init failed, falling back to local sandbox", "error", err)
 	}
-	return localsandbox.NewLocalSandboxProvider(sbCfg, sbCfg.WorkDir, skillsPath)
+	return localsandbox.NewLocalSandboxProvider(sbCfg, sbCfg.WorkDir, skillsPath), nil
 }
 
 func filterToolsByAllowed(ctx context.Context, tools []lctool.BaseTool, allowed map[string]struct{}) ([]lctool.BaseTool, error) {

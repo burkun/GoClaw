@@ -20,12 +20,14 @@ GoClaw 是 DeerFlow 的 Go 语言实现版本,基于 CloudWeGo 的 Eino 框架�
 ### 核心特性
 
 - **多轮对话与工具调用** - 支持 OpenAI、Anthropic、Azure 等多种 LLM 后端
-- **沙箱隔离执行** - 通过 Local/Docker 沙箱安全执行命令和操作文件
-- **18层中间件流水线** - 实现记忆、标题生成、规划、守卫等能力
+- **沙箱隔离执行** - 通过 Local/Docker/Kubernetes 沙箱安全执行命令和操作文件
+- **18层中间件流水线** - 实现记忆、标题生成、规划、守卫、场景适配等能力
 - **子代理协作** - 支持将复杂任务委托给专门的子代理并行执行
-- **SSE 流式输出** - 兼容 LangGraph API 格式的事件流
-- **MCP 工具生态** - 支持 stdio/SSE/HTTP 三种传输方式
+- **SSE 流式输出** - 兼容 LangGraph API 格式的事件流，支持 AG-UI 协议
+- **MCP 工具生态** - 支持 stdio/SSE/HTTP 三种传输方式，自动工具发现
 - **IM 渠道集成** - 支持 Telegram、Slack、飞书等即时通讯平台
+- **CLI 交互模式** - 内置终端交互式对话界面
+- **Skills 插件系统** - 动态加载社区技能包，扩展 Agent 能力
 
 ### 为什么选择 Go
 

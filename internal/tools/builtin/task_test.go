@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -348,24 +349,24 @@ func TestTaskTool_GetAvailableSubagentNames(t *testing.T) {
 func TestGenerateTaskID(t *testing.T) {
 	id1 := generateTaskID()
 
-	if len(id1) != 8 {
-		t.Errorf("expected 8-character ID, got %d", len(id1))
+	// UUID format: 36 chars (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+	if len(id1) != 36 {
+		t.Errorf("expected 36-character UUID, got %d: %q", len(id1), id1)
 	}
 
-	// ID should be numeric only
-	for _, c := range id1 {
-		if c < '0' || c > '9' {
-			t.Errorf("expected numeric ID, got %q", id1)
-			break
-		}
+	// Verify UUID format (5 dash-separated groups)
+	parts := strings.Split(id1, "-")
+	if len(parts) != 5 {
+		t.Errorf("expected UUID format with 5 dash-separated groups, got %q", id1)
 	}
 }
 
 // TestGenerateTraceID tests trace ID generation
 func TestGenerateTraceID(t *testing.T) {
 	id := generateTraceID()
+	// Trace IDs are first 8 chars of a UUID
 	if len(id) != 8 {
-		t.Errorf("expected 8-character ID, got %d", len(id))
+		t.Errorf("expected 8-character trace ID, got %d: %q", len(id), id)
 	}
 }
 

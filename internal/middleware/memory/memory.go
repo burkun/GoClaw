@@ -113,6 +113,12 @@ func (q *UpdateQueue) Shutdown() {
 	if q == nil || q.cancel == nil {
 		return
 	}
+	q.mu.Lock()
+	if q.timer != nil {
+		q.timer.Stop()
+		q.timer = nil
+	}
+	q.mu.Unlock()
 	q.cancel()
 }
 
@@ -404,6 +410,11 @@ func (m *MemoryMiddleware) BeforeModel(ctx context.Context, state *middleware.St
 	for i, msg := range state.Messages {
 		if msg["role"] == "system" {
 			existing, _ := msg["content"].(string)
+			// Guard against compounding: if the system message already
+			// starts with the memory block, skip injection.
+			if strings.HasPrefix(existing, block) {
+				return nil
+			}
 			state.Messages[i]["content"] = block + "\n\n" + existing
 			return nil
 		}

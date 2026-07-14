@@ -387,16 +387,29 @@ func (s *LocalSandbox) Execute(ctx context.Context, command string) (sandbox.Exe
 
 // maskHostPaths replaces all occurrences of host paths with virtual paths in text.
 // This prevents leaking host filesystem details to agents.
+// Paths are replaced in descending length order to avoid partial overwrites
+// (e.g. if skillsPath is under baseDir, skillsPath must be replaced first).
 func (s *LocalSandbox) maskHostPaths(text string) string {
-	// Replace baseDir paths first (longer paths take priority)
+	type mapping struct{ host, virtual string }
+	var mappings []mapping
 	if s.baseDir != "" {
-		text = strings.ReplaceAll(text, s.baseDir, sandbox.VirtualPathPrefix)
-		text = strings.ReplaceAll(text, filepath.Clean(s.baseDir), sandbox.VirtualPathPrefix)
+		mappings = append(mappings,
+			mapping{s.baseDir, sandbox.VirtualPathPrefix},
+			mapping{filepath.Clean(s.baseDir), sandbox.VirtualPathPrefix},
+		)
 	}
-	// Replace skillsPath paths
 	if s.skillsPath != "" {
-		text = strings.ReplaceAll(text, s.skillsPath, sandbox.VirtualSkillsPathPrefix)
-		text = strings.ReplaceAll(text, filepath.Clean(s.skillsPath), sandbox.VirtualSkillsPathPrefix)
+		mappings = append(mappings,
+			mapping{s.skillsPath, sandbox.VirtualSkillsPathPrefix},
+			mapping{filepath.Clean(s.skillsPath), sandbox.VirtualSkillsPathPrefix},
+		)
+	}
+	// Sort by host path length descending (longest first).
+	sort.Slice(mappings, func(i, j int) bool {
+		return len(mappings[i].host) > len(mappings[j].host)
+	})
+	for _, m := range mappings {
+		text = strings.ReplaceAll(text, m.host, m.virtual)
 	}
 	return text
 }

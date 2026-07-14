@@ -397,7 +397,10 @@ func TestBuildSystemPrompt_Complete(t *testing.T) {
 
 func TestBuildSandboxProvider_LocalDefault(t *testing.T) {
 	appCfg := &config.AppConfig{}
-	provider := buildSandboxProvider(appCfg)
+	provider, err := buildSandboxProvider(appCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if provider == nil {
 		t.Fatal("expected non-nil provider")
@@ -411,7 +414,10 @@ func TestBuildSandboxProvider_WithLocalConfig(t *testing.T) {
 			Use: "local",
 		},
 	}
-	provider := buildSandboxProvider(appCfg)
+	provider, err := buildSandboxProvider(appCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if provider == nil {
 		t.Fatal("expected non-nil provider")
@@ -419,7 +425,10 @@ func TestBuildSandboxProvider_WithLocalConfig(t *testing.T) {
 }
 
 func TestBuildSandboxProvider_NilConfig(t *testing.T) {
-	provider := buildSandboxProvider(nil)
+	provider, err := buildSandboxProvider(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if provider == nil {
 		t.Fatal("expected non-nil provider even with nil config")
 	}
@@ -435,7 +444,10 @@ func TestBuildSandboxProvider_DockerFallback(t *testing.T) {
 	}
 
 	// Should not panic and should return local provider (docker likely not available in test)
-	provider := buildSandboxProvider(appCfg)
+	provider, err := buildSandboxProvider(appCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if provider == nil {
 		t.Fatal("expected non-nil provider")
 	}
@@ -457,7 +469,10 @@ func TestBuildSandboxProvider_DockerConfig(t *testing.T) {
 	}
 
 	// Should not panic and should return provider
-	provider := buildSandboxProvider(appCfg)
+	provider, err := buildSandboxProvider(appCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if provider == nil {
 		t.Fatal("expected non-nil provider")
 	}
@@ -474,7 +489,10 @@ func TestBuildMiddlewares_EmptyConfig(t *testing.T) {
 		return &config.AppConfig{}, nil
 	}
 
-	mws := buildMiddlewares(RunConfig{})
+	mws, err := buildMiddlewares(RunConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// May be nil or empty depending on implementation
 	_ = mws
 }
@@ -492,7 +510,10 @@ func TestBuildMiddlewares_WithConfig(t *testing.T) {
 	cfg := RunConfig{
 		AgentName: "test-agent",
 	}
-	mws := buildMiddlewares(cfg)
+	mws, err := buildMiddlewares(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = mws
 }
 
@@ -505,7 +526,10 @@ func TestBuildMiddlewares_GetConfigError(t *testing.T) {
 	}
 
 	// Should handle error gracefully without panic
-	mws := buildMiddlewares(RunConfig{})
+	mws, err := buildMiddlewares(RunConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = mws
 }
 
@@ -629,7 +653,10 @@ func TestSandboxConfig_Build(t *testing.T) {
 		Skills: config.SkillsConfig{Path: "/skills"},
 	}
 
-	provider := buildSandboxProvider(appCfg)
+	provider, err := buildSandboxProvider(appCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if provider == nil {
 		t.Fatal("expected non-nil provider")
 	}

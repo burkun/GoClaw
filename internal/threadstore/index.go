@@ -3,6 +3,7 @@ package threadstore
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,13 +26,15 @@ type ThreadIndex struct {
 }
 
 // IndexStats tracks index performance metrics.
+// All fields use atomic operations because reads/writes can happen concurrently
+// under RLock in Get() and Search().
 type IndexStats struct {
 	TotalThreads   int64
 	QueriesServed  int64
 	IndexHits      int64
 	IndexMisses    int64
 	SlowQueries    int64
-	LastUpdateTime int64
+	LastUpdateTime int64 // atomic — written under Lock, read under RLock
 }
 
 // NewThreadIndex creates a new thread index.
@@ -65,8 +68,8 @@ func (idx *ThreadIndex) Add(meta *ThreadMetadata) {
 	})
 
 	// Update stats
-	idx.stats.TotalThreads++
-	idx.stats.LastUpdateTime = time.Now().UnixMilli()
+	atomic.AddInt64(&idx.stats.TotalThreads, 1)
+	atomic.StoreInt64(&idx.stats.LastUpdateTime, time.Now().UnixMilli())
 }
 
 // Get retrieves a thread by ID.
@@ -77,11 +80,11 @@ func (idx *ThreadIndex) Get(threadID string) (*ThreadMetadata, bool) {
 
 	meta, exists := idx.byID[threadID]
 	if exists {
-		idx.stats.IndexHits++
+		atomic.AddInt64(&idx.stats.IndexHits, 1)
 	} else {
-		idx.stats.IndexMisses++
+		atomic.AddInt64(&idx.stats.IndexMisses, 1)
 	}
-	idx.stats.QueriesServed++
+	atomic.AddInt64(&idx.stats.QueriesServed, 1)
 
 	return meta, exists
 }
@@ -132,7 +135,7 @@ func (idx *ThreadIndex) Update(threadID string, meta *ThreadMetadata) bool {
 		return idx.sorted[i].CreatedAt > idx.sorted[j].CreatedAt
 	})
 
-	idx.stats.LastUpdateTime = time.Now().UnixMilli()
+	atomic.StoreInt64(&idx.stats.LastUpdateTime, time.Now().UnixMilli())
 	return true
 }
 
@@ -167,8 +170,8 @@ func (idx *ThreadIndex) Delete(threadID string) bool {
 		}
 	}
 
-	idx.stats.TotalThreads--
-	idx.stats.LastUpdateTime = time.Now().UnixMilli()
+	atomic.AddInt64(&idx.stats.TotalThreads, -1)
+	atomic.StoreInt64(&idx.stats.LastUpdateTime, time.Now().UnixMilli())
 	return true
 }
 
@@ -179,25 +182,25 @@ func (idx *ThreadIndex) Search(query SearchQuery) ([]*ThreadMetadata, int) {
 	defer idx.mu.RUnlock()
 
 	startTime := time.Now()
-	idx.stats.QueriesServed++
+	atomic.AddInt64(&idx.stats.QueriesServed, 1)
 
 	var results []*ThreadMetadata
 
 	// Use status index if filtering by status
 	if query.Status != "" {
 		if statusMap, ok := idx.byStatus[query.Status]; ok {
-			idx.stats.IndexHits++
+			atomic.AddInt64(&idx.stats.IndexHits, 1)
 			results = make([]*ThreadMetadata, 0, len(statusMap))
 			for _, meta := range statusMap {
 				results = append(results, meta)
 			}
 		} else {
-			idx.stats.IndexHits++
+			atomic.AddInt64(&idx.stats.IndexHits, 1)
 			results = make([]*ThreadMetadata, 0)
 		}
 	} else {
 		// No filter, use sorted slice
-		idx.stats.IndexMisses++
+		atomic.AddInt64(&idx.stats.IndexMisses, 1)
 		results = make([]*ThreadMetadata, len(idx.sorted))
 		copy(results, idx.sorted)
 	}
@@ -231,7 +234,7 @@ func (idx *ThreadIndex) Search(query SearchQuery) ([]*ThreadMetadata, int) {
 	// Track slow queries (>10ms)
 	elapsed := time.Since(startTime)
 	if elapsed > 10*time.Millisecond {
-		idx.stats.SlowQueries++
+		atomic.AddInt64(&idx.stats.SlowQueries, 1)
 	}
 
 	return results[offset:end], total
@@ -250,10 +253,14 @@ func (idx *ThreadIndex) List() []*ThreadMetadata {
 
 // GetStats returns current index statistics.
 func (idx *ThreadIndex) GetStats() IndexStats {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-
-	return idx.stats
+	return IndexStats{
+		TotalThreads:   atomic.LoadInt64(&idx.stats.TotalThreads),
+		QueriesServed:  atomic.LoadInt64(&idx.stats.QueriesServed),
+		IndexHits:      atomic.LoadInt64(&idx.stats.IndexHits),
+		IndexMisses:    atomic.LoadInt64(&idx.stats.IndexMisses),
+		SlowQueries:    atomic.LoadInt64(&idx.stats.SlowQueries),
+		LastUpdateTime: atomic.LoadInt64(&idx.stats.LastUpdateTime),
+	}
 }
 
 // Rebuild rebuilds the index from a list of threads.
@@ -289,7 +296,7 @@ func (idx *ThreadIndex) Rebuild(threads []*ThreadMetadata) {
 	})
 
 	idx.stats.TotalThreads = int64(len(threads))
-	idx.stats.LastUpdateTime = time.Now().UnixMilli()
+	atomic.StoreInt64(&idx.stats.LastUpdateTime, time.Now().UnixMilli())
 }
 
 // Count returns the total number of threads.

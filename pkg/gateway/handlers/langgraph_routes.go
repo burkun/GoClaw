@@ -676,9 +676,9 @@ func (h *LangGraphHandler) StreamRun(c *gin.Context) {
 	// Run the agent.
 	runCtx, cancel := context.WithCancel(c.Request.Context())
 
-	// Record metrics: increment active runs.
-	metrics.SetActiveRuns(float64(len(h.runs) + 1))
-	defer metrics.SetActiveRuns(float64(len(h.runs)))
+	// Record metrics: increment active runs (read under lock to avoid data race).
+	metrics.SetActiveRuns(float64(h.activeRunCount() + 1))
+	defer metrics.SetActiveRuns(float64(h.activeRunCount()))
 
 	// Track agent run duration for metrics.
 	runStartTime := time.Now()
@@ -858,6 +858,13 @@ func (h *LangGraphHandler) CancelRun(c *gin.Context) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// activeRunCount returns the current number of active runs under lock.
+func (h *LangGraphHandler) activeRunCount() int {
+	h.runsMu.Lock()
+	defer h.runsMu.Unlock()
+	return len(h.runs)
+}
 
 func (h *LangGraphHandler) registerRun(runID string, run lgRunHandle) {
 	h.runsMu.Lock()

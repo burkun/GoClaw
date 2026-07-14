@@ -112,7 +112,10 @@ func TestLeadAgent_basicRun(t *testing.T) {
 
 // TestLeadAgent_planMode verifies middleware chain is created in plan mode.
 func TestLeadAgent_planMode(t *testing.T) {
-	mws := buildMiddlewares(RunConfig{IsPlanMode: true})
+	mws, err := buildMiddlewares(RunConfig{IsPlanMode: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(mws) == 0 {
 		t.Fatalf("expected non-empty middleware chain in plan mode")
 	}
@@ -121,7 +124,10 @@ func TestLeadAgent_planMode(t *testing.T) {
 // TestBuildMiddlewares_empty verifies that buildMiddlewares does not panic with
 // a zero-value RunConfig and returns a non-nil slice.
 func TestBuildMiddlewares_empty(t *testing.T) {
-	mws := buildMiddlewares(RunConfig{})
+	mws, err := buildMiddlewares(RunConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = mws // middleware chain may be nil for empty config
 }
 

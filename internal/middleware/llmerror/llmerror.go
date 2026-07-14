@@ -347,7 +347,7 @@ func (w *retryModelWrapper) Generate(ctx context.Context, input []*schema.Messag
 			return result, nil
 		}
 
-		retriable, reason := classifyError(err)
+		retriable, _ := classifyError(err)
 		if retriable && attempt < w.maxAttempts {
 			delay := w.buildRetryDelay(attempt, err)
 			logging.Warn("[LLM] Transient error, retrying",
@@ -364,8 +364,8 @@ func (w *retryModelWrapper) Generate(ctx context.Context, input []*schema.Messag
 			"attempts", attempt,
 			"error", extractErrorDetail(err))
 
-		// Return a friendly error message
-		return schema.AssistantMessage(buildUserMessage(err, reason), nil), nil
+		// Return the actual error so callers can distinguish failure from success.
+		return nil, fmt.Errorf("LLM call failed after %d attempts: %w", attempt, err)
 	}
 }
 
@@ -378,7 +378,7 @@ func (w *retryModelWrapper) Stream(ctx context.Context, input []*schema.Message,
 			return stream, nil
 		}
 
-		retriable, reason := classifyError(err)
+		retriable, _ := classifyError(err)
 		if retriable && attempt < w.maxAttempts {
 			delay := w.buildRetryDelay(attempt, err)
 			logging.Warn("[LLM] Transient error, retrying",
@@ -395,14 +395,8 @@ func (w *retryModelWrapper) Stream(ctx context.Context, input []*schema.Message,
 			"attempts", attempt,
 			"error", extractErrorDetail(err))
 
-		// Return a stream with friendly error message
-		msg := schema.AssistantMessage(buildUserMessage(err, reason), nil)
-		reader, writer := schema.Pipe[*schema.Message](1)
-		go func() {
-			defer writer.Close()
-			writer.Send(msg, nil)
-		}()
-		return reader, nil
+		// Return the actual error so callers can distinguish failure from success.
+		return nil, fmt.Errorf("LLM stream failed after %d attempts: %w", attempt, err)
 	}
 }
 

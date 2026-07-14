@@ -92,6 +92,10 @@ func injectUploadedFilesToMessage(messages []map[string]any, files []string) {
 	// Prepend to the message content.
 	msg := messages[lastHumanIdx]
 	content, _ := msg["content"].(string)
+	// Guard against compounding: skip if uploaded files block already present.
+	if strings.HasPrefix(content, filesMsg) {
+		return
+	}
 	msg["content"] = filesMsg + content
 }
 

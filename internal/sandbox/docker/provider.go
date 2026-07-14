@@ -382,21 +382,21 @@ func (p *DockerSandboxProvider) evictOldestWarm() string {
 			oldestTime = t
 		}
 	}
+	delete(p.warmPool, oldestID)
 	p.mu.Unlock()
 
-	// Destroy the container BEFORE removing from map to avoid orphaning
-	// if destroy fails (container stays in pool for retry).
+	// Destroy the container. If destroy fails, re-add to warmPool so the
+	// entry can be retried on the next eviction cycle.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := p.destroySandbox(ctx, oldestID); err != nil {
 		logging.Warn("[DockerSandbox] failed to destroy warm container during eviction", "container", oldestID, "error", err)
+		p.mu.Lock()
+		p.warmPool[oldestID] = oldestTime
+		p.mu.Unlock()
 		return ""
 	}
-	// Only remove from map after successful destruction.
-	p.mu.Lock()
-	delete(p.warmPool, oldestID)
-	p.mu.Unlock()
 
 	return oldestID
 }

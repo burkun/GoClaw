@@ -60,7 +60,9 @@ func RegisterDefaultToolsWithModel(cfg *config.AppConfig, modelCfg *config.Model
 		&mediaPresentFileRuntimeTool{},
 		builtin.NewClarificationTool(),
 		builtin.NewToolSearchTool(builtin.DefaultDeferredToolRegistry()),
-		builtin.NewTaskToolWithDefaults(), // Subagent delegation tool
+		// NOTE: The real "task" tool is registered in internal/agent/builder.go via
+		// subagents.NewTaskTool(). The stub builtin.NewTaskToolWithDefaults() is
+		// intentionally NOT registered here to avoid duplicate tool names.
 		builtin.NewSetupAgentTool(""),     // Agent Creator tool (P2 fix)
 	}
 

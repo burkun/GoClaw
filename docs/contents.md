@@ -4,6 +4,7 @@
 
 - [第 1 章　GoClaw 是什么](/chapters/01-what-is-goclaw)
 - [第 2 章　项目结构与技术栈](/chapters/02-project-structure)
+- [第 2A 章　模块架构详解](/chapters/02a-module-architecture)
 - [第 3 章　快速上手](/chapters/03-quick-start)
 
 ## 第二部分：核心引擎
