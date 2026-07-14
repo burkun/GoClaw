@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"goclaw/internal/logging"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -238,7 +240,9 @@ func (s *FileChannelStore) Remove(channelName, chatID string, topicID *string) b
 	}
 
 	if removed {
-		_ = s.save()
+		if err := s.save(); err != nil {
+			logging.Warn("channel store save failed in Remove", "error", err)
+		}
 	}
 
 	return removed

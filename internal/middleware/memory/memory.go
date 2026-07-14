@@ -42,9 +42,9 @@ import (
 const DefaultMemoryPath = "memory.json"
 
 var (
-	globalQueue     *UpdateQueue
-	globalQueueOnce sync.Once
-	factIDSeq       uint64
+	globalQueues   = make(map[string]*UpdateQueue)
+	globalQueuesMu sync.Mutex
+	factIDSeq      uint64
 )
 
 func newFactID() string {
@@ -83,22 +83,29 @@ type UpdateQueue struct {
 	DebounceDelay time.Duration
 }
 
-// GetGlobalQueue returns the process-wide UpdateQueue singleton.
-// The queue is bound to the provided memoryPath on first initialization.
+// GetGlobalQueue returns a process-wide UpdateQueue for the given memory path.
+// Each distinct memoryPath gets its own queue; subsequent calls with the same path
+// return the previously-created queue.
 func GetGlobalQueue(memoryPath string) *UpdateQueue {
-	globalQueueOnce.Do(func() {
-		store := NewJSONFileStore(memoryPath)
-		ctx, cancel := context.WithCancel(context.Background())
-		globalQueue = &UpdateQueue{
-			entries:       make(map[string]*updateEntry),
-			store:         store,
-			DebounceDelay: 30 * time.Second,
-			maxFacts:      100,
-			ctx:           ctx,
-			cancel:        cancel,
-		}
-	})
-	return globalQueue
+	globalQueuesMu.Lock()
+	defer globalQueuesMu.Unlock()
+
+	if q, ok := globalQueues[memoryPath]; ok {
+		return q
+	}
+
+	store := NewJSONFileStore(memoryPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	q := &UpdateQueue{
+		entries:       make(map[string]*updateEntry),
+		store:         store,
+		DebounceDelay: 30 * time.Second,
+		maxFacts:      100,
+		ctx:           ctx,
+		cancel:        cancel,
+	}
+	globalQueues[memoryPath] = q
+	return q
 }
 
 // Shutdown stops the update queue and cancels all pending operations.

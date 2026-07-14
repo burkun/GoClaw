@@ -15,6 +15,7 @@ import (
 
 	"goclaw/internal/agent"
 	"goclaw/internal/config"
+	"goclaw/internal/logging"
 	"goclaw/internal/threadstore"
 	"goclaw/pkg/metrics"
 )
@@ -929,16 +930,20 @@ func (h *LangGraphHandler) saveThreadMessages(threadID string, _ []*schema.Messa
 	}
 
 	// Save the state
-	_ = h.store.SaveState(threadState)
+	if err := h.store.SaveState(threadState); err != nil {
+		logging.Warn("saveThreadMessages: failed to save thread state", "thread_id", threadID, "error", err)
+	}
 
 	// Also update the metadata with the title for Search to return it
 	if title != "" {
-		_ = h.store.Update(threadID, &threadstore.ThreadMetadata{
-			ThreadID:  threadID,
-			Title:     title,
-			Status:    "idle",
-			CreatedAt: createdAt,
-		})
+		if err := h.store.Update(threadID, &threadstore.ThreadMetadata{
+		ThreadID:  threadID,
+		Title:     title,
+		Status:    "idle",
+		CreatedAt: createdAt,
+	}); err != nil {
+		logging.Warn("saveThreadMessages: failed to update thread metadata", "thread_id", threadID, "error", err)
+	}
 	}
 }
 

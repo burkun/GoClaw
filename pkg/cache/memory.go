@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,7 +19,7 @@ type MemoryCache struct {
 type memoryStats struct {
 	hitCount      int64
 	missCount     int64
-	evictionCount int64
+	evictionCount atomic.Int64
 	slowOps       []SlowOp
 	slowThreshold time.Duration
 	mu            sync.RWMutex
@@ -136,7 +137,6 @@ func (mc *MemoryCache) Clear(ctx context.Context) error {
 	mc.mu.Lock()
 	mc.stats.hitCount = 0
 	mc.stats.missCount = 0
-	mc.stats.evictionCount = 0
 	mc.stats.slowOps = make([]SlowOp, 0, 10)
 	mc.mu.Unlock()
 	return nil
@@ -176,7 +176,7 @@ func (mc *MemoryCache) Stats(ctx context.Context) (*Stats, error) {
 		HitCount:      mc.stats.hitCount,
 		MissCount:     mc.stats.missCount,
 		HitRate:       hitRate,
-		EvictionCount: mc.stats.evictionCount,
+		EvictionCount: mc.stats.evictionCount.Load(),
 		AvgLatency:    avgLatency,
 		SlowOps:       slowOps,
 	}, nil
@@ -206,7 +206,7 @@ func (mc *MemoryCache) evict(count int) {
 				mc.onEvict(key, item.Value)
 			}
 			mc.items.Delete(key)
-			mc.stats.evictionCount++
+			mc.stats.evictionCount.Add(1)
 		}
 	}
 
@@ -248,7 +248,7 @@ func (mc *MemoryCache) evict(count int) {
 					mc.onEvict(items[i].key, item.Value)
 				}
 				mc.items.Delete(items[i].key)
-				mc.stats.evictionCount++
+				mc.stats.evictionCount.Add(1)
 			}
 		}
 	}
@@ -276,7 +276,7 @@ func (mc *MemoryCache) cleanupExpired() {
 					mc.onEvict(key, item.Value)
 				}
 				mc.items.Delete(key)
-				mc.stats.evictionCount++
+				mc.stats.evictionCount.Add(1)
 			}
 		}
 	}

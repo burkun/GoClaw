@@ -31,11 +31,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/pkg/stdcopy"
 
+	"goclaw/internal/logging"
 	"goclaw/internal/sandbox"
 	"goclaw/pkg/errors"
 )
@@ -128,7 +128,7 @@ func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.Ex
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	execCfg := types.ExecConfig{
+	execCfg := container.ExecOptions{
 		Cmd:          []string{"bash", "-c", command},
 		AttachStdout: true,
 		AttachStderr: true,
@@ -139,7 +139,7 @@ func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.Ex
 		return sandbox.ExecuteResult{Error: errors.WrapInternalError(err, "exec create")}, nil
 	}
 
-	resp, err := s.client.ContainerExecAttach(execCtx, execID.ID, types.ExecStartCheck{})
+	resp, err := s.client.ContainerExecAttach(execCtx, execID.ID, container.ExecAttachOptions{})
 	if err != nil {
 		return sandbox.ExecuteResult{Error: errors.WrapInternalError(err, "exec attach")}, nil
 	}
@@ -148,8 +148,8 @@ func (s *DockerSandbox) Execute(ctx context.Context, command string) (sandbox.Ex
 	var stdoutBuf, stderrBuf bytes.Buffer
 	// Use stdcopy to demultiplex Docker's multiplexed stream into stdout/stderr.
 	if _, err := stdcopy.StdCopy(&stdoutBuf, &stderrBuf, resp.Reader); err != nil && err != io.EOF {
-		// Non-fatal: return what we have.
-		_ = err
+		// Non-fatal: return what we have, but log for diagnostics.
+		logging.Warn("docker exec stream read error", "error", err)
 	}
 
 	inspectResult, err := s.client.ContainerExecInspect(execCtx, execID.ID)

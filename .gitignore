@@ -53,3 +53,4 @@ web/out/
 web/.env.local
 web/pnpm-lock.yaml
 
+temp/

@@ -70,7 +70,7 @@ type MockContainer struct {
 type MockExecSession struct {
 	ID          string
 	ContainerID string
-	Config      types.ExecConfig
+	Config      container.ExecOptions
 	ExitCode    int
 	Stdout      string
 	Stderr      string
@@ -87,7 +87,7 @@ type ContainerCreateCall struct {
 // ContainerExecCreateCall records a ContainerExecCreate call
 type ContainerExecCreateCall struct {
 	Container string
-	Config    types.ExecConfig
+	Config    container.ExecOptions
 }
 
 // NewMockDockerClient creates a new mock Docker client
@@ -242,7 +242,7 @@ func (m *MockDockerClient) ContainerInspect(ctx context.Context, containerID str
 }
 
 // ContainerExecCreate creates a mock exec session
-func (m *MockDockerClient) ContainerExecCreate(ctx context.Context, container string, config types.ExecConfig) (types.IDResponse, error) {
+func (m *MockDockerClient) ContainerExecCreate(ctx context.Context, container string, config container.ExecOptions) (types.IDResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -274,7 +274,7 @@ func (m *MockDockerClient) ContainerExecCreate(ctx context.Context, container st
 }
 
 // ContainerExecAttach attaches to a mock exec session
-func (m *MockDockerClient) ContainerExecAttach(ctx context.Context, execID string, config types.ExecStartCheck) (types.HijackedResponse, error) {
+func (m *MockDockerClient) ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -304,23 +304,23 @@ func (m *MockDockerClient) ContainerExecAttach(ctx context.Context, execID strin
 }
 
 // ContainerExecInspect returns exec session info
-func (m *MockDockerClient) ContainerExecInspect(ctx context.Context, execID string) (types.ContainerExecInspect, error) {
+func (m *MockDockerClient) ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if m.ErrContainerExecInspect != nil {
-		return types.ContainerExecInspect{}, m.ErrContainerExecInspect
+		return container.ExecInspect{}, m.ErrContainerExecInspect
 	}
 
 	session, exists := m.ExecSessions[execID]
 	if !exists {
-		return types.ContainerExecInspect{}, errors.New("exec session not found: " + execID)
+		return container.ExecInspect{}, errors.New("exec session not found: " + execID)
 	}
 
 	session.Running = false
 	m.ContainerExecInspectCalls = append(m.ContainerExecInspectCalls, execID)
 
-	return types.ContainerExecInspect{
+	return container.ExecInspect{
 		ExecID:      execID,
 		ContainerID: session.ContainerID,
 		Running:     false,

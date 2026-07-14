@@ -159,7 +159,11 @@ func (m *LLMErrorHandlingMiddleware) buildRetryDelay(attempt int, err error) tim
 	}
 
 	// Exponential backoff: base * 2^(attempt-1)
-	backoff := m.BaseDelayMS * (1 << uint(attempt-1))
+	shift := uint(attempt - 1)
+	if shift > 30 {
+		shift = 30
+	}
+	backoff := m.BaseDelayMS * (1 << shift)
 	if backoff > m.CapDelayMS {
 		backoff = m.CapDelayMS
 	}
@@ -419,7 +423,11 @@ func (w *retryModelWrapper) buildRetryDelay(attempt int, err error) time.Duratio
 	}
 
 	// Exponential backoff: base * 2^(attempt-1)
-	backoff := w.baseDelayMS * (1 << uint(attempt-1))
+	shift := uint(attempt - 1)
+	if shift > 30 {
+		shift = 30
+	}
+	backoff := w.baseDelayMS * (1 << shift)
 	if backoff > w.capDelayMS {
 		backoff = w.capDelayMS
 	}

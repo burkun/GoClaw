@@ -4,11 +4,12 @@
 package sandbox
 
 import (
+	"errors"
 	"os"
 	"syscall"
 	"unsafe"
 
-	"goclaw/pkg/errors"
+	goclawerrors "goclaw/pkg/errors"
 )
 
 var (
@@ -39,9 +40,23 @@ func tryAcquireFileLockPlatform(file *os.File) error {
 	)
 
 	if ret == 0 {
-		return errors.WrapInternalError(err, "LockFileEx failed")
+		return goclawerrors.WrapInternalError(err, "LockFileEx failed")
 	}
 	return nil
+}
+
+// isLockContentionErrorPlatform returns true when the lock is held by another process.
+// On Windows, LockFileEx with LOCKFILE_FAIL_IMMEDIATELY returns ERROR_LOCK_VIOLATION.
+func isLockContentionErrorPlatform(err error) bool {
+	var gerr *goclawerrors.Error
+	if errors.As(err, &gerr) {
+		cause := gerr.Unwrap()
+		if errno, ok := cause.(syscall.Errno); ok {
+			const ERROR_LOCK_VIOLATION syscall.Errno = 33
+			return errno == ERROR_LOCK_VIOLATION
+		}
+	}
+	return false
 }
 
 // releaseFileLockPlatform releases the lock on Windows.
@@ -56,7 +71,7 @@ func releaseFileLockPlatform(file *os.File) error {
 	)
 
 	if ret == 0 {
-		return errors.WrapInternalError(err, "UnlockFile failed")
+		return goclawerrors.WrapInternalError(err, "UnlockFile failed")
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package channels
 import (
 	"context"
 	"math/rand"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,18 @@ type RetryConfig struct {
 	MaxDelay time.Duration
 	// Multiplier is the factor by which delay increases after each retry.
 	Multiplier float64
+}
+
+var (
+	rngOnce sync.Once
+	rng     *rand.Rand
+)
+
+func getRNG() *rand.Rand {
+	rngOnce.Do(func() {
+		rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+	})
+	return rng
 }
 
 // DefaultRetryConfig returns the default retry configuration aligned with DeerFlow.
@@ -60,7 +73,7 @@ func Retry(ctx context.Context, cfg RetryConfig, op func() error) error {
 		}
 
 		// Add jitter to avoid thundering herd (±10%)
-		jitter := time.Duration(float64(delay) * (0.9 + 0.2*rand.Float64()))
+		jitter := time.Duration(float64(delay) * (0.9 + 0.2*getRNG().Float64()))
 		sleepTime := min(jitter, cfg.MaxDelay)
 
 		select {
@@ -110,7 +123,7 @@ func RetryWithResult[T any](ctx context.Context, cfg RetryConfig, op func() (T, 
 		}
 
 		// Add jitter to avoid thundering herd (±10%)
-		jitter := time.Duration(float64(delay) * (0.9 + 0.2*rand.Float64()))
+		jitter := time.Duration(float64(delay) * (0.9 + 0.2*getRNG().Float64()))
 		sleepTime := min(jitter, cfg.MaxDelay)
 
 		select {

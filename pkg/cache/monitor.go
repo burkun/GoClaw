@@ -12,6 +12,7 @@ import (
 
 // CacheMonitor 缓存监控器
 type CacheMonitor struct {
+	stopOnce     sync.Once
 	cache        Cache
 	metricsFile  string
 	interval     time.Duration
@@ -195,7 +196,9 @@ func (cm *CacheMonitor) GetAggregatedStats() *AggregatedStats {
 
 // Stop 停止监控
 func (cm *CacheMonitor) Stop() {
-	close(cm.stopChan)
+	cm.stopOnce.Do(func() {
+		close(cm.stopChan)
+	})
 }
 
 // AggregatedStats 聚合统计
@@ -229,6 +232,7 @@ type Alert struct {
 
 // CacheAlerter 缓存告警器
 type CacheAlerter struct {
+	stopOnce    sync.Once
 	cache      Cache
 	conditions []AlertCondition
 	alertChan  chan Alert
@@ -300,7 +304,9 @@ func (ca *CacheAlerter) Alerts() <-chan Alert {
 
 // Stop 停止告警器
 func (ca *CacheAlerter) Stop() {
-	close(ca.stopChan)
+	ca.stopOnce.Do(func() {
+		close(ca.stopChan)
+	})
 }
 
 // DefaultAlertConditions 默认告警条件

@@ -308,7 +308,7 @@ func (s *fileCheckPointStore) persistLocked() error {
 		return fmt.Errorf("checkpoint store marshal failed: %w", err)
 	}
 
-	tmp := s.path + ".tmp"
+	tmp := filepath.Join(filepath.Dir(s.path), filepath.Base(s.path)+".tmp")
 	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return fmt.Errorf("checkpoint store write tmp failed: %w", err)
 	}

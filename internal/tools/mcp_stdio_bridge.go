@@ -204,7 +204,13 @@ func (p *pooledStdioClient) invoke(ctx context.Context, in mcpToolInput) (string
 
 func (p *pooledStdioClient) ensureStarted() error {
 	if p.cmd != nil && p.cmd.Process != nil {
-		if p.cmd.ProcessState == nil {
+		// ProcessState is nil until Wait() is called, so we can't rely on it
+		// alone to detect a dead process.  If the process IS dead (crashed or
+		// killed externally) the next I/O on stdin/stdout will surface the
+		// error and trigger a restart via stopLocked().  We only restart here
+		// when ProcessState has been populated by a prior Wait() and shows
+		// the process has exited.
+		if p.cmd.ProcessState == nil || !p.cmd.ProcessState.Exited() {
 			return nil
 		}
 	}
@@ -234,10 +240,12 @@ func (p *pooledStdioClient) ensureStarted() error {
 	p.cmd = cmd
 	p.stdin = stdin
 	p.stdout = stdout
-	// Default to newline-delimited JSON format for better compatibility.
-	// Many MCP servers (including @modelcontextprotocol/server-filesystem)
-	// use newline-delimited JSON instead of Content-Length framing.
-	p.client = &mcpFramedClient{reader: reader, writer: stdin, lineFramed: true}
+	// Detect the server's framing format by peeking at the first byte.
+	lineFramed, err := detectFrameFormat(reader)
+	if err != nil {
+		return fmt.Errorf("detect frame format for %q: %w", p.serverName, err)
+	}
+	p.client = &mcpFramedClient{reader: reader, writer: stdin, lineFramed: lineFramed}
 	p.initialized = false
 	return nil
 }
@@ -490,7 +498,12 @@ func terminateMCPProcess(cmd *exec.Cmd, stdin io.Closer) {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
-		<-done
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			// Process didn't respond to SIGKILL; abandon the goroutine
+			// rather than blocking forever.
+		}
 	}
 }
 

@@ -153,9 +153,15 @@ func prepareRunMessages(messages []*schema.Message, cfg RunConfig) []*schema.Mes
 func drainIter(ctx context.Context, iter *einoruntime.EventStream, threadID, runID string, ch chan<- Event) {
 	defer func() {
 		if r := recover(); r != nil {
-			ch <- Event{Type: EventError, ThreadID: threadID, RunID: runID,
+			// Use non-blocking send to avoid double-panic if the channel is
+			// already closed or the reader has stopped consuming.
+			ev := Event{Type: EventError, ThreadID: threadID, RunID: runID,
 				Payload: ErrorPayload{Code: ErrorCodeRunFailed, Message: fmt.Sprintf("panic in event drain: %v", r)},
 				Timestamp: timeUnixMilli()}
+			select {
+			case ch <- ev:
+			default:
+			}
 		}
 	}()
 	if iter == nil {

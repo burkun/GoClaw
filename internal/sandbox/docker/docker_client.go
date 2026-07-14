@@ -32,13 +32,13 @@ type DockerClient interface {
 	ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error)
 
 	// ContainerExecCreate creates a new exec configuration to run an exec process
-	ContainerExecCreate(ctx context.Context, container string, config types.ExecConfig) (types.IDResponse, error)
+	ContainerExecCreate(ctx context.Context, container string, config container.ExecOptions) (types.IDResponse, error)
 
 	// ContainerExecAttach attaches to an exec command already running in a container
-	ContainerExecAttach(ctx context.Context, execID string, config types.ExecStartCheck) (types.HijackedResponse, error)
+	ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
 
 	// ContainerExecInspect returns information about a specific exec process
-	ContainerExecInspect(ctx context.Context, execID string) (types.ContainerExecInspect, error)
+	ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error)
 
 	// Close closes the Docker client connection
 	Close() error
@@ -55,9 +55,9 @@ type dockerClientWrapper struct {
 		ContainerStop(ctx context.Context, containerID string, options container.StopOptions) error
 		ContainerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
 		ContainerInspect(ctx context.Context, containerID string) (types.ContainerJSON, error)
-		ContainerExecCreate(ctx context.Context, container string, config types.ExecConfig) (types.IDResponse, error)
-		ContainerExecAttach(ctx context.Context, execID string, config types.ExecStartCheck) (types.HijackedResponse, error)
-		ContainerExecInspect(ctx context.Context, execID string) (types.ContainerExecInspect, error)
+		ContainerExecCreate(ctx context.Context, container string, config container.ExecOptions) (types.IDResponse, error)
+		ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error)
+		ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error)
 		Close() error
 	}
 	isErrNotFound func(err error) bool
@@ -83,15 +83,15 @@ func (w *dockerClientWrapper) ContainerInspect(ctx context.Context, containerID 
 	return w.client.ContainerInspect(ctx, containerID)
 }
 
-func (w *dockerClientWrapper) ContainerExecCreate(ctx context.Context, container string, config types.ExecConfig) (types.IDResponse, error) {
+func (w *dockerClientWrapper) ContainerExecCreate(ctx context.Context, container string, config container.ExecOptions) (types.IDResponse, error) {
 	return w.client.ContainerExecCreate(ctx, container, config)
 }
 
-func (w *dockerClientWrapper) ContainerExecAttach(ctx context.Context, execID string, config types.ExecStartCheck) (types.HijackedResponse, error) {
+func (w *dockerClientWrapper) ContainerExecAttach(ctx context.Context, execID string, config container.ExecAttachOptions) (types.HijackedResponse, error) {
 	return w.client.ContainerExecAttach(ctx, execID, config)
 }
 
-func (w *dockerClientWrapper) ContainerExecInspect(ctx context.Context, execID string) (types.ContainerExecInspect, error) {
+func (w *dockerClientWrapper) ContainerExecInspect(ctx context.Context, execID string) (container.ExecInspect, error) {
 	return w.client.ContainerExecInspect(ctx, execID)
 }
 

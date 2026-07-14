@@ -123,26 +123,36 @@ func (cpl *CrossProcessFileLock) Acquire(ctx context.Context, filePath string) (
 		return nil, errors.WrapInternalError(err, "open lock file")
 	}
 
-	// Try to acquire lock with context support
-	acquired := make(chan error, 1)
-	go func() {
-		acquired <- cpl.tryAcquireFileLock(file)
-	}()
+	// Poll for the lock with context support.
+	// tryAcquireFileLock uses non-blocking mode (LOCK_NB on Unix,
+	// LOCKFILE_FAIL_IMMEDIATELY on Windows), so we retry on EWOULDBLOCK.
+	pollInterval := 100 * time.Millisecond
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
 
-	select {
-	case err := <-acquired:
-		if err != nil {
+	for {
+		err := cpl.tryAcquireFileLock(file)
+		if err == nil {
+			// Lock acquired successfully
+			return func() {
+				_ = cpl.releaseFileLock(file) // best-effort cleanup
+				file.Close()
+			}, nil
+		}
+
+		// If the error isn't a transient "already locked" condition, fail fast.
+		if !isLockContentionError(err) {
 			file.Close()
 			return nil, errors.WrapInternalError(err, "acquire lock")
 		}
-		// Lock acquired successfully
-		return func() {
-			_ = cpl.releaseFileLock(file) // 清理操作，忽略错误
+
+		select {
+		case <-ctx.Done():
 			file.Close()
-		}, nil
-	case <-ctx.Done():
-		file.Close()
-		return nil, ctx.Err()
+			return nil, ctx.Err()
+		case <-ticker.C:
+			// retry
+		}
 	}
 }
 
@@ -158,6 +168,12 @@ func (cpl *CrossProcessFileLock) AcquireWithTimeout(filePath string, timeout tim
 // Platform-specific implementation is in filelock_unix.go and filelock_windows.go.
 func (cpl *CrossProcessFileLock) tryAcquireFileLock(file *os.File) error {
 	return tryAcquireFileLockPlatform(file)
+}
+
+// isLockContentionError returns true if the error indicates the lock is held by another process
+// and the caller should retry. Platform-specific implementation is in platform files.
+func isLockContentionError(err error) bool {
+	return isLockContentionErrorPlatform(err)
 }
 
 // releaseFileLock releases the lock on the file.

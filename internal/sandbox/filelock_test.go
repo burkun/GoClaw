@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,7 +56,11 @@ func TestCrossProcessFileLock_Timeout(t *testing.T) {
 	_, err = cpl.AcquireWithTimeout(testFile, 100*time.Millisecond)
 	assert.Error(t, err, "should timeout when lock is held by another")
 	// The error can be either context deadline or flock "resource temporarily unavailable"
-	assert.Contains(t, err.Error(), "resource temporarily unavailable")
+	assert.True(t,
+		strings.Contains(err.Error(), "resource temporarily unavailable") ||
+			strings.Contains(err.Error(), "context deadline exceeded") ||
+			strings.Contains(err.Error(), "deadline"),
+		"expected contention or deadline error, got: %v", err)
 }
 
 func TestCrossProcessFileLock_Sequential(t *testing.T) {

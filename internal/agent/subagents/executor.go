@@ -334,6 +334,7 @@ func (e *Executor) Wait(ctx context.Context, taskID string) (TaskResult, error) 
 
 	select {
 	case <-rec.done:
+		// Get returns (TaskResult, bool); the task was already verified to exist above.
 		res, _ := e.Get(taskID)
 		return res, nil
 	case <-ctx.Done():

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,7 +24,7 @@ type FileCache struct {
 type fileStats struct {
 	hitCount      int64
 	missCount     int64
-	evictionCount int64
+	evictionCount atomic.Int64
 	slowOps       []SlowOp
 	slowThreshold time.Duration
 	mu            sync.RWMutex
@@ -192,7 +193,6 @@ func (fc *FileCache) Clear(ctx context.Context) error {
 	fc.stats.mu.Lock()
 	fc.stats.hitCount = 0
 	fc.stats.missCount = 0
-	fc.stats.evictionCount = 0
 	fc.stats.slowOps = make([]SlowOp, 0, 10)
 	fc.stats.mu.Unlock()
 
@@ -243,7 +243,7 @@ func (fc *FileCache) Stats(ctx context.Context) (*Stats, error) {
 		MissCount:     fc.stats.missCount,
 		HitRate:       hitRate,
 		TotalSize:     totalSize,
-		EvictionCount: fc.stats.evictionCount,
+		EvictionCount: fc.stats.evictionCount.Load(),
 		AvgLatency:    avgLatency,
 		SlowOps:       slowOps,
 	}, nil
@@ -322,7 +322,7 @@ func (fc *FileCache) checkAndEvict() error {
 				}
 				_ = os.Remove(filename)
 				currentSize -= file.size
-				fc.stats.evictionCount++
+				fc.stats.evictionCount.Add(1)
 			}
 		}
 
@@ -356,7 +356,7 @@ func (fc *FileCache) checkAndEvict() error {
 				}
 				_ = os.Remove(filename)
 				currentSize -= file.size
-				fc.stats.evictionCount++
+				fc.stats.evictionCount.Add(1)
 
 				if currentSize <= fc.maxSize*9/10 { // 驱逐到90%容量
 					break
@@ -398,7 +398,7 @@ func (fc *FileCache) cleanupExpired() {
 						fc.onEvict(strings.TrimSuffix(entry.Name(), ".cache"), item.Value)
 					}
 					_ = os.Remove(filename)
-					fc.stats.evictionCount++
+					fc.stats.evictionCount.Add(1)
 				}
 			}
 		}

@@ -505,8 +505,10 @@ func (p *DockerSandboxProvider) destroySandbox(ctx context.Context, sandboxID st
 
 	stopTimeout := int(containerStopTimeout.Seconds())
 	if err := p.client.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &stopTimeout}); err != nil {
-		// Log but don't fail – container might already be gone
-		_ = err
+		// Container might already be gone — log as a warning but don't fail.
+		logging.Warn("container stop returned an error (may already be gone)",
+			"container_id", containerID,
+			"error", err)
 	}
 
 	if err := p.client.ContainerRemove(ctx, containerID, container.RemoveOptions{Force: true}); err != nil {

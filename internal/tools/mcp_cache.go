@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"sync"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 
 // MCPCacheManager MCP配置缓存管理器
 type MCPCacheManager struct {
+	stopOnce    sync.Once
 	cache       cache.Cache
 	defaultTTL  time.Duration
 	autoRefresh bool
@@ -69,7 +71,12 @@ func NewMCPCacheManager(cfg MCPCacheConfig) *MCPCacheManager {
 
 // mcpConfigSignature 生成配置签名
 func mcpConfigSignature(cfg config.MCPServerConfig) string {
-	b, _ := json.Marshal(cfg)
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		// Marshal failure is extremely unlikely for a simple struct; return a
+		// unique marker so every comparison produces a cache miss (safe fallback).
+		return "error:" + err.Error()
+	}
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
@@ -192,7 +199,9 @@ func (m *MCPCacheManager) autoRefreshWorker() {
 
 // Stop 停止缓存管理器
 func (m *MCPCacheManager) Stop() {
-	close(m.stopChan)
+	m.stopOnce.Do(func() {
+		close(m.stopChan)
+	})
 }
 
 // ---------------------------------------------------------------------------

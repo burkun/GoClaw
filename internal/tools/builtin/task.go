@@ -37,6 +37,7 @@ const (
 // TaskResult holds the outcome of a subagent execution.
 // Mirrors DeerFlow's SubagentResult dataclass.
 type TaskResult struct {
+	mu sync.Mutex `json:"-"` // protects Status, Error, CompletedAt
 	// TaskID is the unique identifier for this execution.
 	TaskID string `json:"task_id"`
 	// TraceID is for distributed tracing (links parent and subagent logs).

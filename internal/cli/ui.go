@@ -190,7 +190,7 @@ func (u *UI) PrintDivider() {
 	if u.printMode {
 		return
 	}
-	fmt.Fprintln(u.output, "\n─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─\n")
+	fmt.Fprintln(u.output, "\n─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─")
 }
 
 // Helper functions

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"regexp"
 	"strings"
 	"time"
@@ -333,8 +334,10 @@ func cleanUploadMentions(text string) string {
 	return strings.TrimSpace(cleaned)
 }
 
+var factGenSeq uint64
+
 func generateFactID() string {
-	return fmt.Sprintf("fact_%d_%d", time.Now().Unix(), time.Now().Nanosecond()%1000)
+	return fmt.Sprintf("fact_%d_%d", time.Now().UnixNano(), atomic.AddUint64(&factGenSeq, 1))
 }
 
 func parseMemoryUpdate(raw string, minConfidence float64) (*MemoryUpdate, error) {
